@@ -32,3 +32,7 @@ Thumbs.db
 tmp/
 cache/
 downloads/
+
+# ===== Local dev docs (private, not for repo) =====
+CONTEXT.md
+DEVELOPMENT.md
