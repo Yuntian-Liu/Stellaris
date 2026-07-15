@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/favicon.svg" alt="Stellaris" width="96" height="96" />
+  <img src="favicon.svg" alt="Stellaris" width="96" height="96" />
 </p>
 
 <h1 align="center">Stellaris</h1>
