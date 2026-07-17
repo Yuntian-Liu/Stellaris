@@ -37,7 +37,7 @@ export default function App() {
   return (
     <Layout style={{ minHeight: '100vh', background: 'var(--canvas)' }}>
       <Content style={{
-        maxWidth: 640,
+        maxWidth: 760,
         margin: '0 auto',
         padding: '72px 24px 96px',
         width: '100%',

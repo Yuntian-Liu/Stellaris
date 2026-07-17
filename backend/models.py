@@ -20,6 +20,7 @@ class TaskStatus(str, Enum):
     EXTRACTING_AUDIO = "extracting_audio"  # 抽音轨中
     FETCHING_SUBTITLES = "fetching_subtitles"  # 尝试抓 CC 字幕
     TRANSCRIBING = "transcribing"  # ASR 识别中
+    TEXT_PROCESSING = "text_processing"  # LLM 文本整理中（语义分段）
     EXPORTING = "exporting"        # 导出字幕中
     COMPLETED = "completed"        # ✅ 完成
     FAILED = "failed"              # ❌ 失败
@@ -41,9 +42,12 @@ class TaskResponse(BaseModel):
     progress: int = 0              # 0-100
     # 以下字段在 completed 时填充
     video_title: Optional[str] = None
-    subtitle_srt: Optional[str] = None      # srt 内容或下载 URL
-    subtitle_txt: Optional[str] = None      # txt 内容或下载 URL
+    subtitle_srt: Optional[str] = None      # srt 下载 URL
+    subtitle_txt: Optional[str] = None      # txt 实际文本内容（用于前端预览）
     subtitle_source: Optional[str] = None   # "cc_subtitle" | "asr_mimo"
+    # Markdown 导出（增值功能，用户主动触发后填充）
+    md_status: Optional[str] = None         # "idle" | "generating" | "ready" | "failed"
+    md_error: Optional[str] = None
     error: Optional[str] = None
 
 

@@ -45,5 +45,11 @@ MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
 MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
 MIMO_MODEL = "mimo-v2.5-asr"
 
+# ===== LLM 配置（DeepSeek，OpenAI 兼容接口）=====
+# 切换模型只需改这三个值：base_url / api_key / model
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-pro")
+
 # ===== 字幕导出格式 =====
 DEFAULT_EXPORT_FORMATS = ["srt", "txt"]

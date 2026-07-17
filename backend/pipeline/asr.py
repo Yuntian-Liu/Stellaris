@@ -35,7 +35,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-async def transcribe_with_mimo(audio_path: Path, task_id: str) -> dict:
+def transcribe_with_mimo(audio_path: Path, task_id: str) -> dict:
     """
     调用小米 Mimo ASR 将音频转为文字。
 

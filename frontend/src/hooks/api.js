@@ -54,5 +54,18 @@ export function getDownloadUrl(taskId, format) {
   return `${BASE_URL}/api/download/${taskId}/${format}`
 }
 
+/**
+ * 触发 Markdown 导出（增值功能，异步生成）
+ * 返回最新任务状态（含 md_status）
+ */
+export async function exportMarkdown(taskId) {
+  const res = await fetch(`${BASE_URL}/api/export_md/${taskId}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `导出失败 (${res.status})`)
+  }
+  return res.json()
+}
+
 // 默认导出（方便 import api from './api'）
-export default { submit, upload, getTask, getDownloadUrl }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown }
