@@ -11,16 +11,20 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from config import MAX_CONCURRENT_TASKS
+from config import (
+    MAX_CONCURRENT_TASKS,
+    SPEECH_CHARS_PER_MIN, CHARS_PER_TOKEN, LLM_TOKEN_ROUNDTRIP_FACTOR,
+)
 from utils import generate_task_id, cleanup_temp_files, check_disk_space
 from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
+    EstimateRequest, EstimateResponse,
 )
-from pipeline.download import download_bilibili, extract_audio_from_file
+from pipeline.download import download_bilibili, extract_audio_from_file, probe_bilibili_info
 from pipeline.subtitle import fetch_cc_subtitle
 from pipeline.asr import transcribe_with_mimo
-from pipeline.llm import segment_text, text_to_markdown
+from pipeline.llm import segment_text, text_to_markdown, summarize_text
 from pipeline.export import (
     segments_to_srt, segments_to_txt,
     bilibili_subtitle_to_segments, save_exports,
@@ -68,6 +72,29 @@ app.add_middleware(
 async def health_check():
     """健康检查"""
     return HealthResponse()
+
+
+@app.post("/api/estimate", response_model=EstimateResponse)
+async def estimate_cost(request: EstimateRequest):
+    """
+    提取前成本预估：只拉视频元数据（不下载），
+    估算转写字数与 LLM 语义分段 tokens，让用户确认后再提交。
+    """
+    try:
+        info = await asyncio.to_thread(probe_bilibili_info, request.url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    duration_min = info["duration_sec"] / 60
+    est_chars = int(duration_min * SPEECH_CHARS_PER_MIN)
+    est_tokens = int(est_chars / CHARS_PER_TOKEN * LLM_TOKEN_ROUNDTRIP_FACTOR)
+
+    return EstimateResponse(
+        title=info["title"],
+        duration_sec=info["duration_sec"],
+        est_char_count=est_chars,
+        est_llm_tokens=est_tokens,
+    )
 
 
 @app.post("/api/submit", response_model=TaskResponse)
@@ -220,6 +247,37 @@ async def export_markdown(
     return TaskResponse(**task)
 
 
+@app.post("/api/summarize/{task_id}", response_model=TaskResponse)
+async def summarize_task(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+):
+    """
+    触发内容总结概要（增值功能，用户主动调用）
+    基于原始字幕文本用 LLM 生成结构化概要，异步生成。
+    """
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if task.get("status") != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="任务尚未完成，无法生成总结")
+
+    if not task.get("raw_text"):
+        raise HTTPException(status_code=500, detail="原始文本缺失，无法生成总结")
+
+    # 已经生成过则直接返回
+    if task.get("summary_status") == "ready":
+        return TaskResponse(**task)
+
+    # 触发后台生成
+    task["summary_status"] = "generating"
+    task["summary_error"] = None
+    background_tasks.add_task(_generate_summary_background, task_id)
+
+    return TaskResponse(**task)
+
+
 # ===== 核心管线（后台执行）=====
 
 async def run_pipeline(
@@ -287,9 +345,10 @@ def _run_pipeline_sync(
             "video_title": video_title,
             "subtitle_srt": str(export_paths["srt_path"]),
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
-            "raw_text": raw_text,                   # 原始文本（MD 导出 API 用）
+            "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
             "subtitle_source": subtitle_source,
             "md_status": "idle",                    # MD 尚未生成
+            "summary_status": "idle",               # 总结尚未生成
             "message": "完成！",
         })
 
@@ -345,9 +404,10 @@ def _run_pipeline_from_file_sync(
             "video_title": video_title,
             "subtitle_srt": "output.srt",
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
-            "raw_text": raw_text,                   # 原始文本（MD 导出 API 用）
+            "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
             "subtitle_source": "asr_mimo",
             "md_status": "idle",
+            "summary_status": "idle",
             "message": "完成！",
         })
 
@@ -359,6 +419,33 @@ def _run_pipeline_from_file_sync(
 
 
 # ===== 内部辅助函数 =====
+
+def _generate_summary_background(task_id: str):
+    """后台生成内容总结：调用 LLM 将字幕浓缩为结构化概要。"""
+    task = tasks.get(task_id)
+    if not task:
+        return
+
+    raw_text = task.get("raw_text", "")
+    try:
+        summary_content = summarize_text(raw_text, task_id)
+
+        # 保存到任务目录（方便后续可能的下载需求）
+        from utils import get_task_dir
+        task_dir = get_task_dir(task_id)
+        summary_path = task_dir / "output_summary.md"
+        summary_path.write_text(summary_content, encoding="utf-8")
+
+        task["summary_status"] = "ready"
+        task["summary_error"] = None
+        task["summary_content"] = summary_content   # 直接带回前端展示
+        logger.info("[Summary] 总结完成: %s (%d 字符)", task_id, len(summary_content))
+
+    except Exception as e:
+        task["summary_status"] = "failed"
+        task["summary_error"] = str(e)
+        logger.error("[Summary] 总结失败: %s - %s", task_id, e)
+
 
 def _generate_md_background(task_id: str):
     """后台生成 Markdown：调用 LLM 将原始转录文本转为结构化 MD。"""

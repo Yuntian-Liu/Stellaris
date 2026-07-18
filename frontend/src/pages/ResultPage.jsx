@@ -22,8 +22,10 @@ import {
   FileOutlined,
   CheckCircleFilled,
   LoadingOutlined,
+  BulbOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
+import ReactMarkdown from 'react-markdown'
 
 const { Text, Paragraph } = Typography
 
@@ -99,10 +101,10 @@ export default function ResultPage({ taskData, onBack, onNew }) {
   const previewText = taskData.subtitle_txt || '（无文本内容）'
 
   return (
-    <div>
+    <div className="page-enter">
       {/* ── 完成标识 ── */}
       <div style={{ textAlign: 'center', marginBottom: 32 }}>
-        <div style={{
+        <div className="check-pop" style={{
           width: 56,
           height: 56,
           borderRadius: '50%',
@@ -157,6 +159,14 @@ export default function ResultPage({ taskData, onBack, onNew }) {
             }}>{taskData.task_id}</code>
           </Descriptions.Item>
         </Descriptions>
+
+        {/* 内容概要（增值功能，可折叠） */}
+        <SummarySection
+          taskId={taskData.task_id}
+          initialStatus={taskData.summary_status}
+          initialContent={taskData.summary_content}
+          initialError={taskData.summary_error}
+        />
 
         {/* 预览区：展示真实文本内容 */}
         <div style={{ marginBottom: 20 }}>
@@ -272,10 +282,17 @@ export default function ResultPage({ taskData, onBack, onNew }) {
 /* ── 子组件：单行下载按钮 ── */
 function DownloadRow({ icon, title, desc, primary = false, onClick }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div className="dl-row" style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '10px 12px',
+      margin: '0 -12px',
+      borderRadius: 'var(--r-input)',
+    }}>
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 500, color: 'var(--ink)', fontSize: 14, marginBottom: 2 }}>
-          {icon && <span style={{ marginRight: 8 }}>{icon}</span>}
+          {icon && <span style={{ marginRight: 8, color: 'var(--body)' }}>{icon}</span>}
           {title}
         </div>
         <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)' }}>
@@ -379,6 +396,302 @@ function MdExportRow({ status, error, onExport, onDownload }) {
         >
           重试
         </Button>
+      )}
+    </div>
+  )
+}
+
+/* ── 子组件：内容概要区块（状态机 + 折叠展示） ── */
+const SUMMARY_COLLAPSE_HEIGHT = 120   // 折叠态最大高度（px）
+
+// Markdown 渲染样式映射（Starlight 风格，基础版，精调留给 Kimi）
+const MD_COMPONENTS = {
+  h3: ({node, ...props}) => (
+    <h3 style={{
+      fontSize: 15, fontWeight: 600, color: 'var(--ink)',
+      margin: '14px 0 6px', lineHeight: 1.5,
+    }} {...props} />
+  ),
+  p: ({node, ...props}) => (
+    <p style={{
+      fontSize: 14, lineHeight: 1.8, color: 'var(--ink)',
+      margin: '0 0 10px',
+    }} {...props} />
+  ),
+  ul: ({node, ...props}) => (
+    <ul style={{
+      margin: '0 0 10px', paddingLeft: 20,
+    }} {...props} />
+  ),
+  ol: ({node, ...props}) => (
+    <ol style={{
+      margin: '0 0 10px', paddingLeft: 20,
+    }} {...props} />
+  ),
+  li: ({node, ...props}) => (
+    <li style={{
+      fontSize: 14, lineHeight: 1.8, color: 'var(--ink)',
+      marginBottom: 4,
+    }} {...props} />
+  ),
+  strong: ({node, ...props}) => (
+    <strong style={{ fontWeight: 600, color: 'var(--ink)' }} {...props} />
+  ),
+  em: ({node, ...props}) => (
+    <em style={{ color: 'var(--body)' }} {...props} />
+  ),
+  blockquote: ({node, ...props}) => (
+    <blockquote style={{
+      margin: '0 0 10px', padding: '4px 0 4px 12px',
+      borderLeft: '3px solid var(--accent)',
+      color: 'var(--body)', fontSize: 13,
+    }} {...props} />
+  ),
+  code: ({node, ...props}) => (
+    <code style={{
+      background: 'var(--surface-1)', padding: '1px 6px',
+      borderRadius: 4, fontSize: 13,
+      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+    }} {...props} />
+  ),
+}
+
+function SummarySection({ taskId, initialStatus, initialContent, initialError }) {
+  const [status, setStatus] = useState(initialStatus || 'idle')
+  const [content, setContent] = useState(initialContent || '')
+  const [error, setError] = useState(initialError || null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+  const pollRef = useRef(null)
+  const contentRef = useRef(null)
+
+  // 组件卸载清理轮询
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearTimeout(pollRef.current)
+    }
+  }, [])
+
+  // 检测内容是否超出折叠高度（决定是否显示"展开"按钮）
+  useEffect(() => {
+    if (status === 'ready' && contentRef.current) {
+      setOverflowing(contentRef.current.scrollHeight > SUMMARY_COLLAPSE_HEIGHT)
+    }
+  }, [status, content])
+
+  const handleGenerate = async () => {
+    setStatus('generating')
+    setError(null)
+    try {
+      await api.summarize(taskId)
+      _pollSummary()
+    } catch (e) {
+      setStatus('failed')
+      setError(e.message)
+      message.error('总结生成失败：' + e.message)
+    }
+  }
+
+  const _pollSummary = async () => {
+    try {
+      const data = await api.getTask(taskId)
+      const s = data.summary_status
+      if (s === 'ready') {
+        setStatus('ready')
+        setContent(data.summary_content || '')
+        message.success('内容概要已生成')
+        return
+      }
+      if (s === 'failed') {
+        setStatus('failed')
+        setError(data.summary_error || '生成失败')
+        return
+      }
+      pollRef.current = setTimeout(_pollSummary, 2000)
+    } catch (e) {
+      setStatus('failed')
+      setError(e.message)
+    }
+  }
+
+  // ── idle 状态：引导生成 ──
+  if (status === 'idle') {
+    return (
+      <div style={{
+        marginBottom: 20,
+        padding: 16,
+        background: 'var(--surface-2)',
+        borderRadius: 'var(--r-input)',
+        border: '1px solid var(--hairline)',
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 500, color: 'var(--ink)', fontSize: 14, marginBottom: 2 }}>
+              <BulbOutlined style={{ marginRight: 8 }} />
+              内容概要
+              <Tag style={{
+                marginLeft: 8,
+                background: 'var(--accent-light)',
+                color: 'var(--accent)',
+                border: 'none',
+                borderRadius: '9999px',
+                fontSize: 11,
+                padding: '0 8px',
+              }}>
+                增值
+              </Tag>
+            </div>
+            <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)' }}>
+              一键生成视频内容概要，快速了解核心观点
+            </div>
+          </div>
+          <Popconfirm
+            title="生成内容概要？"
+            description="将调用 LLM 对字幕进行总结提炼（增值功能）"
+            okText="生成"
+            cancelText="取消"
+            onConfirm={handleGenerate}
+          >
+            <Button
+              icon={<BulbOutlined />}
+              style={{ minWidth: 84, height: 36, borderRadius: 'var(--r-btn)' }}
+            >
+              生成
+            </Button>
+          </Popconfirm>
+        </div>
+      </div>
+    )
+  }
+
+  // ── generating 状态 ──
+  if (status === 'generating') {
+    return (
+      <div style={{
+        marginBottom: 20,
+        padding: 18,
+        background: 'var(--surface-2)',
+        borderRadius: 'var(--r-input)',
+        border: '1px solid var(--hairline)',
+        textAlign: 'center',
+      }}>
+        <Spin size="small" />
+        <Text className="font-caption" style={{ marginLeft: 10, fontSize: 13, color: 'var(--mute)' }}>
+          正在用 LLM 提炼内容概要...
+        </Text>
+      </div>
+    )
+  }
+
+  // ── failed 状态 ──
+  if (status === 'failed') {
+    return (
+      <div style={{
+        marginBottom: 20,
+        padding: 16,
+        background: 'var(--error-bg)',
+        borderRadius: 'var(--r-input)',
+        border: '1px solid var(--hairline)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+      }}>
+        <Text style={{ fontSize: 13, color: 'var(--error)', flex: 1 }}>
+          概要生成失败：{error || '未知错误'}
+        </Text>
+        <Button
+          danger
+          size="small"
+          icon={<ReloadOutlined />}
+          onClick={handleGenerate}
+          style={{ borderRadius: 'var(--r-btn)' }}
+        >
+          重试
+        </Button>
+      </div>
+    )
+  }
+
+  // ── ready 状态：折叠展示总结内容 ──
+  return (
+    <div style={{
+      marginBottom: 20,
+      background: 'var(--surface-2)',
+      borderRadius: 'var(--r-input)',
+      border: '1px solid var(--hairline)',
+      overflow: 'hidden',
+    }}>
+      {/* 标题栏 */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '12px 16px',
+        borderBottom: '1px solid var(--hairline)',
+      }}>
+        <div style={{ fontWeight: 500, color: 'var(--ink)', fontSize: 14 }}>
+          <BulbOutlined style={{ marginRight: 8, color: 'var(--accent)' }} />
+          内容概要
+          <Tag style={{
+            marginLeft: 8,
+            background: 'var(--accent-light)',
+            color: 'var(--accent)',
+            border: 'none',
+            borderRadius: '9999px',
+            fontSize: 11,
+            padding: '0 8px',
+          }}>
+            增值
+          </Tag>
+        </div>
+        <Button
+          type="text"
+          size="small"
+          onClick={() => setExpanded(!expanded)}
+          style={{ fontSize: 12, color: 'var(--accent)', padding: '0 4px' }}
+        >
+          {expanded ? '收起' : '展开'}
+        </Button>
+      </div>
+
+      {/* 内容区（折叠态 maxHeight 限制，展开态自由 + 内部滚动） */}
+      <div
+        ref={contentRef}
+        style={{
+          padding: '14px 16px',
+          maxHeight: expanded ? 480 : SUMMARY_COLLAPSE_HEIGHT,
+          overflowY: expanded ? 'auto' : 'hidden',
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          color: 'var(--ink)',
+          position: 'relative',
+          // 折叠态底部渐变遮罩，暗示还有内容
+          maskImage: expanded ? 'none' : 'linear-gradient(to bottom, black 80px, transparent 120px)',
+          WebkitMaskImage: expanded ? 'none' : 'linear-gradient(to bottom, black 80px, transparent 120px)',
+        }}
+      >
+        <ReactMarkdown components={MD_COMPONENTS}>{content}</ReactMarkdown>
+      </div>
+
+      {/* 折叠态下若溢出，底部显示"展开"提示 */}
+      {!expanded && overflowing && (
+        <div
+          style={{
+            padding: '6px 16px 10px',
+            textAlign: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={() => setExpanded(true)}
+        >
+          <Text className="font-caption" style={{ fontSize: 12, color: 'var(--accent)' }}>
+            展开查看完整概要 ↓
+          </Text>
+        </div>
       )}
     </div>
   )

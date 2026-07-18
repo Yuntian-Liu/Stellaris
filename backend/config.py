@@ -53,3 +53,11 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-pro")
 
 # ===== 字幕导出格式 =====
 DEFAULT_EXPORT_FORMATS = ["srt", "txt"]
+
+# ===== 成本预估模型（/api/estimate 用）=====
+# 中文口语平均语速（字/分钟），用于预估转写字数
+SPEECH_CHARS_PER_MIN = 240
+# DeepSeek 中文 token 折算：约 1 token / 1.5 字
+CHARS_PER_TOKEN = 1.5
+# 语义分段为「输入原文 + 输出分段文本」两次开销，总 token ≈ 输入 × 2
+LLM_TOKEN_ROUNDTRIP_FACTOR = 2.0

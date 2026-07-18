@@ -1,9 +1,10 @@
 """
 管线 LLM 处理层
 
-使用 OpenAI 兼容 SDK 调用 DeepSeek（默认），提供两个能力：
+使用 OpenAI 兼容 SDK 调用 DeepSeek（默认），提供三个能力：
   1. segment_text       — TXT 语义分段（默认自动执行）
   2. text_to_markdown   — 原文转写为结构化 Markdown（用户主动触发）
+  3. summarize_text     — 内容总结概要（用户主动触发，增值功能）
 
 切换 LLM 只需改 config.py 的 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL。
 """
@@ -63,6 +64,23 @@ _MD_SYSTEM = (
             "- 允许为了逻辑通顺添加少量衔接词或过渡句。\n"
             "- 不得编造原文没有的内容。\n"
             "- 直接输出 Markdown 内容，不要加代码块包裹，不要加任何前言或解释。"
+)
+
+_SUMMARY_SYSTEM = (
+    "你是一个视频内容总结助手。"
+    "用户会给你一段视频的字幕文本，需要你生成一份结构化的内容概要，让读者一眼就知道这个视频在讲什么。\n\n"
+    "你的任务：\n"
+    "1. 开头用一段话（100-200 字）概括视频的核心主题和主要论点。\n"
+    "2. 然后提炼 3-5 个核心要点，每个要点用一句话概括，必要时补一句展开说明。\n"
+    "3. 如果视频包含明显的方法论、步骤、清单或关键数据，单独提炼一个小节。\n"
+    "4. 最后可选地用一句话点出这个视频的价值或适合的人群（没有就省略）。\n\n"
+    "格式要求：\n"
+    "- 用 Markdown 输出：概述用普通段落，要点用 `- ` 无序列表，小节用 `###` 标题。\n"
+    "- 总长度控制在 300-500 字，精炼但不空洞。\n\n"
+    "严格约束：\n"
+    "- 基于字幕原文总结，不得编造字幕里没有的内容。\n"
+    "- 这是总结提炼（高度浓缩），不是原文转写——要提炼观点，不要复述原文。\n"
+    "- 直接输出内容，不要加代码块包裹，不要加任何前言、解释或标题。"
 )
 
 
@@ -147,4 +165,45 @@ def text_to_markdown(raw_text: str, task_id: str) -> str:
             result = result[:-3].rstrip("\n")
 
     logger.info("[LLM] Markdown 转写完成: %d 字符 (task=%s)", len(result), task_id)
+    return result
+
+
+def summarize_text(raw_text: str, task_id: str) -> str:
+    """
+    内容总结概要：将字幕文本浓缩为结构化概要（增值功能，用户主动触发）。
+
+    Args:
+        raw_text: 原始字幕文本
+        task_id: 任务 ID（日志追踪）
+
+    Returns:
+        Markdown 格式的总结概要（概述 + 核心要点）
+
+    Raises:
+        Exception: 调用失败时抛出（增值功能，失败应告知用户）
+    """
+    if not raw_text or not raw_text.strip():
+        raise ValueError("空文本，无法生成总结")
+
+    client = _get_client()
+    logger.info("[LLM] 总结概要开始: %d 字符 (task=%s)", len(raw_text), task_id)
+
+    completion = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {"role": "system", "content": _SUMMARY_SYSTEM},
+            {"role": "user", "content": raw_text},
+        ],
+        temperature=0.4,   # 总结需要一定概括创造，但不宜过高以免偏离原文
+        stream=False,
+    )
+    result = (completion.choices[0].message.content or "").strip()
+
+    # 防止模型用代码块包裹整个输出
+    if result.startswith("```markdown"):
+        result = result[len("```markdown"):].lstrip("\n")
+        if result.endswith("```"):
+            result = result[:-3].rstrip("\n")
+
+    logger.info("[LLM] 总结概要完成: %d 字符 (task=%s)", len(result), task_id)
     return result

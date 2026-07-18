@@ -6,7 +6,8 @@
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
 import { useState, useCallback } from 'react'
-import { Layout } from 'antd'
+import { Layout, Tooltip } from 'antd'
+import { StarFilled, SettingOutlined, WalletOutlined } from '@ant-design/icons'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
@@ -36,10 +37,64 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'var(--canvas)' }}>
+      {/* ── 顶部导航栏（预留用户系统 / 设置二级界面入口）── */}
+      <div style={{
+        maxWidth: 760,
+        margin: '0 auto',
+        width: '100%',
+        padding: '18px 24px 0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        {/* 品牌 wordmark */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <StarFilled style={{ color: 'var(--accent)', fontSize: 15 }} />
+          <span className="font-display" style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)' }}>
+            Stellaris
+          </span>
+        </div>
+        {/* 右侧入口位：额度展示 + 设置（用户系统上线后接入真实数据） */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Tooltip title="用户额度（即将上线）">
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 12px',
+              background: 'var(--surface-1)',
+              border: '1px solid var(--hairline)',
+              borderRadius: '9999px',
+              cursor: 'default',
+            }}>
+              <WalletOutlined style={{ fontSize: 12, color: 'var(--mute)' }} />
+              <span className="font-caption" style={{ fontSize: 12 }}>额度</span>
+              <span className="font-mono" style={{ fontSize: 12, color: 'var(--hairline-strong)' }}>--</span>
+            </div>
+          </Tooltip>
+          <Tooltip title="设置（即将上线）">
+            <div style={{
+              width: 30,
+              height: 30,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '50%',
+              border: '1px solid var(--hairline)',
+              background: 'var(--surface-1)',
+              color: 'var(--mute)',
+              cursor: 'default',
+            }}>
+              <SettingOutlined style={{ fontSize: 14 }} />
+            </div>
+          </Tooltip>
+        </div>
+      </div>
+
       <Content style={{
         maxWidth: 760,
         margin: '0 auto',
-        padding: '72px 24px 96px',
+        padding: '48px 24px 96px',
         width: '100%',
       }}>
         {page === 'home' && (
@@ -225,19 +280,99 @@ export default function App() {
           border-bottom: 1px solid var(--hairline) !important;
         }
 
-        /* ── Steps ── */
-        .ant-steps-item-title {
-          font-size: 13px !important;
-          color: var(--mute) !important;
-        }
-        .ant-steps-item-process .ant-steps-item-title {
-          color: var(--body) !important;
-          font-weight: 500 !important;
-        }
-
         /* ── Collapse ghost ── */
         .ant-collapse-ghost > .ant-collapse-item > .ant-collapse-header {
           padding: 8px 0 !important;
+        }
+
+        /* ── 下载行 hover 微反馈 ── */
+        .dl-row { transition: background 0.15s ease; }
+        .dl-row:hover { background: var(--surface-2); }
+
+        /* ═══════════════════════════════════════
+           Motion System（Apple 式克制动效）
+           时长 0.2-0.6s，ease 曲线统一，无弹跳
+           ═══════════════════════════════════════ */
+
+        /* 页面级进入：轻微上浮 + 淡入 */
+        @keyframes pageEnter {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .page-enter { animation: pageEnter 0.4s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 预估确认卡滑入 */
+        @keyframes estimateEnter {
+          from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .estimate-enter { animation: estimateEnter 0.35s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 进行中节点：呼吸脉冲光环 */
+        @keyframes pulseRing {
+          0%   { transform: scale(1);    opacity: 0.5; }
+          70%  { transform: scale(1.75); opacity: 0; }
+          100% { transform: scale(1.75); opacity: 0; }
+        }
+        .pulse-ring {
+          position: absolute;
+          border-radius: 50%;
+          border: 2px solid var(--accent);
+          animation: pulseRing 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+          pointer-events: none;
+        }
+
+        /* 节点内转动指示（比 Spin 更轻的线性旋转） */
+        @keyframes nodeSpin {
+          to { transform: rotate(360deg); }
+        }
+        .node-spin { animation: nodeSpin 1s linear infinite; }
+
+        /* 完成打勾弹入 */
+        @keyframes checkPop {
+          0%   { transform: scale(0.4); opacity: 0; }
+          60%  { transform: scale(1.15); opacity: 1; }
+          100% { transform: scale(1); }
+        }
+        .check-pop { animation: checkPop 0.35s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 进度条流光（缓冲感）：高光条持续扫过 */
+        .progress-shimmer {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: linear-gradient(
+            90deg,
+            transparent 0%,
+            rgba(255,255,255,0.45) 50%,
+            transparent 100%
+          );
+          background-size: 40% 100%;
+          background-repeat: no-repeat;
+          animation: shimmerSweep 1.6s ease-in-out infinite;
+        }
+        @keyframes shimmerSweep {
+          from { background-position: -40% 0; }
+          to   { background-position: 140% 0; }
+        }
+
+        /* 状态文字省略号逐个浮现 */
+        .ellipsis-anim span {
+          display: inline-block;
+          animation: ellipsisFade 1.4s infinite;
+          opacity: 0;
+        }
+        .ellipsis-anim span:nth-child(2) { animation-delay: 0.25s; }
+        .ellipsis-anim span:nth-child(3) { animation-delay: 0.5s; }
+        @keyframes ellipsisFade {
+          0%, 60%, 100% { opacity: 0; }
+          30% { opacity: 1; }
+        }
+
+        /* 尊重系统减弱动效设置 */
+        @media (prefers-reduced-motion: reduce) {
+          .page-enter, .estimate-enter, .check-pop,
+          .pulse-ring, .node-spin, .progress-shimmer,
+          .ellipsis-anim span { animation: none !important; }
         }
       `}</style>
     </Layout>

@@ -67,5 +67,35 @@ export async function exportMarkdown(taskId) {
   return res.json()
 }
 
+/**
+ * 触发内容总结概要（增值功能，异步生成）
+ * 返回最新任务状态（含 summary_status）
+ */
+export async function summarize(taskId) {
+  const res = await fetch(`${BASE_URL}/api/summarize/${taskId}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `总结生成失败 (${res.status})`)
+  }
+  return res.json()
+}
+
+/**
+ * 提取前成本预估（只拉元数据，不下载）
+ * 返回 { title, duration_sec, est_char_count, est_llm_tokens }
+ */
+export async function estimate(url) {
+  const res = await fetch(`${BASE_URL}/api/estimate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `预估失败 (${res.status})`)
+  }
+  return res.json()
+}
+
 // 默认导出（方便 import api from './api'）
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate }

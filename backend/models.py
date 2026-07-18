@@ -48,7 +48,27 @@ class TaskResponse(BaseModel):
     # Markdown 导出（增值功能，用户主动触发后填充）
     md_status: Optional[str] = None         # "idle" | "generating" | "ready" | "failed"
     md_error: Optional[str] = None
+    # 内容总结概要（增值功能，用户主动触发后填充）
+    summary_status: Optional[str] = None    # "idle" | "generating" | "ready" | "failed"
+    summary_error: Optional[str] = None
+    summary_content: Optional[str] = None   # 总结正文（ready 时带回前端展示）
     error: Optional[str] = None
+
+
+class EstimateRequest(BaseModel):
+    """成本预估请求体"""
+    url: str = Field(..., description="B站视频链接")
+
+
+class EstimateResponse(BaseModel):
+    """
+    成本预估响应（提交任务前的透明化计量）
+    后续积分系统上线后，在此追加 credits 相关字段
+    """
+    title: str                            # 视频标题
+    duration_sec: float                   # 视频时长（秒）—— ASR 计费依据
+    est_char_count: int                   # 预计转写字数
+    est_llm_tokens: int                   # 预计 LLM 语义分段消耗 tokens（输入+输出）
 
 
 class HealthResponse(BaseModel):
