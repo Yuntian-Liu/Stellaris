@@ -17,9 +17,9 @@ except ImportError:
 # ===== 项目根目录 =====
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ===== 临时文件目录 =====
-TMP_DIR = BASE_DIR / "tmp"
-TMP_DIR.mkdir(exist_ok=True)
+# ===== 临时文件目录（用户下载的字幕 SRT/TXT/MD;生产必须持久化,走环境变量指向 Volume）=====
+TMP_DIR = Path(os.getenv("TMP_DIR", str(BASE_DIR / "tmp")))
+TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== FFmpeg 路径（跨平台）=====
 # 注意：yt-dlp 的 --ffmpeg-location 只认「完整路径或目录」，不接受裸命令名 "ffmpeg"，
@@ -75,3 +75,27 @@ SPEECH_CHARS_PER_MIN = 240
 CHARS_PER_TOKEN = 1.5
 # 语义分段为「输入原文 + 输出分段文本」两次开销，总 token ≈ 输入 × 2
 LLM_TOKEN_ROUNDTRIP_FACTOR = 2.0
+
+
+# ===== 用户系统（Auth）配置 =====
+# 数据目录（SQLite 数据库文件存放处，已 gitignore;支持环境变量指向 Volume）
+DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "backend" / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+# SQLAlchemy async URL（aiosqlite driver；as_posix() 避免 Windows 反斜杠）
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR.as_posix()}/stellaris.db")
+
+# JWT（对标 Datelife：HS256，30 天有效期）
+JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 30
+
+# Resend 邮件（域名 ytunx.com，需先在 Resend 后台完成 SPF/DKIM 验证）
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM = os.getenv("RESEND_FROM", "Stellaris <noreply@ytunx.com>")
+
+# Cloudflare Turnstile（人机验证；site key 给前端，secret 留后端）
+TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
+
+# 运行环境（true=真实发邮件+强制Turnstile；false=验证码打印日志+Turnstile bypass）
+IS_PROD = os.getenv("IS_PROD", "false").lower() == "true"

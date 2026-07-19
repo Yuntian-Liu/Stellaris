@@ -1,0 +1,15 @@
+**/node_modules/
+.venv/
+**/.venv/
+**/dist/
+.env
+.env.*
+!.env.example
+*.db
+backend/data/
+tmp/
+.devlogs/
+.git/
+*.md
+!README.md
+.DS_Store

@@ -13,3 +13,12 @@ openai>=1.0.0
 
 # ===== 小米 Mimo ASR（待确认 SDK 名）===
 # mimo-asr  # TODO: 等 Mimo 文档后补充
+
+# ===== Auth：数据库 + 密码加密 + JWT + 邮件 HTTP 客户端 =====
+sqlalchemy>=2.0.0          # ORM
+greenlet>=3.0              # sqlalchemy async 的隐式依赖（Python 3.14 装 sqlalchemy 时没自动带）
+aiosqlite>=0.20.0          # SQLAlchemy 的 async sqlite driver
+bcrypt>=4.0.0              # 密码哈希（直接用,不通过 passlib——passlib 1.7.4 停更,不兼容 bcrypt 5.0）
+pyjwt>=2.8.0               # JWT 签发/校验
+httpx>=0.27.0              # Resend 邮件 + Turnstile 的 HTTP 调用
+email-validator>=2.0.0     # Pydantic EmailStr 依赖

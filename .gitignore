@@ -33,6 +33,7 @@ tmp/
 cache/
 downloads/
 .devlogs/
+backend/data/
 
 # ===== Local dev docs (private, not for repo) =====
 CONTEXT.md

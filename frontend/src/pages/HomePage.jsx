@@ -14,7 +14,7 @@ import {
 } from 'antd'
 import {
   LinkOutlined, UploadOutlined, RocketOutlined,
-  InfoCircleOutlined, StarFilled, ClockCircleOutlined,
+  InfoCircleOutlined, ClockCircleOutlined,
   FileTextOutlined, ThunderboltOutlined, CloseOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
@@ -116,7 +116,7 @@ export default function HomePage({ onSubmit }) {
           borderRadius: '9999px',
           marginBottom: 20,
         }}>
-          <StarFilled style={{ color: 'var(--accent)', fontSize: 11 }} />
+          <span style={{ color: 'var(--accent)', fontSize: 13, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
           <span className="font-caption" style={{
             fontSize: 11,
             fontWeight: 600,

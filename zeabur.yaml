@@ -1,0 +1,8 @@
+name: stellaris
+
+services:
+  - name: web
+    type: web
+    dockerfile: Dockerfile
+    ports:
+      - 80:8000

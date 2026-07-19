@@ -31,6 +31,9 @@ from pipeline.export import (
     bilibili_subtitle_to_segments, save_exports,
 )
 
+from database import init_db
+from auth.router import router as auth_router
+
 
 # ===== 内存中的任务存储（生产环境应换 Redis）=====
 tasks: dict[str, dict] = {}
@@ -49,6 +52,9 @@ async def lifespan(app: FastAPI):
         print(f"[Stellaris] 启动清理：删除 {cleaned} 个过期任务目录")
     # 起后台定时清理任务（每 10 分钟扫一次）
     cleanup_task = asyncio.create_task(_periodic_cleanup())
+    # 初始化数据库（建表）
+    await init_db()
+    print("[Stellaris] 数据库已就绪")
     yield
     # 关闭：取消定时任务 + 清理所有临时文件
     cleanup_task.cancel()
@@ -85,6 +91,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ===== Auth 子模块路由 =====
+app.include_router(auth_router)
+
 
 # ===== 路由 =====
 
@@ -92,6 +101,15 @@ app.add_middleware(
 async def health_check():
     """健康检查"""
     return HealthResponse()
+
+
+@app.get("/api/config")
+async def get_public_config():
+    """前端公开配置（Turnstile site key 公开,secret 不返回）。
+    运行时拿,避免 Vite build-time env 依赖（Zeabur 等平台 build 阶段拿不到 runtime env）。
+    """
+    from config import TURNSTILE_SITE_KEY, IS_PROD
+    return {"turnstile_site_key": TURNSTILE_SITE_KEY, "is_prod": IS_PROD}
 
 
 @app.post("/api/estimate", response_model=EstimateResponse)
@@ -537,3 +555,10 @@ def _extract_bvid_cid(url: str) -> tuple[str | None, int | None]:
     bv_match = re.search(r"(BV[A-Za-z0-9]+)", url)
     return (bv_match.group(1) if bv_match else None, None)
     # TODO: 完善 cid 提取（可能需要先调 API）
+
+
+# ===== 生产环境:serve 前端构建产物（同域;本地 frontend/dist 不存在则跳过,走 vite proxy）=====
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")

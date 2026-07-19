@@ -1,113 +1,74 @@
 /**
  * API 调用封装
- * 统一处理后端接口的请求/响应
+ * 统一 fetch:自动注入 JWT token、401 拦截、错误处理
  */
 
-const BASE_URL = ''  // Vite proxy 会把 /api 转发到后端
+const TOKEN_KEY = 'stellaris_token'
+
+export function getToken() { return localStorage.getItem(TOKEN_KEY) }
+export function setToken(t) { localStorage.setItem(TOKEN_KEY, t) }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 
 /**
- * 提交 B站链接任务
+ * 统一请求封装
+ * - 自动注入 Authorization: Bearer <token>
+ * - 401:清 token + 派发 stellaris:unauthorized 事件(由 AuthContext/App 监听)
+ * - !ok:抛 Error(detail)
  */
-export async function submit({ source, url, sessdata }) {
-  const res = await fetch(`${BASE_URL}/api/submit`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source, url, sessdata }),
+async function request(path, { method = 'GET', body, headers, isForm = false } = {}) {
+  const token = getToken()
+  const finalHeaders = { ...(headers || {}) }
+  if (token) finalHeaders.Authorization = `Bearer ${token}`
+  if (body && !isForm) finalHeaders['Content-Type'] = 'application/json'
+
+  const res = await fetch(path, {
+    method,
+    headers: finalHeaders,
+    body: body && !isForm ? JSON.stringify(body) : body,
   })
+
+  if (res.status === 401) {
+    clearToken()
+    window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || '登录已过期,请重新登录')
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `提交失败 (${res.status})`)
+    throw new Error(err.detail || `请求失败 (${res.status})`)
   }
   return res.json()
 }
 
-/**
- * 上传视频文件
- */
-export async function upload(formData) {
-  const res = await fetch(`${BASE_URL}/api/upload`, {
-    method: 'POST',
-    body: formData,
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `上传失败 (${res.status})`)
-  }
-  return res.json()
-}
+/* ═══ 任务接口(现有,改走 request,签名不变,调用方无需改)═══ */
 
-/**
- * 查询任务状态
- */
-export async function getTask(taskId) {
-  const res = await fetch(`${BASE_URL}/api/task/${taskId}`)
-  if (!res.ok) {
-    throw new Error(`查询失败 (${res.status})`)
-  }
-  return res.json()
-}
+export const submit = (payload) => request('/api/submit', { method: 'POST', body: payload })
+export const upload = (formData) => request('/api/upload', { method: 'POST', body: formData, isForm: true })
+export const getTask = (taskId) => request(`/api/task/${taskId}`)
+export const exportMarkdown = (taskId) => request(`/api/export_md/${taskId}`, { method: 'POST' })
+export const summarize = (taskId) => request(`/api/summarize/${taskId}`, { method: 'POST' })
+export const estimate = (url) => request('/api/estimate', { method: 'POST', body: { url } })
+export const cleanupTask = (taskId) => request(`/api/task/${taskId}`, { method: 'DELETE' })
 
-/**
- * 获取下载链接
- */
+// 下载是 <a> 直接触发,不走 fetch(后端 download 未加鉴权,无需 token)
 export function getDownloadUrl(taskId, format) {
-  return `${BASE_URL}/api/download/${taskId}/${format}`
+  return `/api/download/${taskId}/${format}`
 }
 
-/**
- * 触发 Markdown 导出（增值功能，异步生成）
- * 返回最新任务状态（含 md_status）
- */
-export async function exportMarkdown(taskId) {
-  const res = await fetch(`${BASE_URL}/api/export_md/${taskId}`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `导出失败 (${res.status})`)
-  }
-  return res.json()
-}
+/* ═══ Auth 接口 ═══ */
 
-/**
- * 触发内容总结概要（增值功能，异步生成）
- * 返回最新任务状态（含 summary_status）
- */
-export async function summarize(taskId) {
-  const res = await fetch(`${BASE_URL}/api/summarize/${taskId}`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `总结生成失败 (${res.status})`)
-  }
-  return res.json()
-}
-
-/**
- * 提取前成本预估（只拉元数据，不下载）
- * 返回 { title, duration_sec, est_char_count, est_llm_tokens }
- */
-export async function estimate(url) {
-  const res = await fetch(`${BASE_URL}/api/estimate`, {
+export const authApi = {
+  checkEmail: (email) => request('/api/auth/check-email', { method: 'POST', body: { email } }),
+  sendCode: (email, turnstileToken) => request('/api/auth/send-code', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `预估失败 (${res.status})`)
-  }
-  return res.json()
+    body: { email },
+    headers: { 'cf-turnstile-response': turnstileToken || '' },
+  }),
+  loginCode: (email, code) => request('/api/auth/login-code', { method: 'POST', body: { email, code } }),
+  register: (payload) => request('/api/auth/register', { method: 'POST', body: payload }),
+  loginPassword: (email_or_uid, password) => request('/api/auth/login-password', { method: 'POST', body: { email_or_uid, password } }),
+  getMe: () => request('/api/auth/me'),
+  updateProfile: (payload) => request('/api/auth/profile', { method: 'PUT', body: payload }),
 }
 
-/**
- * 用户主动清理任务数据（删除临时文件，不可恢复）
- */
-export async function cleanupTask(taskId) {
-  const res = await fetch(`${BASE_URL}/api/task/${taskId}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `清理失败 (${res.status})`)
-  }
-  return res.json()
-}
-
-// 默认导出（方便 import api from './api'）
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, cleanupTask }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, cleanupTask, authApi }

@@ -5,12 +5,14 @@
  *   Apple 极简克制 + Claude 衬线编辑感 + Vercel 开发者精度
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
-import { useState, useCallback } from 'react'
-import { Layout, Tooltip } from 'antd'
-import { StarFilled, SettingOutlined, WalletOutlined } from '@ant-design/icons'
+import { useState, useCallback, useEffect } from 'react'
+import { Layout, Tooltip, Button, Dropdown, Avatar } from 'antd'
+import { WalletOutlined, LogoutOutlined, LoginOutlined } from '@ant-design/icons'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
+import AuthPage from './pages/AuthPage'
+import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
 
@@ -18,6 +20,14 @@ export default function App() {
   const [page, setPage] = useState('home')
   const [taskId, setTaskId] = useState(null)
   const [taskData, setTaskData] = useState(null)
+  const { user, loading, logout } = useAuth()
+
+  // 401(token 失效)→ 跳登录页
+  useEffect(() => {
+    const handler = () => setPage('auth')
+    window.addEventListener('stellaris:unauthorized', handler)
+    return () => window.removeEventListener('stellaris:unauthorized', handler)
+  }, [])
 
   const handleSubmit = useCallback((data) => {
     setTaskId(data.task_id)
@@ -47,47 +57,61 @@ export default function App() {
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        {/* 品牌 wordmark */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <StarFilled style={{ color: 'var(--accent)', fontSize: 15 }} />
+        {/* 品牌 wordmark(可点回首页) */}
+        <div
+          onClick={() => setPage('home')}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+          role="button"
+        >
+          <span style={{ color: 'var(--accent)', fontSize: 17, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
           <span className="font-display" style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)' }}>
             Stellaris
           </span>
         </div>
-        {/* 右侧入口位：额度展示 + 设置（用户系统上线后接入真实数据） */}
+        {/* 右侧入口位:loading 占位;已登录→引力波额度+头像 Dropdown;未登录→登录按钮 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Tooltip title="用户额度（即将上线）">
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '5px 12px',
-              background: 'var(--surface-1)',
-              border: '1px solid var(--hairline)',
-              borderRadius: '9999px',
-              cursor: 'default',
-            }}>
-              <WalletOutlined style={{ fontSize: 12, color: 'var(--mute)' }} />
-              <span className="font-caption" style={{ fontSize: 12 }}>额度</span>
-              <span className="font-mono" style={{ fontSize: 12, color: 'var(--hairline-strong)' }}>--</span>
-            </div>
-          </Tooltip>
-          <Tooltip title="设置（即将上线）">
-            <div style={{
-              width: 30,
-              height: 30,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '50%',
-              border: '1px solid var(--hairline)',
-              background: 'var(--surface-1)',
-              color: 'var(--mute)',
-              cursor: 'default',
-            }}>
-              <SettingOutlined style={{ fontSize: 14 }} />
-            </div>
-          </Tooltip>
+          {loading ? (
+            <div style={{ width: 64, height: 30 }} />
+          ) : user ? (
+            <>
+              <Tooltip title="引力波额度(计费板块上线后接入)">
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 12px',
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--hairline)',
+                  borderRadius: '9999px',
+                  cursor: 'default',
+                }}>
+                  <WalletOutlined style={{ fontSize: 12, color: 'var(--mute)' }} />
+                  <span className="font-caption" style={{ fontSize: 12 }}>引力波</span>
+                  <span className="font-mono" style={{ fontSize: 12, color: 'var(--hairline-strong)' }}>--</span>
+                </div>
+              </Tooltip>
+              <Dropdown menu={{
+                items: [
+                  { key: 'uid', label: `UID ${user.uid}`, disabled: true },
+                  { type: 'divider' },
+                  { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, danger: true },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'logout') { logout(); setPage('home') }
+                },
+              }} placement="bottomRight">
+                <Avatar
+                  size={30}
+                  src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
+                  style={{ cursor: 'pointer', border: '1px solid var(--hairline)' }}
+                />
+              </Dropdown>
+            </>
+          ) : (
+            <Button type="primary" icon={<LoginOutlined />} onClick={() => setPage('auth')}>
+              登录
+            </Button>
+          )}
         </div>
       </div>
 
@@ -97,6 +121,12 @@ export default function App() {
         padding: '48px 24px 96px',
         width: '100%',
       }}>
+        {page === 'auth' && (
+          <AuthPage
+            onSuccess={() => setPage('home')}
+            onBack={() => setPage('home')}
+          />
+        )}
         {page === 'home' && (
           <HomePage onSubmit={handleSubmit} />
         )}
@@ -233,6 +263,7 @@ export default function App() {
         .ant-btn-primary {
           background: var(--accent) !important;
           border-color: var(--accent) !important;
+          color: #fff !important;
           border-radius: var(--r-btn) !important;
           font-weight: 500 !important;
           box-shadow: none !important;
