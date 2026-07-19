@@ -52,6 +52,7 @@ class TaskResponse(BaseModel):
     summary_status: Optional[str] = None    # "idle" | "generating" | "ready" | "failed"
     summary_error: Optional[str] = None
     summary_content: Optional[str] = None   # 总结正文（ready 时带回前端展示）
+    cleaned: Optional[bool] = None          # 用户已主动清理数据，下载按钮应禁用
     error: Optional[str] = None
 
 

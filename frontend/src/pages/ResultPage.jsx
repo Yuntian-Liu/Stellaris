@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Typography, Button, Space, Tag,
-  message, Descriptions, Spin, Popconfirm,
+  message, Descriptions, Spin, Popconfirm, Modal,
 } from 'antd'
 import {
   DownloadOutlined,
@@ -23,6 +23,8 @@ import {
   CheckCircleFilled,
   LoadingOutlined,
   BulbOutlined,
+  DeleteOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
 import ReactMarkdown from 'react-markdown'
@@ -33,6 +35,8 @@ export default function ResultPage({ taskData, onBack, onNew }) {
   // MD 导出状态：从 taskData 初始值来，后续本地维护
   const [mdStatus, setMdStatus] = useState(taskData.md_status || 'idle')
   const [mdError, setMdError] = useState(taskData.md_error || null)
+  // 数据是否已被用户清理（清理后下载区禁用）
+  const [cleaned, setCleaned] = useState(taskData.cleaned || false)
   const pollRef = useRef(null)
 
   // 组件卸载时清理轮询
@@ -49,6 +53,26 @@ export default function ResultPage({ taskData, onBack, onNew }) {
     a.download = `stellaris-${taskData.task_id}.${format}`
     a.click()
     message.success(`已下载 ${label}`)
+  }
+
+  // 用户主动清理数据（带二次确认）
+  const handleCleanup = () => {
+    Modal.confirm({
+      title: '清理提取数据？',
+      content: '请确认已下载所有需要的文件。清理后 SRT / TXT 将无法重新下载。',
+      okText: '确认清理',
+      okButtonProps: { danger: true },
+      cancelText: '再想想',
+      onOk: async () => {
+        try {
+          await api.cleanupTask(taskData.task_id)
+          setCleaned(true)
+          message.success('数据已清理')
+        } catch (e) {
+          message.error('清理失败：' + e.message)
+        }
+      },
+    })
   }
 
   // 触发 MD 导出
@@ -122,6 +146,27 @@ export default function ResultPage({ taskData, onBack, onNew }) {
         <Text className="font-body" style={{ fontSize: 15, color: 'var(--mute)' }}>
           {taskData.video_title || '未知视频'}
         </Text>
+
+        {/* 数据保留提示 / 已清理提示 */}
+        <div style={{
+          marginTop: 12,
+          padding: '8px 14px',
+          background: cleaned ? 'var(--surface-2)' : 'var(--accent-light)',
+          borderRadius: 'var(--r-input)',
+          display: 'inline-block',
+          maxWidth: '100%',
+        }}>
+          <Text style={{
+            fontSize: 12,
+            color: cleaned ? 'var(--mute)' : 'var(--accent)',
+            lineHeight: 1.6,
+          }}>
+            <InfoCircleOutlined style={{ marginRight: 6 }} />
+            {cleaned
+              ? '数据已清理，下载功能已关闭'
+              : '为节省服务器资源，提取结果将暂存 1 小时，请在此期间完成下载。'}
+          </Text>
+        </div>
       </div>
 
       {/* ── 结果卡片 ── */}
@@ -166,6 +211,7 @@ export default function ResultPage({ taskData, onBack, onNew }) {
           initialStatus={taskData.summary_status}
           initialContent={taskData.summary_content}
           initialError={taskData.summary_error}
+          cleaned={cleaned}
         />
 
         {/* 预览区：展示真实文本内容 */}
@@ -197,10 +243,13 @@ export default function ResultPage({ taskData, onBack, onNew }) {
           </div>
         </div>
 
-        {/* 下载区 */}
+        {/* 下载区（清理后变灰禁用） */}
         <div style={{
           paddingTop: 18,
           borderTop: '1px solid var(--hairline)',
+          opacity: cleaned ? 0.4 : 1,
+          pointerEvents: cleaned ? 'none' : 'auto',
+          transition: 'opacity 0.3s',
         }}>
           <div style={{
             display: 'flex',
@@ -265,6 +314,16 @@ export default function ResultPage({ taskData, onBack, onNew }) {
             >
               再来一个
             </Button>
+            {!cleaned && (
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={handleCleanup}
+                style={{ borderRadius: 'var(--r-btn)', height: 36 }}
+              >
+                清理数据
+              </Button>
+            )}
           </Space>
         </div>
       </div>
@@ -456,7 +515,7 @@ const MD_COMPONENTS = {
   ),
 }
 
-function SummarySection({ taskId, initialStatus, initialContent, initialError }) {
+function SummarySection({ taskId, initialStatus, initialContent, initialError, cleaned }) {
   const [status, setStatus] = useState(initialStatus || 'idle')
   const [content, setContent] = useState(initialContent || '')
   const [error, setError] = useState(initialError || null)
@@ -559,6 +618,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError })
           >
             <Button
               icon={<BulbOutlined />}
+              disabled={cleaned}
               style={{ minWidth: 84, height: 36, borderRadius: 'var(--r-btn)' }}
             >
               生成

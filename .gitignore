@@ -36,7 +36,7 @@ downloads/
 # ===== Local dev docs (private, not for repo) =====
 CONTEXT.md
 DEVELOPMENT.md
-KIMI_MEMORY.md
+ABOUT_ME.md
 
 # ===== Local scripts =====
 *.bat

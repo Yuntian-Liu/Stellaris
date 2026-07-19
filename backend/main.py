@@ -4,6 +4,7 @@ Stellaris 后端入口 — FastAPI 应用
 """
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from config import (
     MAX_CONCURRENT_TASKS,
     SPEECH_CHARS_PER_MIN, CHARS_PER_TOKEN, LLM_TOKEN_ROUNDTRIP_FACTOR,
 )
-from utils import generate_task_id, cleanup_temp_files, check_disk_space
+from utils import generate_task_id, cleanup_temp_files, cleanup_old_tasks, check_disk_space
 from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
@@ -42,11 +43,30 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期：启动/关闭时的初始化/清理"""
     print("[Stellaris] starting up...")
+    # 启动时清理上次进程留下的过期任务文件
+    cleaned = cleanup_old_tasks(max_age_hours=1)
+    if cleaned:
+        print(f"[Stellaris] 启动清理：删除 {cleaned} 个过期任务目录")
+    # 起后台定时清理任务（每 10 分钟扫一次）
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
     yield
-    # 清理所有临时文件
+    # 关闭：取消定时任务 + 清理所有临时文件
+    cleanup_task.cancel()
     for task_id in list(tasks.keys()):
         cleanup_temp_files(task_id)
     print("[Stellaris] shut down. Temp files cleaned.")
+
+
+async def _periodic_cleanup():
+    """后台定时清理：每 10 分钟扫描并清理超过 1 小时的任务文件。"""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            cleaned = cleanup_old_tasks(max_age_hours=1)
+            if cleaned:
+                logger.info("[Cleanup] 定时清理：删除 %d 个过期任务", cleaned)
+        except Exception as e:
+            logger.error("[Cleanup] 定时清理失败: %s", e)
 
 
 app = FastAPI(
@@ -187,6 +207,23 @@ async def get_task_status(task_id: str):
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    return TaskResponse(**task)
+
+
+@app.delete("/api/task/{task_id}", response_model=TaskResponse)
+async def delete_task(task_id: str):
+    """
+    用户主动清理任务数据（删除临时文件，不可恢复）。
+    任务状态保留在内存（前端刷新仍能看到 cleaned 标记）。
+    """
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    cleanup_temp_files(task_id)
+    task["cleaned"] = True
+    logger.info("[Cleanup] 用户主动清理: %s", task_id)
 
     return TaskResponse(**task)
 
@@ -349,6 +386,7 @@ def _run_pipeline_sync(
             "subtitle_source": subtitle_source,
             "md_status": "idle",                    # MD 尚未生成
             "summary_status": "idle",               # 总结尚未生成
+            "completed_at": time.time(),            # 完成时间戳（自动清理用）
             "message": "完成！",
         })
 
@@ -408,6 +446,7 @@ def _run_pipeline_from_file_sync(
             "subtitle_source": "asr_mimo",
             "md_status": "idle",
             "summary_status": "idle",
+            "completed_at": time.time(),            # 完成时间戳（自动清理用）
             "message": "完成！",
         })
 

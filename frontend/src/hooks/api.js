@@ -97,5 +97,17 @@ export async function estimate(url) {
   return res.json()
 }
 
+/**
+ * 用户主动清理任务数据（删除临时文件，不可恢复）
+ */
+export async function cleanupTask(taskId) {
+  const res = await fetch(`${BASE_URL}/api/task/${taskId}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `清理失败 (${res.status})`)
+  }
+  return res.json()
+}
+
 // 默认导出（方便 import api from './api'）
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, cleanupTask }
