@@ -1,19 +1,70 @@
 """
 管线第 1 步：下载视频 / 接收文件 → 提取音频
+
+B站链接走 pipeline.bilibili_api 纯 API 直连（绕开 yt-dlp 网页抓取被
+412 风控的问题，数据中心 IP 可用）；其他站点走 yt-dlp。
 """
 import subprocess
 import sys
 from pathlib import Path
 
 from config import FFMPEG_PATH, BILIBILI_FORMAT, DOWNLOAD_TIMEOUT_SEC
+from pipeline.bilibili_api import (
+    is_bilibili_url, resolve_bvid, fetch_video_info, fetch_audio_url,
+    download_to_file,
+)
 from utils import get_task_dir
 
 
 def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> dict:
     """
-    用 yt-dlp 下载 B站视频的音频
+    下载视频音频。B站走 API 直连，其他站点走 yt-dlp。
     返回: {"audio_path": Path, "video_title": str}
     """
+    if is_bilibili_url(url):
+        return _download_bilibili_via_api(url, task_id, sessdata)
+    return _download_via_ytdlp(url, task_id, sessdata)
+
+
+def _download_bilibili_via_api(
+    url: str, task_id: str, sessdata: str | None
+) -> dict:
+    """B站 API 直连：view 拿 cid → playurl 拿音频直链 → 下载 m4s → ffmpeg 转 mp3"""
+    task_dir = get_task_dir(task_id)
+    bvid = resolve_bvid(url, sessdata)
+    info = fetch_video_info(bvid, sessdata)
+    audio_url = fetch_audio_url(bvid, info["cid"], sessdata)
+
+    m4s_path = task_dir / "audio.m4s"
+    download_to_file(audio_url, m4s_path, sessdata,
+                     timeout=DOWNLOAD_TIMEOUT_SEC)
+
+    # m4s → mp3（与 extract_audio_from_file 同款参数）
+    audio_path = task_dir / "audio.mp3"
+    cmd = [
+        FFMPEG_PATH,
+        "-i", str(m4s_path),
+        "-vn",
+        "-acodec", "libmp3lame",
+        "-ab", "192k",
+        "-y",
+        str(audio_path),
+    ]
+    result = subprocess.run(
+        cmd, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=300,
+    )
+    m4s_path.unlink(missing_ok=True)     # 原始流用完即删，只留 mp3
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg 转码失败: {result.stderr[-500:]}")
+
+    return {"audio_path": audio_path, "video_title": info["title"]}
+
+
+def _download_via_ytdlp(
+    url: str, task_id: str, sessdata: str | None
+) -> dict:
+    """yt-dlp 通用路径（非 B站站点；B站网页抓取在数据中心 IP 会被 412）"""
     task_dir = get_task_dir(task_id)
     audio_path = task_dir / "audio.mp3"
 
@@ -75,9 +126,18 @@ def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> di
 
 def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
     """
-    只拉取 B站视频元数据（不下载），用于提取前的成本预估。
+    只拉取视频元数据（不下载），用于提取前的成本预估。
+    B站走 API 直连，其他站点走 yt-dlp。
     返回: {"title": str, "duration_sec": float}
     """
+    if is_bilibili_url(url):
+        info = fetch_video_info(resolve_bvid(url, sessdata), sessdata)
+        return {"title": info["title"], "duration_sec": info["duration_sec"]}
+    return _probe_via_ytdlp(url, sessdata)
+
+
+def _probe_via_ytdlp(url: str, sessdata: str | None = None) -> dict:
+    """yt-dlp 通用元数据探测（非 B站站点）"""
     import json
 
     cmd = [

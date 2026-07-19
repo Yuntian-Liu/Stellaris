@@ -132,7 +132,7 @@ export default function HomePage({ onSubmit }) {
           听见，然后读懂。
         </h1>
         <Text className="font-body" style={{ fontSize: 16, color: 'var(--mute)' }}>
-          贴上 B 站链接，把视频里说的话变成可以阅读的文字
+          贴上视频链接，把视频里说的话变成可以阅读的文字
         </Text>
       </div>
 
@@ -141,13 +141,13 @@ export default function HomePage({ onSubmit }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* B站链接输入 */}
+          {/* 视频链接输入 */}
           <div>
             <label className="font-caption" style={{ display: 'block', marginBottom: 8 }}>
-              Bilibili 链接
+              视频链接
             </label>
             <Input
-              placeholder="粘贴 B 站视频链接，如 https://b23.tv/..."
+              placeholder="粘贴视频链接，支持 B 站 / 小红书等主流平台"
               size="large"
               value={url}
               onChange={handleUrlChange}
@@ -259,7 +259,7 @@ export default function HomePage({ onSubmit }) {
               label: (
                 <span className="font-caption">
                   <InfoCircleOutlined style={{ marginRight: 6 }} />
-                  可选：B 站登录令牌（更快提取 CC 字幕）
+                  可选：B 站登录令牌（仅 B 站链接，更快提取 CC 字幕）
                 </span>
               ),
               children: (
