@@ -2,6 +2,7 @@
 管线第 1 步：下载视频 / 接收文件 → 提取音频
 """
 import subprocess
+import sys
 from pathlib import Path
 
 from config import FFMPEG_PATH, BILIBILI_FORMAT, DOWNLOAD_TIMEOUT_SEC
@@ -20,7 +21,7 @@ def download_bilibili(url: str, task_id: str) -> dict:
     # --write-info-json 顺手落一份元数据，用于取真实视频标题
     # （注意：--print 会让 yt-dlp 跳过下载，不能用于此处）
     cmd = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",   # 用当前解释器跑 yt_dlp 模块（venv 隔离，不依赖系统 PATH）
         "-x",                          # 只提取音频
         "--audio-format", "mp3",
         "--audio-quality", "0",        # 最佳音质
@@ -64,7 +65,7 @@ def probe_bilibili_info(url: str) -> dict:
     import json
 
     cmd = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",   # 用当前解释器跑 yt_dlp 模块（venv 隔离，不依赖系统 PATH）
         "--dump-single-json",      # 输出完整 JSON 元数据
         "--no-playlist",
         "--skip-download",         # 不下载任何内容

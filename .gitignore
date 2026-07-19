@@ -32,6 +32,7 @@ Thumbs.db
 tmp/
 cache/
 downloads/
+.devlogs/
 
 # ===== Local dev docs (private, not for repo) =====
 CONTEXT.md
@@ -40,4 +41,5 @@ ABOUT_ME.md
 
 # ===== Local scripts =====
 *.bat
+*.sh
 

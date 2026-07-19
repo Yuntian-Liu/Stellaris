@@ -21,14 +21,28 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TMP_DIR = BASE_DIR / "tmp"
 TMP_DIR.mkdir(exist_ok=True)
 
-# ===== FFmpeg 路径（Windows winget 安装位置）=====
-FFMPEG_PATH = os.getenv(
-    "FFMPEG_PATH",
-    r"C:\Users\Yuntian\AppData\Local\Microsoft\WinGet\Packages"
-    r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
-    r"\ffmpeg-8.1.2-full_build\bin\ffmpeg.exe",
+# ===== FFmpeg 路径（跨平台）=====
+# 注意：yt-dlp 的 --ffmpeg-location 只认「完整路径或目录」，不接受裸命令名 "ffmpeg"，
+# 所以 Mac/Linux 用 shutil.which 把 PATH 里的 ffmpeg 解析成完整路径再赋值。
+# （直接 subprocess 调 ffmpeg 那几处也兼容完整路径，所以一个变量两种用法都对。）
+# 任何平台都可在 backend/.env 用 FFMPEG_PATH / FFPROBE_PATH 覆盖。
+import shutil
+import sys
+if sys.platform == "win32":
+    # Windows：winget 装在用户目录且未加入 PATH，故写死完整路径
+    _FFMPEG_DEFAULT = (
+        r"C:\Users\Yuntian\AppData\Local\Microsoft\WinGet\Packages"
+        r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        r"\ffmpeg-8.1.2-full_build\bin\ffmpeg.exe"
+    )
+else:
+    # Mac（brew）/ Linux（apt）：ffmpeg 在 PATH 里，解析成完整路径供 yt-dlp 使用
+    _FFMPEG_DEFAULT = shutil.which("ffmpeg") or "ffmpeg"
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", _FFMPEG_DEFAULT)
+# ffprobe 推导："ffmpeg"→"ffprobe" 同时兼容带 .exe 后缀，Mac/Windows 通用
+FFPROBE_PATH = os.getenv(
+    "FFPROBE_PATH", FFMPEG_PATH.replace("ffmpeg", "ffprobe")
 )
-FFPROBE_PATH = FFMPEG_PATH.replace("ffmpeg.exe", "ffprobe.exe")
 
 # ===== 服务器资源限制（4GB RAM 生存策略）=====
 MAX_CONCURRENT_TASKS = 1          # 串行处理，防 OOM

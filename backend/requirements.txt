@@ -8,5 +8,8 @@ yt-dlp>=2024.0.0
 # ===== 环境变量 ===
 python-dotenv>=1.0.0
 
+# ===== LLM / ASR 客户端（OpenAI 兼容 SDK，DeepSeek + Mimo 都用）===
+openai>=1.0.0
+
 # ===== 小米 Mimo ASR（待确认 SDK 名）===
 # mimo-asr  # TODO: 等 Mimo 文档后补充
