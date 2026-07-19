@@ -59,6 +59,7 @@ class TaskResponse(BaseModel):
 class EstimateRequest(BaseModel):
     """成本预估请求体"""
     url: str = Field(..., description="B站视频链接")
+    sessdata: Optional[str] = Field(None, description="B站 SESSDATA（可选，会员视频探测/反爬用）")
 
 
 class EstimateResponse(BaseModel):

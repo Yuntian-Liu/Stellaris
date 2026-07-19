@@ -22,5 +22,9 @@ COPY backend/ .
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 ENV PYTHONUNBUFFERED=1
+# 数据持久化：默认指向 Zeabur Volume 挂载点（db + 字幕文件）。
+# 不挂 Volume 则退回容器内路径（重启即丢），也可在 Zeabur Variables 覆盖。
+ENV DATA_DIR=/app/storage/data \
+    TMP_DIR=/app/storage/tmp
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

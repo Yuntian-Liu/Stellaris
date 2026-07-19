@@ -51,7 +51,7 @@ export default function HomePage({ onSubmit }) {
     setEstimating(true)
     setError(null)
     try {
-      const data = await api.estimate(url.trim())
+      const data = await api.estimate(url.trim(), sessdata.trim())
       setEstimateData(data)
     } catch (e) {
       setError(e.message || '无法解析视频信息，请检查链接是否正确')

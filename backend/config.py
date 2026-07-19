@@ -18,7 +18,8 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ===== 临时文件目录（用户下载的字幕 SRT/TXT/MD;生产必须持久化,走环境变量指向 Volume）=====
-TMP_DIR = Path(os.getenv("TMP_DIR", str(BASE_DIR / "tmp")))
+# strip() 防御：PaaS 控制台粘贴变量值容易带空格，Path(" /app/...") 会变相对路径静默写错地方
+TMP_DIR = Path(os.getenv("TMP_DIR", str(BASE_DIR / "tmp")).strip())
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== FFmpeg 路径（跨平台）=====
@@ -78,8 +79,8 @@ LLM_TOKEN_ROUNDTRIP_FACTOR = 2.0
 
 
 # ===== 用户系统（Auth）配置 =====
-# 数据目录（SQLite 数据库文件存放处，已 gitignore;支持环境变量指向 Volume）
-DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "backend" / "data")))
+# 数据目录（SQLite 数据库文件存放处，已 gitignore;支持环境变量指向 Volume;strip 防空格污染，同 TMP_DIR）
+DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "backend" / "data")).strip())
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 # SQLAlchemy async URL（aiosqlite driver；as_posix() 避免 Windows 反斜杠）
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR.as_posix()}/stellaris.db")

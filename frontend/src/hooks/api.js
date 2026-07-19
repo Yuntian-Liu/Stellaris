@@ -47,7 +47,8 @@ export const upload = (formData) => request('/api/upload', { method: 'POST', bod
 export const getTask = (taskId) => request(`/api/task/${taskId}`)
 export const exportMarkdown = (taskId) => request(`/api/export_md/${taskId}`, { method: 'POST' })
 export const summarize = (taskId) => request(`/api/summarize/${taskId}`, { method: 'POST' })
-export const estimate = (url) => request('/api/estimate', { method: 'POST', body: { url } })
+export const estimate = (url, sessdata) =>
+  request('/api/estimate', { method: 'POST', body: { url, sessdata: sessdata || null } })
 export const cleanupTask = (taskId) => request(`/api/task/${taskId}`, { method: 'DELETE' })
 
 // 下载是 <a> 直接触发,不走 fetch(后端 download 未加鉴权,无需 token)
