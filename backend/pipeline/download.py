@@ -9,7 +9,7 @@ from config import FFMPEG_PATH, BILIBILI_FORMAT, DOWNLOAD_TIMEOUT_SEC
 from utils import get_task_dir
 
 
-def download_bilibili(url: str, task_id: str) -> dict:
+def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> dict:
     """
     用 yt-dlp 下载 B站视频的音频
     返回: {"audio_path": Path, "video_title": str}
@@ -29,8 +29,24 @@ def download_bilibili(url: str, task_id: str) -> dict:
         "--ffmpeg-location", FFMPEG_PATH,
         "--no-playlist",                # 不下载播放列表
         "--write-info-json",            # 写元数据 JSON（取标题用）
-        url,
+        # ── 反爬绕过（不依赖用户 cookie,通用解法）──
+        # 1. 最新版 Chrome UA,模拟真实浏览器
+        "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "--referer", "https://www.bilibili.com/",
+        "--add-header", "Accept-Language:zh-CN,zh;q=0.9,en;q=0.8",
+        # 2. 模拟完整的浏览器请求头,避免被特征识别为爬虫
+        "--add-header", "Origin:https://www.bilibili.com",
+        "--add-header", "Sec-Ch-Ua:\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
+        "--add-header", "Sec-Fetch-Dest:document",
+        "--add-header", "Sec-Fetch-Mode:navigate",
+        "--add-header", "Sec-Fetch-Site:same-origin",
+        # 3. 用 yt-dlp 原生的 B站 extractor 而不是通用抓取
+        "--extractor-args", "bilibili:webpage=1"
     ]
+    # 带用户 B站登录 cookie（SESSDATA），绕过反爬 + 能看会员视频
+    if sessdata:
+        cmd += ["--add-header", f"Cookie:SESSDATA={sessdata}"]
+    cmd.append(url)
 
     result = subprocess.run(
         cmd,
@@ -57,7 +73,7 @@ def download_bilibili(url: str, task_id: str) -> dict:
     }
 
 
-def probe_bilibili_info(url: str) -> dict:
+def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
     """
     只拉取 B站视频元数据（不下载），用于提取前的成本预估。
     返回: {"title": str, "duration_sec": float}
@@ -70,8 +86,19 @@ def probe_bilibili_info(url: str) -> dict:
         "--no-playlist",
         "--skip-download",         # 不下载任何内容
         "--ffmpeg-location", FFMPEG_PATH,
-        url,
+        # 反爬：同 download_bilibili（不依赖 cookie,通用解法）
+        "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "--referer", "https://www.bilibili.com/",
+        "--add-header", "Accept-Language:zh-CN,zh;q=0.9,en;q=0.8",
+        "--add-header", "Origin:https://www.bilibili.com",
+        "--add-header", "Sec-Ch-Ua:\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
+        "--add-header", "Sec-Fetch-Dest:document",
+        "--add-header", "Sec-Fetch-Mode:navigate",
+        "--add-header", "Sec-Fetch-Site:same-origin",
     ]
+    if sessdata:
+        cmd += ["--add-header", f"Cookie:SESSDATA={sessdata}"]
+    cmd.append(url)
 
     result = subprocess.run(
         cmd,

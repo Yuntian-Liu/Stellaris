@@ -119,7 +119,7 @@ async def estimate_cost(request: EstimateRequest):
     估算转写字数与 LLM 语义分段 tokens，让用户确认后再提交。
     """
     try:
-        info = await asyncio.to_thread(probe_bilibili_info, request.url)
+        info = await asyncio.to_thread(probe_bilibili_info, request.url, request.sessdata)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -357,7 +357,7 @@ def _run_pipeline_sync(
         _update_status(task_id, TaskStatus.DOWNLOADING, 10)
 
         # ① 下载音频
-        result = download_bilibili(url, task_id)
+        result = download_bilibili(url, task_id, sessdata)
         audio_path = result["audio_path"]
         video_title = result["video_title"]
         _update_status(task_id, TaskStatus.EXTRACTING_AUDIO, 30)
