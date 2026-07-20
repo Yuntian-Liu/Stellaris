@@ -105,8 +105,23 @@ export default function HomePage({ onSubmit }) {
 
   return (
     <div className="page-enter">
-      {/* ── Hero 区域 ── */}
-      <div style={{ textAlign: 'center', marginBottom: 44 }}>
+      {/* ── Hero 区域（微光星点氛围）── */}
+      <div style={{ textAlign: 'center', marginBottom: 44, position: 'relative' }}>
+        {/* 星点：极克制的闪烁（藏星主题） */}
+        <span className="star-dot" style={{ top: -18, left: '12%', fontSize: 13, animationDelay: '0s' }}>✦</span>
+        <span className="star-dot" style={{ top: 8, right: '15%', fontSize: 10, animationDelay: '0.9s' }}>✦</span>
+        <span className="star-dot" style={{ top: 64, left: '6%', fontSize: 9, animationDelay: '1.7s' }}>✦</span>
+        <span className="star-dot" style={{ top: 96, right: '8%', fontSize: 12, animationDelay: '2.4s' }}>✦</span>
+        <span className="star-dot" style={{ top: 122, left: '20%', fontSize: 8, animationDelay: '3s' }}>✦</span>
+        {/* 标题后的柔和光晕 */}
+        <div style={{
+          position: 'absolute',
+          top: '40%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 480, height: 220,
+          background: 'radial-gradient(ellipse at center, rgba(99,102,241,0.07) 0%, transparent 70%)',
+          pointerEvents: 'none',
+        }} />
         <div style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -115,6 +130,7 @@ export default function HomePage({ onSubmit }) {
           background: 'var(--accent-light)',
           borderRadius: '9999px',
           marginBottom: 20,
+          position: 'relative',
         }}>
           <span style={{ color: 'var(--accent)', fontSize: 13, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
           <span className="font-caption" style={{

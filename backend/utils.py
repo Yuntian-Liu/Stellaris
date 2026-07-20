@@ -37,19 +37,19 @@ def cleanup_temp_files(task_id: str) -> None:
         shutil.rmtree(task_dir, ignore_errors=True)
 
 
-def cleanup_old_tasks(max_age_hours: float = 1.0) -> int:
+def cleanup_old_tasks(max_age_hours: float = 1.0) -> list[str]:
     """
     扫描 tmp/ 目录，清理超过 max_age_hours 的任务目录（按目录 mtime 判断）。
     用于自动延迟清理：任务完成后保留一段时间供下载，超期自动删除。
 
     Returns:
-        清理的目录数量
+        被清理的任务 ID 列表（调用方需联动清理对话记录等关联数据）
     """
     if not TMP_DIR.exists():
-        return 0
+        return []
     max_age_sec = max_age_hours * 3600
     now = time.time()
-    cleaned = 0
+    removed = []
     for task_dir in TMP_DIR.iterdir():
         if not task_dir.is_dir():
             continue
@@ -59,8 +59,8 @@ def cleanup_old_tasks(max_age_hours: float = 1.0) -> int:
             continue
         if now - mtime > max_age_sec:
             shutil.rmtree(task_dir, ignore_errors=True)
-            cleaned += 1
-    return cleaned
+            removed.append(task_dir.name)
+    return removed
 
 
 def check_disk_space() -> bool:

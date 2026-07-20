@@ -3,6 +3,7 @@ Stellaris 后端入口 — FastAPI 应用
 路由：健康检查 / 提交任务 / 查询状态 / 下载结果
 """
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from config import (
     MAX_CONCURRENT_TASKS,
@@ -21,11 +22,13 @@ from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
     EstimateRequest, EstimateResponse,
+    ChatRequest,
 )
 from pipeline.download import download_bilibili, extract_audio_from_file, probe_bilibili_info
 from pipeline.subtitle import fetch_cc_subtitle
 from pipeline.asr import transcribe_with_mimo
-from pipeline.llm import segment_text, text_to_markdown, summarize_text
+from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_with_subtitle_stream
+from chat_store import save_chat_message, get_chat_history, delete_chat_messages
 from pipeline.export import (
     segments_to_srt, segments_to_txt,
     bilibili_subtitle_to_segments, save_exports,
@@ -46,10 +49,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期：启动/关闭时的初始化/清理"""
     print("[Stellaris] starting up...")
-    # 启动时清理上次进程留下的过期任务文件
-    cleaned = cleanup_old_tasks(max_age_hours=1)
-    if cleaned:
-        print(f"[Stellaris] 启动清理：删除 {cleaned} 个过期任务目录")
+    # 启动时清理上次进程留下的过期任务文件（联动删对话记录）
+    removed = cleanup_old_tasks(max_age_hours=1)
+    if removed:
+        print(f"[Stellaris] 启动清理：删除 {len(removed)} 个过期任务目录")
+        for tid in removed:
+            await delete_chat_messages(tid)
     # 起后台定时清理任务（每 10 分钟扫一次）
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     # 初始化数据库（建表）
@@ -64,13 +69,15 @@ async def lifespan(app: FastAPI):
 
 
 async def _periodic_cleanup():
-    """后台定时清理：每 10 分钟扫描并清理超过 1 小时的任务文件。"""
+    """后台定时清理：每 10 分钟扫描并清理超过 1 小时的任务文件（联动删对话记录）。"""
     while True:
         await asyncio.sleep(600)
         try:
-            cleaned = cleanup_old_tasks(max_age_hours=1)
-            if cleaned:
-                logger.info("[Cleanup] 定时清理：删除 %d 个过期任务", cleaned)
+            removed = cleanup_old_tasks(max_age_hours=1)
+            if removed:
+                logger.info("[Cleanup] 定时清理：删除 %d 个过期任务", len(removed))
+                for tid in removed:
+                    await delete_chat_messages(tid)
         except Exception as e:
             logger.error("[Cleanup] 定时清理失败: %s", e)
 
@@ -242,6 +249,7 @@ async def delete_task(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
 
     cleanup_temp_files(task_id)
+    await delete_chat_messages(task_id)
     task["cleaned"] = True
     logger.info("[Cleanup] 用户主动清理: %s", task_id)
 
@@ -333,6 +341,93 @@ async def summarize_task(
     background_tasks.add_task(_generate_summary_background, task_id)
 
     return TaskResponse(**task)
+
+
+@app.post("/api/chat/{task_id}")
+async def chat_about_video(task_id: str, request: ChatRequest):
+    """
+    AI 解读对话（SSE 流式，增值功能）
+    字幕全文放 system 且逐字一致，后续轮次自动命中 DeepSeek 前缀缓存（输入价 1/8）。
+    事件协议：data: {"type":"delta","text":...} / {"type":"done","usage":...} / {"type":"error","message":...}
+    """
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.get("status") != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="任务尚未完成，无法对话")
+    if task.get("cleaned"):
+        raise HTTPException(status_code=410, detail="数据已清理，对话不可用")
+    if not task.get("raw_text"):
+        raise HTTPException(status_code=500, detail="字幕文本缺失，无法对话")
+
+    # history 兜底截断：最近 8 条（前端已截，双保险；单条长度由 schema 限 2000）
+    history = [{"role": m.role, "content": m.content} for m in request.history[-8:]]
+    # 本轮提问追加为最后一条 user 消息
+    history.append({"role": "user", "content": request.message})
+
+    raw_text = task["raw_text"]
+    video_title = task.get("video_title") or "未知视频"
+
+    async def sse_generator():
+        """同步 LLM 流丢线程池，经队列桥接为 async 迭代（不阻塞事件循环）"""
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue()
+
+        def worker():
+            pieces = []
+            try:
+                for kind, payload in chat_with_subtitle_stream(
+                    raw_text, video_title, history, task_id,
+                ):
+                    if kind == "delta":
+                        pieces.append(payload)
+                        loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
+                    else:  # done：附带完整回复，供落库
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait, (kind, (payload, "".join(pieces)))
+                        )
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        producer = asyncio.create_task(asyncio.to_thread(worker))
+        full_reply = None
+        final_usage = None
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            kind, payload = item
+            if kind == "delta":
+                body = {"type": "delta", "text": payload}
+            elif kind == "done":
+                final_usage, full_reply = payload
+                body = {"type": "done", "usage": final_usage}
+            else:
+                body = {"type": "error", "message": payload}
+            yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+        await producer
+
+        # 对话成功完成才落库（失败不留半截记录）
+        if full_reply:
+            await save_chat_message(task_id, "user", request.message)
+            await save_chat_message(task_id, "assistant", full_reply, final_usage)
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/chat/{task_id}")
+async def get_chat(task_id: str):
+    """取回某任务的 AI 解读对话记录（面板打开/刷新时恢复）"""
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"messages": await get_chat_history(task_id)}
 
 
 # ===== 核心管线（后台执行）=====

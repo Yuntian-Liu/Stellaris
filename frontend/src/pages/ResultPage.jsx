@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Typography, Button, Space, Tag,
-  message, Descriptions, Spin, Popconfirm, Modal,
+  message, Spin, Popconfirm, Modal,
 } from 'antd'
 import {
   DownloadOutlined,
@@ -28,15 +28,18 @@ import {
 } from '@ant-design/icons'
 import api from '../hooks/api'
 import ReactMarkdown from 'react-markdown'
+import ChatPanel from '../components/ChatPanel'
 
 const { Text, Paragraph } = Typography
 
-export default function ResultPage({ taskData, onBack, onNew }) {
+export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
   // MD 导出状态：从 taskData 初始值来，后续本地维护
   const [mdStatus, setMdStatus] = useState(taskData.md_status || 'idle')
   const [mdError, setMdError] = useState(taskData.md_error || null)
   // 数据是否已被用户清理（清理后下载区禁用）
   const [cleaned, setCleaned] = useState(taskData.cleaned || false)
+  // AI 解读分栏态（展开时通知 App 扩宽容器）
+  const [chatOpen, setChatOpen] = useState(false)
   const pollRef = useRef(null)
 
   // 组件卸载时清理轮询
@@ -45,6 +48,14 @@ export default function ResultPage({ taskData, onBack, onNew }) {
       if (pollRef.current) clearTimeout(pollRef.current)
     }
   }, [])
+
+  const toggleChat = (open) => {
+    setChatOpen(open)
+    onChatToggle?.(open)
+  }
+
+  // 卸载时兜底复位容器宽度
+  useEffect(() => () => onChatToggle?.(false), [onChatToggle])
 
   const handleDownload = (format, label) => {
     const url = api.getDownloadUrl(taskData.task_id, format)
@@ -121,8 +132,15 @@ export default function ResultPage({ taskData, onBack, onNew }) {
 
   return (
     <div className="page-enter">
-      {/* ── 完成标识 ── */}
-      <div style={{ textAlign: 'center', marginBottom: 32 }}>
+      {/* ── 完成标识（三部分竖排堆叠：标题 / 视频标题 / 保留提示）── */}
+      <div style={{
+        textAlign: 'center',
+        marginBottom: 32,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 12,
+      }}>
         <div className="check-pop" style={{
           width: 56,
           height: 56,
@@ -131,11 +149,14 @@ export default function ResultPage({ taskData, onBack, onNew }) {
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          marginBottom: 16,
+          position: 'relative',
         }}>
           <CheckCircleFilled style={{ fontSize: 28, color: 'var(--success)' }} />
+          {/* 完成时刻的小星星（彩蛋） */}
+          <span className="star-dot" style={{ top: -12, right: -8, fontSize: 11, animationDelay: '0.4s' }}>✦</span>
+          <span className="star-dot" style={{ bottom: -8, left: -10, fontSize: 8, animationDelay: '1.6s' }}>✦</span>
         </div>
-        <h2 className="font-display font-display-sm" style={{ color: 'var(--ink)', marginTop: 0 }}>
+        <h2 className="font-display font-display-sm" style={{ color: 'var(--ink)', margin: 0 }}>
           字幕提取完成
         </h2>
         <Text className="font-body" style={{ fontSize: 15, color: 'var(--mute)' }}>
@@ -144,7 +165,6 @@ export default function ResultPage({ taskData, onBack, onNew }) {
 
         {/* 数据保留提示 / 已清理提示 */}
         <div style={{
-          marginTop: 12,
           padding: '8px 14px',
           background: cleaned ? 'var(--surface-2)' : 'var(--accent-light)',
           borderRadius: 'var(--r-input)',
@@ -164,41 +184,49 @@ export default function ResultPage({ taskData, onBack, onNew }) {
         </div>
       </div>
 
-      {/* ── 结果卡片 ── */}
-      <div className="card card--elevated" style={{ padding: '24px 24px 20px' }}>
+      {/* ── 分栏行：结果卡 + AI 解读面板（面板与卡片顶底对齐）── */}
+      <div style={chatOpen ? {
+        display: 'flex', gap: 24, alignItems: 'stretch', flexWrap: 'wrap',
+      } : undefined}>
 
-        {/* 元信息 */}
-        <Descriptions
-          column={1}
-          size="small"
-          colon={false}
-          style={{ marginBottom: 20 }}
-          labelStyle={{ fontSize: 13, color: 'var(--mute)' }}
-          contentStyle={{ fontWeight: 500, color: 'var(--ink)', fontSize: 14 }}
-        >
-          <Descriptions.Item label="来源">
-            <Tag style={{
-              background: 'var(--accent-light)',
-              color: 'var(--accent)',
-              border: 'none',
-              borderRadius: '9999px',
-              fontWeight: 500,
-              fontSize: 12,
-              padding: '2px 10px',
-            }}>
-              {platform}
-            </Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label="任务 ID">
-            <code className="font-mono" style={{
-              background: 'var(--surface-2)',
-              padding: '2px 8px',
-              borderRadius: 6,
-              fontSize: 12,
-              color: 'var(--body)',
-            }}>{taskData.task_id}</code>
-          </Descriptions.Item>
-        </Descriptions>
+      {/* ── 结果卡片 ── */}
+      <div className="card card--elevated" style={{
+        padding: '24px 24px 20px',
+        ...(chatOpen ? { width: 760, flexShrink: 0, maxWidth: '100%' } : {}),
+      }}>
+
+        {/* 元信息（标签列 + 内容列，内容左边缘对齐） */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '64px 1fr',
+          rowGap: 10,
+          alignItems: 'center',
+          marginBottom: 20,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--mute)' }}>来源</span>
+          <Tag style={{
+            background: 'var(--accent-light)',
+            color: 'var(--accent)',
+            border: 'none',
+            borderRadius: '9999px',
+            fontWeight: 500,
+            fontSize: 12,
+            padding: '2px 10px',
+            margin: 0,
+            justifySelf: 'start',
+          }}>
+            {platform}
+          </Tag>
+          <span style={{ fontSize: 13, color: 'var(--mute)' }}>任务 ID</span>
+          <code className="font-mono" style={{
+            background: 'var(--surface-2)',
+            padding: '2px 8px',
+            borderRadius: 6,
+            fontSize: 12,
+            color: 'var(--body)',
+            justifySelf: 'start',
+          }}>{taskData.task_id}</code>
+        </div>
 
         {/* 内容概要（增值功能，可折叠） */}
         <SummarySection
@@ -237,6 +265,28 @@ export default function ResultPage({ taskData, onBack, onNew }) {
             {previewText}
           </div>
         </div>
+
+        {/* AI 解读入口（分栏关闭时显示） */}
+        {!chatOpen && (
+          <div style={{ marginBottom: 20 }}>
+            <button
+              className="chat-entry"
+              onClick={() => toggleChat(true)}
+              disabled={cleaned}
+            >
+              <BulbOutlined style={{ fontSize: 16, color: 'var(--accent)' }} />
+              <span style={{ flex: 1, textAlign: 'left' }}>
+                <span style={{ display: 'block', fontWeight: 500, fontSize: 14, color: 'var(--ink)' }}>
+                  AI 解读
+                </span>
+                <span style={{ display: 'block', fontSize: 12, color: 'var(--mute)', marginTop: 2 }}>
+                  针对这个视频追问 AI，多轮对话深入理解
+                </span>
+              </span>
+              <span style={{ color: 'var(--hairline-strong)', fontSize: 13 }}>→</span>
+            </button>
+          </div>
+        )}
 
         {/* 下载区（清理后变灰禁用） */}
         <div style={{
@@ -321,6 +371,40 @@ export default function ResultPage({ taskData, onBack, onNew }) {
             )}
           </Space>
         </div>
+      </div>
+
+      {/* ── 右栏：AI 解读面板 ──
+          高度规则：外层 relative 占位（高度被 stretch = 左卡高度），
+          面板卡片 absolute inset:0 填充——绝对定位不参与行高计算，
+          所以行高永远由左卡决定；左变右跟随，右内容永不撑高页面 */}
+      {chatOpen && (
+        <div className="chat-panel-enter" style={{
+          position: 'relative',
+          flex: 1,
+          minWidth: 420,
+          minHeight: 480,
+          alignSelf: 'stretch',
+        }}>
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'var(--surface-1)',
+            border: '1px solid var(--hairline)',
+            borderRadius: 'var(--r-card)',
+            padding: '16px 16px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <ChatPanel
+              taskId={taskData.task_id}
+              videoTitle={taskData.video_title || '未知视频'}
+              subtitleText={taskData.subtitle_txt || ''}
+              cleaned={cleaned}
+              onClose={() => toggleChat(false)}
+            />
+          </div>
+        </div>
+      )}
       </div>
 
       {/* 底部签名 */}
@@ -458,8 +542,8 @@ function MdExportRow({ status, error, onExport, onDownload }) {
 /* ── 子组件：内容概要区块（状态机 + 折叠展示） ── */
 const SUMMARY_COLLAPSE_HEIGHT = 120   // 折叠态最大高度（px）
 
-// Markdown 渲染样式映射（Starlight 风格，基础版，精调留给 Kimi）
-const MD_COMPONENTS = {
+// Markdown 渲染样式映射（Starlight 风格，ChatPanel 复用）
+export const MD_COMPONENTS = {
   h3: ({node, ...props}) => (
     <h3 style={{
       fontSize: 15, fontWeight: 600, color: 'var(--ink)',

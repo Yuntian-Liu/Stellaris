@@ -20,6 +20,7 @@ export default function App() {
   const [page, setPage] = useState('home')
   const [taskId, setTaskId] = useState(null)
   const [taskData, setTaskData] = useState(null)
+  const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
   const { user, loading, logout } = useAuth()
 
   // 401(token 失效)→ 跳登录页
@@ -49,22 +50,25 @@ export default function App() {
     <Layout style={{ minHeight: '100vh', background: 'var(--canvas)' }}>
       {/* ── 顶部导航栏（预留用户系统 / 设置二级界面入口）── */}
       <div style={{
-        maxWidth: 760,
+        maxWidth: chatOpen ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
         padding: '18px 24px 0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        transition: 'max-width 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
       }}>
         {/* 品牌 wordmark(可点回首页) */}
         <div
           onClick={() => setPage('home')}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}
           role="button"
         >
-          <span style={{ color: 'var(--accent)', fontSize: 17, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
-          <span className="font-display" style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)' }}>
+          <span className="brand-star" style={{ color: 'var(--accent)', fontSize: 24, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
+          <span className="font-display" style={{
+            fontSize: 22, fontWeight: 600, color: 'var(--ink)', letterSpacing: '0.02em',
+          }}>
             Stellaris
           </span>
         </div>
@@ -116,10 +120,11 @@ export default function App() {
       </div>
 
       <Content style={{
-        maxWidth: 760,
+        maxWidth: chatOpen ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
         width: '100%',
+        transition: 'max-width 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
       }}>
         {page === 'auth' && (
           <AuthPage
@@ -142,6 +147,7 @@ export default function App() {
             taskData={taskData}
             onBack={handleBack}
             onNew={() => handleBack()}
+            onChatToggle={setChatOpen}
           />
         )}
       </Content>
@@ -399,11 +405,153 @@ export default function App() {
           30% { opacity: 1; }
         }
 
+        /* ── AI 解读面板 ── */
+        /* 右栏滑入：等容器扩宽后再入场（延迟 0.15s） */
+        @keyframes chatPanelEnter {
+          from { opacity: 0; transform: translateX(24px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        .chat-panel-enter {
+          animation: chatPanelEnter 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s both;
+        }
+
+        /* 消息气泡入场 */
+        @keyframes chatMsgEnter {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .chat-msg-enter { animation: chatMsgEnter 0.25s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 三点弹跳 loading */
+        .chat-dot {
+          display: inline-block;
+          width: 6px; height: 6px;
+          border-radius: 50%;
+          background: var(--hairline-strong);
+          margin-right: 5px;
+          animation: chatDotBounce 1.2s ease-in-out infinite;
+        }
+        .chat-dot:nth-child(2) { animation-delay: 0.15s; }
+        .chat-dot:nth-child(3) { animation-delay: 0.3s; margin-right: 0; }
+        @keyframes chatDotBounce {
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+          30% { transform: translateY(-4px); opacity: 1; }
+        }
+
+        /* 建议问题 chip */
+        .chat-chip {
+          text-align: left;
+          padding: 9px 14px;
+          background: var(--surface-1);
+          border: 1px solid var(--hairline);
+          border-radius: var(--r-input);
+          color: var(--body);
+          font-size: 13px;
+          cursor: pointer;
+          transition: border-color 0.2s, color 0.2s, transform 0.15s;
+        }
+        .chat-chip:hover {
+          border-color: var(--accent);
+          color: var(--accent);
+          transform: translateX(2px);
+        }
+
+        /* AI 解读入口卡 */
+        .chat-entry {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
+          padding: 14px 16px;
+          background: var(--accent-light);
+          border: 1px solid transparent;
+          border-radius: var(--r-card);
+          cursor: pointer;
+          transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+        }
+        .chat-entry:hover {
+          border-color: var(--accent);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+        }
+        .chat-entry:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
+        }
+
+        /* 窄屏：分栏折行为上下堆叠，面板给固定高度 */
+        @media (max-width: 1100px) {
+          .chat-panel-enter { height: 70vh !important; min-width: 0 !important; }
+        }
+
+        /* ── 全局质感细节 ── */
+        /* 细滚动条：透明轨道 + 弱色滑块，hover 稍深 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+          background: var(--hairline);
+          border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: var(--hairline-strong); }
+        * { scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
+
+        /* 文本选中色：淡品牌色底，不刺眼 */
+        ::selection { background: var(--accent-light); color: var(--accent); }
+
+        /* 输入框焦点：2px 柔和光晕（替代 AntD 默认硬边） */
+        .ant-input:focus,
+        .ant-input-focused,
+        .ant-input-affix-wrapper:focus,
+        .ant-input-affix-wrapper-focused {
+          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12) !important;
+          border-color: var(--accent) !important;
+        }
+
+        /* 星点闪烁（藏星主题基调动效） */
+        @keyframes starTwinkle {
+          0%, 100% { opacity: 0.15; transform: scale(0.85); }
+          50%      { opacity: 0.9;  transform: scale(1.1); }
+        }
+        .star-dot {
+          position: absolute;
+          color: var(--accent);
+          font-family: 'Cormorant Garamond', serif;
+          line-height: 1;
+          pointer-events: none;
+          animation: starTwinkle 3.2s ease-in-out infinite;
+        }
+
+        /* 品牌 logo 悬停闪烁（心意彩蛋 · 其一） */
+        @keyframes logoSparkle {
+          0%, 100% { transform: rotate(0deg) scale(1); }
+          25%      { transform: rotate(-12deg) scale(1.15); }
+          75%      { transform: rotate(10deg) scale(1.1); }
+        }
+        .brand-star { display: inline-block; transition: transform 0.3s ease; }
+        .brand-star:hover { animation: logoSparkle 0.6s ease-in-out; }
+
+        /* 进度条彗星头：前缘一点柔光，像星轨划过 */
+        .comet-head {
+          position: absolute;
+          right: -4px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #fff;
+          box-shadow: 0 0 8px 2px rgba(129, 140, 248, 0.55);
+        }
+
         /* 尊重系统减弱动效设置 */
         @media (prefers-reduced-motion: reduce) {
           .page-enter, .estimate-enter, .check-pop,
           .pulse-ring, .node-spin, .progress-shimmer,
-          .ellipsis-anim span { animation: none !important; }
+          .ellipsis-anim span, .chat-panel-enter,
+          .chat-msg-enter, .chat-dot,
+          .star-dot, .brand-star:hover { animation: none !important; }
         }
       `}</style>
     </Layout>

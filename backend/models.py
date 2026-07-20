@@ -74,6 +74,18 @@ class EstimateResponse(BaseModel):
     est_llm_tokens: int                   # 预计 LLM 语义分段消耗 tokens（输入+输出）
 
 
+class ChatMessage(BaseModel):
+    """对话消息（AI 解读模块）"""
+    role: str = Field(..., description="user | assistant")
+    content: str = Field(..., max_length=2000, description="消息内容（单条限 2000 字）")
+
+
+class ChatRequest(BaseModel):
+    """AI 解读对话请求体"""
+    message: str = Field(..., min_length=1, max_length=2000, description="本轮提问")
+    history: list[ChatMessage] = Field(default_factory=list, description="之前的对话轮次")
+
+
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"

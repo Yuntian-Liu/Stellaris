@@ -173,6 +173,8 @@ export default function ProgressPage({ taskId, onComplete, onBack }) {
               }}>
                 {/* 流光层：持续扫过，营造缓冲感 */}
                 <div className="progress-shimmer" />
+                {/* 彗星头：进度前缘一点柔光（星轨划过） */}
+                {progress > 0 && progress < 100 && <div className="comet-head" />}
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

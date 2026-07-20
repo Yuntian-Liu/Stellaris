@@ -49,6 +49,57 @@ export const exportMarkdown = (taskId) => request(`/api/export_md/${taskId}`, { 
 export const summarize = (taskId) => request(`/api/summarize/${taskId}`, { method: 'POST' })
 export const estimate = (url, sessdata) =>
   request('/api/estimate', { method: 'POST', body: { url, sessdata: sessdata || null } })
+export const chat = (taskId, message, history) =>
+  request(`/api/chat/${taskId}`, { method: 'POST', body: { message, history } })
+export const getChat = (taskId) => request(`/api/chat/${taskId}`)
+
+/**
+ * AI 解读对话（SSE 流式版）
+ * onDelta(text) 逐段回调正文；onDone(usage) 结束回调 token 用量；
+ * 出错抛 Error（含流中途的 error 事件）
+ */
+export async function chatStream(taskId, message, history, { onDelta, onDone } = {}) {
+  const token = getToken()
+  const res = await fetch(`/api/chat/${taskId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ message, history }),
+  })
+
+  if (res.status === 401) {
+    clearToken()
+    window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
+    throw new Error('登录已过期,请重新登录')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `请求失败 (${res.status})`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    // SSE 按 \n\n 切事件，data: 前缀取 JSON
+    let idx
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx).trim()
+      buffer = buffer.slice(idx + 2)
+      if (!raw.startsWith('data:')) continue
+      let evt
+      try { evt = JSON.parse(raw.slice(5)) } catch { continue }
+      if (evt.type === 'delta') onDelta?.(evt.text)
+      else if (evt.type === 'done') onDone?.(evt.usage)
+      else if (evt.type === 'error') throw new Error(evt.message || 'AI 解读失败')
+    }
+  }
+}
 export const cleanupTask = (taskId) => request(`/api/task/${taskId}`, { method: 'DELETE' })
 
 // 下载是 <a> 直接触发,不走 fetch(后端 download 未加鉴权,无需 token)
@@ -72,4 +123,4 @@ export const authApi = {
   updateProfile: (payload) => request('/api/auth/profile', { method: 'PUT', body: payload }),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, cleanupTask, authApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, cleanupTask, authApi }
