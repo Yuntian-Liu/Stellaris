@@ -29,6 +29,7 @@ import {
 import api from '../hooks/api'
 import ReactMarkdown from 'react-markdown'
 import ChatPanel from '../components/ChatPanel'
+import Confetti from '../components/Confetti'
 
 const { Text, Paragraph } = Typography
 
@@ -40,7 +41,18 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
   const [cleaned, setCleaned] = useState(taskData.cleaned || false)
   // AI 解读分栏态（展开时通知 App 扩宽容器）
   const [chatOpen, setChatOpen] = useState(false)
+  // 首次提星礼：本设备第一次完成提取时撒花
+  const [firstStar, setFirstStar] = useState(false)
   const pollRef = useRef(null)
+
+  useEffect(() => {
+    if (!localStorage.getItem('stellaris_first_star')) {
+      localStorage.setItem('stellaris_first_star', '1')
+      setFirstStar(true)
+      const t = setTimeout(() => setFirstStar(false), 4000)
+      return () => clearTimeout(t)
+    }
+  }, [])
 
   // 组件卸载时清理轮询
   useEffect(() => {
@@ -132,6 +144,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
 
   return (
     <div className="page-enter">
+      {/* 首次提星礼（本设备第一次完成提取，撒花 4s） */}
+      {firstStar && <Confetti />}
       {/* ── 完成标识（三部分竖排堆叠：标题 / 视频标题 / 保留提示）── */}
       <div style={{
         textAlign: 'center',
@@ -162,6 +176,13 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
         <Text className="font-body" style={{ fontSize: 15, color: 'var(--mute)' }}>
           {taskData.video_title || '未知视频'}
         </Text>
+        {/* 星空文案：完成时刻的一句 */}
+        <div style={{
+          fontSize: 12, color: 'var(--accent)', opacity: 0.85,
+          fontFamily: "'Cormorant Garamond', serif", letterSpacing: '0.06em',
+        }}>
+          一颗新星已点亮 ✦
+        </div>
 
         {/* 数据保留提示 / 已清理提示 */}
         <div style={{
@@ -407,12 +428,37 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
       )}
       </div>
 
-      {/* 底部签名 */}
-      <div style={{ textAlign: 'center', marginTop: 24 }}>
-        <Text className="font-caption" style={{ color: 'var(--hairline-strong)' }}>
-          Stellaris · Made with care
-        </Text>
+      {/* 底部签名（悬停浮现观星小诗，彩蛋） */}
+      <FooterSignature />
+    </div>
+  )
+}
+
+/* ── 页脚签名 + 观星小诗（每次访问随机一句，悬停浮现）── */
+const STAR_POEMS = [
+  '今夜星空清澈，适合聆听',
+  '每段声音，都值得被读懂',
+  '星光落在字里行间',
+  '宇宙很大，慢慢读',
+  '把声音，点亮成文字',
+]
+
+function FooterSignature() {
+  const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
+  return (
+    <div className="footer-sig" style={{ textAlign: 'center', marginTop: 24 }}>
+      <div className="footer-poem" style={{
+        fontSize: 12,
+        color: 'var(--accent)',
+        fontFamily: "'Cormorant Garamond', serif",
+        letterSpacing: '0.08em',
+        marginBottom: 4,
+      }}>
+        {poem}
       </div>
+      <Text className="font-caption" style={{ color: 'var(--hairline-strong)' }}>
+        Stellaris · Made with care
+      </Text>
     </div>
   )
 }

@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.6.1 Antares'
+export const APP_VERSION = 'V0.6.2 Antares'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-20'
@@ -30,6 +30,14 @@ export const CHANGELOG = [
       '登录页新增"忘记密码"，支持验证码重置',
     ],
     patches: [
+      {
+        version: 'V0.6.2', date: '2026-07-20',
+        items: [
+          '开发组在星空的各个角落埋了一批彩蛋，数量和位置概不透露',
+          '据说有颗星星特别怕痒，连续戳它几下会有好事发生（只是据说）',
+          '顺手做了一些界面细节优化，说不上哪里变了，但就是更顺眼了',
+        ],
+      },
       {
         version: 'V0.6.1', date: '2026-07-20',
         items: ['版本日志覆盖全部历史小版本，大版本内可展开查看'],

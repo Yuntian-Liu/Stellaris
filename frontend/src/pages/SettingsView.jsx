@@ -20,6 +20,21 @@ import { APP_VERSION, CHANGELOG } from '../utils/changelog'
 
 const avatarUrl = (seed) => `https://api.dicebear.com/7.x/micah/svg?seed=${seed}`
 
+/** 每日星语（按日期轮换，同一天所有人看到同一句） */
+const STAR_LINES = [
+  '今夜星空清澈，适合聆听。',
+  '每一段声音，都是一颗星。',
+  '星光不问赶路人。',
+  '你的每一次提取，都在点亮星图。',
+  '听见，然后读懂。',
+  '宇宙的回声，落在文字里。',
+  '慢慢读，星光不散。',
+]
+function dailyStarLine() {
+  const day = Math.floor(Date.now() / 86400000)
+  return STAR_LINES[day % STAR_LINES.length]
+}
+
 /** 千分位缩写 */
 function fmt(n) {
   if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
@@ -116,7 +131,7 @@ export default function SettingsView({ onBack }) {
             <MiniStat label="AI 解读" value={stats ? fmt(stats.chat_rounds) : '-'} />
             <MiniStat label="累计 tokens" value={stats ? fmt(stats.tokens_used) : '-'} />
           </div>
-          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 12 }}>听见，然后读懂。</div>
+          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 12 }}>{dailyStarLine()}</div>
         </div>
       </div>
 

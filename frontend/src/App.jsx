@@ -5,7 +5,7 @@
  *   Apple 极简克制 + Claude 衬线编辑感 + Vercel 开发者精度
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Layout, Tooltip, Button, Dropdown, Avatar } from 'antd'
 import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined } from '@ant-design/icons'
 import HomePage from './pages/HomePage'
@@ -15,6 +15,7 @@ import AuthPage from './pages/AuthPage'
 import SettingsView from './pages/SettingsView'
 import UpdateModals from './components/UpdateModals'
 import AgreementModal from './components/AgreementModal'
+import MeteorShower from './components/MeteorShower'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -25,7 +26,23 @@ export default function App() {
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
   const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
+  const [meteorOn, setMeteorOn] = useState(false)   // 流星雨彩蛋
+  const clickRef = useRef({ count: 0, timer: null })
   const { user, loading, logout } = useAuth()
+
+  // 彩蛋：3 秒内连点 logo ✦ 7 次 → 流星雨
+  const handleBrandClick = () => {
+    setPage('home')
+    const c = clickRef.current
+    c.count += 1
+    clearTimeout(c.timer)
+    c.timer = setTimeout(() => { c.count = 0 }, 3000)
+    if (c.count >= 7) {
+      c.count = 0
+      setMeteorOn(true)
+      setTimeout(() => setMeteorOn(false), 4500)
+    }
+  }
 
   // 401(token 失效)→ 跳登录页
   useEffect(() => {
@@ -63,9 +80,9 @@ export default function App() {
         justifyContent: 'space-between',
         transition: 'max-width 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
       }}>
-        {/* 品牌 wordmark(可点回首页) */}
+        {/* 品牌 wordmark(可点回首页;连点 7 次触发流星雨彩蛋) */}
         <div
-          onClick={() => setPage('home')}
+          onClick={handleBrandClick}
           style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}
           role="button"
         >
@@ -216,6 +233,9 @@ export default function App() {
         type={agreementView || 'agreement'}
         onClose={() => setAgreementView(null)}
       />
+
+      {/* 流星雨彩蛋（连点 logo 7 次） */}
+      {meteorOn && <MeteorShower />}
 
       {/* ═══════════════════════════════════════════
           Starlight Design Tokens & Global Styles
@@ -620,6 +640,27 @@ export default function App() {
         }
         .dropdown-item:hover { background: var(--surface-2); }
         .dropdown-item--danger { color: var(--error); }
+
+        /* 页脚小诗：默认隐去，悬停签名区浮现 */
+        .footer-poem {
+          opacity: 0;
+          transform: translateY(4px);
+          transition: opacity 0.4s ease, transform 0.4s ease;
+        }
+        .footer-sig:hover .footer-poem {
+          opacity: 0.9;
+          transform: translateY(0);
+        }
+
+        /* 卡片悬停微浮起（精化微交互） */
+        .card { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .card:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 按钮按压回弹 */
+        .ant-btn:active { transform: scale(0.97); }
 
         /* 尊重系统减弱动效设置 */
         @media (prefers-reduced-motion: reduce) {

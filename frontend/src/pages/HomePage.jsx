@@ -37,6 +37,15 @@ function formatNumber(n) {
   return n.toLocaleString('en-US')
 }
 
+/** 观星小诗（与结果页同款，每次访问随机一句） */
+const STAR_POEMS = [
+  '今夜星空清澈，适合聆听',
+  '每段声音，都值得被读懂',
+  '星光落在字里行间',
+  '宇宙很大，慢慢读',
+  '把声音，点亮成文字',
+]
+
 export default function HomePage({ onSubmit }) {
   const [url, setUrl] = useState('')
   const [sessdata, setSessdata] = useState('')
@@ -44,6 +53,7 @@ export default function HomePage({ onSubmit }) {
   const [submitting, setSubmitting] = useState(false)   // 正在提交任务
   const [estimateData, setEstimateData] = useState(null) // 预估结果（非 null 即确认态）
   const [error, setError] = useState(null)
+  const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
 
   // 第一步：拉取成本预估
   const handleEstimate = async () => {
@@ -362,6 +372,22 @@ export default function HomePage({ onSubmit }) {
         }}>
           Stellaris · 多平台视频字幕提取
         </Tag>
+      </div>
+
+      {/* ── 页脚签名（悬停浮现观星小诗，与结果页同款彩蛋）── */}
+      <div className="footer-sig" style={{ textAlign: 'center', marginTop: 14 }}>
+        <div className="footer-poem" style={{
+          fontSize: 12,
+          color: 'var(--accent)',
+          fontFamily: "'Cormorant Garamond', serif",
+          letterSpacing: '0.08em',
+          marginBottom: 4,
+        }}>
+          {poem}
+        </div>
+        <Text className="font-caption" style={{ color: 'var(--hairline-strong)' }}>
+          Stellaris · Made with care
+        </Text>
       </div>
     </div>
   )
