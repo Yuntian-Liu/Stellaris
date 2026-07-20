@@ -13,6 +13,8 @@ import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
 import AuthPage from './pages/AuthPage'
 import SettingsView from './pages/SettingsView'
+import UpdateModals from './components/UpdateModals'
+import AgreementModal from './components/AgreementModal'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -22,6 +24,7 @@ export default function App() {
   const [taskId, setTaskId] = useState(null)
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
+  const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
   const { user, loading, logout } = useAuth()
 
   // 401(token 失效)→ 跳登录页
@@ -205,6 +208,14 @@ export default function App() {
           />
         )}
       </Content>
+
+      {/* 更新提醒（版本 + 协议，每版本只弹一次） */}
+      <UpdateModals onOpenAgreement={() => setAgreementView('agreement')} />
+      <AgreementModal
+        open={!!agreementView}
+        type={agreementView || 'agreement'}
+        onClose={() => setAgreementView(null)}
+      />
 
       {/* ═══════════════════════════════════════════
           Starlight Design Tokens & Global Styles

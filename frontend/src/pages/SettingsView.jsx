@@ -300,17 +300,61 @@ function ChangelogModal({ open, onClose }) {
                   transition: 'transform 0.2s',
                 }} />
               </div>
-              {/* 更新内容（展开态） */}
+              {/* 更新内容（展开态）：minor 整体亮点 + 嵌套 patch */}
               {isOpen && (
-                <ul style={{
-                  margin: 0, padding: '10px 14px 12px 32px',
+                <div style={{
+                  padding: '10px 14px 12px',
                   borderTop: '1px solid var(--hairline)',
                   background: 'var(--surface-1)',
                 }}>
-                  {v.items.map((item, i) => (
-                    <li key={i} style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9 }}>{item}</li>
-                  ))}
-                </ul>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {v.items.map((item, i) => (
+                      <li key={i} style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9 }}>{item}</li>
+                    ))}
+                  </ul>
+                  {v.patches?.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 600, color: 'var(--mute)',
+                        letterSpacing: '0.05em', marginBottom: 6,
+                      }}>
+                        补丁更新
+                      </div>
+                      {v.patches.map((p, pi) => {
+                        const isLatest = idx === 0 && pi === 0   // 最新 minor 的首个 patch = 全站最新
+                        return (
+                          <div
+                            key={p.version}
+                            style={{
+                              padding: '6px 10px',
+                              marginBottom: 6,
+                              borderRadius: 8,
+                              background: 'var(--surface-2)',
+                              borderLeft: isLatest
+                                ? '2px solid var(--accent)'
+                                : '2px solid var(--hairline)',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                              <span style={{
+                                fontSize: 12, fontWeight: 600,
+                                color: isLatest ? 'var(--accent)' : 'var(--body)',
+                              }}>
+                                {p.version}
+                              </span>
+                              <span style={{ fontSize: 11, color: 'var(--mute)' }}>{p.date}</span>
+                            </div>
+                            <ul style={{ margin: '2px 0 0', paddingLeft: 16 }}>
+                              {p.items.map((item, i) => (
+                                <li key={i} style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.8 }}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )
