@@ -30,5 +30,7 @@ async def init_db():
     from auth import models  # noqa: F401
     import chat_store  # noqa: F401
     import stats_store  # noqa: F401
+    import billing_store  # noqa: F401
+    import history_store  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

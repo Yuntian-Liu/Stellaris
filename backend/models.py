@@ -32,6 +32,8 @@ class SubmitRequest(BaseModel):
     url: Optional[str] = Field(None, description="B站链接（source=bilibili_url 时必填）")
     # file: 由 UploadFile 处理，不在此模型中
     sessdata: Optional[str] = Field(None, description="B站 SESSDATA（可选，用于抓 CC 字幕）")
+    est_minutes: Optional[int] = Field(None, description="预估时长（分钟，来自 estimate，计费检查用）")
+    skip_segment: bool = Field(False, description="跳过语义分段（量子波不足时的降级选项）")
 
 
 class TaskResponse(BaseModel):
@@ -54,6 +56,11 @@ class TaskResponse(BaseModel):
     summary_content: Optional[str] = None   # 总结正文（ready 时带回前端展示）
     cleaned: Optional[bool] = None          # 用户已主动清理数据，下载按钮应禁用
     source_platform: Optional[str] = None   # 来源平台（哔哩哔哩/小红书/本地上传/域名）
+    # 计费实际消耗（V0.7.0，完成后回显）
+    charged_minutes: Optional[int] = None   # 提取实际扣分钟
+    charged_quantum: Optional[int] = None   # 分段实际扣量子波
+    md_cost: Optional[int] = None           # MD 实际扣引力波
+    summary_cost: Optional[int] = None      # 概要实际扣量子波
     error: Optional[str] = None
 
 
@@ -72,6 +79,14 @@ class EstimateResponse(BaseModel):
     duration_sec: float                   # 视频时长（秒）—— ASR 计费依据
     est_char_count: int                   # 预计转写字数
     est_llm_tokens: int                   # 预计 LLM 语义分段消耗 tokens（输入+输出）
+    # ===== 计费（V0.7.0）=====
+    est_minutes: int                      # 预计消耗分钟（向上取整）
+    est_quantum: int                      # 预计消耗量子波（语义分段，四成取整后）
+    # 余量（登录用户返回；未登录为 None）
+    minutes_left: Optional[dict] = None   # {"day": x, "week": y, "month": z}
+    quantum_left: Optional[int] = None    # 量子波总余量（赠送+活动）
+    can_afford: Optional[bool] = None     # 分钟和量子波都够
+    quantum_enough: Optional[bool] = None # 分钟够但量子波不够（可降级跳过分段）
 
 
 class ChatMessage(BaseModel):

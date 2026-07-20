@@ -52,6 +52,7 @@ export default function HomePage({ onSubmit }) {
   const [estimating, setEstimating] = useState(false)   // 正在拉取预估
   const [submitting, setSubmitting] = useState(false)   // 正在提交任务
   const [estimateData, setEstimateData] = useState(null) // 预估结果（非 null 即确认态）
+  const [skipSegment, setSkipSegment] = useState(false)  // 降级：跳过智能分段（量子波不足时可选）
   const [error, setError] = useState(null)
   const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
 
@@ -75,7 +76,13 @@ export default function HomePage({ onSubmit }) {
     setSubmitting(true)
     setError(null)
     try {
-      const res = await api.submit({ source: 'bilibili_url', url: url.trim(), sessdata: sessdata.trim() || null })
+      const res = await api.submit({
+        source: 'bilibili_url',
+        url: url.trim(),
+        sessdata: sessdata.trim() || null,
+        est_minutes: estimateData?.est_minutes ?? null,
+        skip_segment: skipSegment,
+      })
       onSubmit(res)
     } catch (e) {
       setError(e.message || '提交失败，请稍后重试')
@@ -93,6 +100,7 @@ export default function HomePage({ onSubmit }) {
   const handleUrlChange = (e) => {
     setUrl(e.target.value)
     if (estimateData) setEstimateData(null)
+    if (skipSegment) setSkipSegment(false)
   }
 
   const handleUpload = async (file) => {
@@ -233,6 +241,20 @@ export default function HomePage({ onSubmit }) {
                   value={`约 ${formatNumber(estimateData.est_llm_tokens)} tokens`}
                   tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量"
                 />
+                {/* 计费消耗行（V0.7.0） */}
+                <EstimateRow
+                  icon={<ClockCircleOutlined />}
+                  label="本次消耗"
+                  value={`${estimateData.est_minutes} 分钟 + ${estimateData.est_quantum} 量子波`}
+                  tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单"
+                />
+                {estimateData.minutes_left && (
+                  <EstimateRow
+                    icon={<FileTextOutlined />}
+                    label="当前余量"
+                    value={`${Math.min(estimateData.minutes_left.day, estimateData.minutes_left.week, estimateData.minutes_left.month)} 分钟 · ${estimateData.quantum_left} 量子波`}
+                  />
+                )}
                 {/* 积分系统上线后，在此处追加「预计消耗积分」行 */}
               </div>
 
@@ -322,26 +344,68 @@ export default function HomePage({ onSubmit }) {
 
           {/* CTA 区：确认态 = 确认+取消；输入态 = 开始提取 */}
           {estimateData ? (
-            <div style={{ display: 'flex', gap: 12 }}>
-              <Button
-                size="large"
-                onClick={handleCancelEstimate}
-                disabled={submitting}
-                style={{ flex: '0 0 112px', borderRadius: 'var(--r-btn)', height: 44 }}
-              >
-                取消
-              </Button>
-              <Button
-                type="primary"
-                size="large"
-                icon={<RocketOutlined />}
-                loading={submitting}
-                onClick={handleConfirmSubmit}
-                block
-              >
-                确认并开始提取
-              </Button>
-            </div>
+            (() => {
+              const minutesOk = !estimateData.minutes_left || (
+                estimateData.est_minutes <= estimateData.minutes_left.day &&
+                estimateData.est_minutes <= estimateData.minutes_left.week &&
+                estimateData.est_minutes <= estimateData.minutes_left.month)
+              const quantumOk = estimateData.quantum_left == null ||
+                estimateData.est_quantum <= estimateData.quantum_left
+              const canSubmit = minutesOk && (quantumOk || skipSegment)
+              return (
+                <div>
+                  {/* 降级选项：分钟够但量子波不够时才出现 */}
+                  {minutesOk && !quantumOk && (
+                    <div style={{
+                      marginBottom: 12, padding: '10px 14px',
+                      background: 'var(--accent-light)', borderRadius: 'var(--r-input)',
+                      fontSize: 13, color: 'var(--body)', lineHeight: 1.6,
+                    }}>
+                      量子波不足以支付智能分段（需 {estimateData.est_quantum}，剩 {estimateData.quantum_left}）。
+                      <label style={{ marginLeft: 6, cursor: 'pointer', color: 'var(--accent)', fontWeight: 500 }}>
+                        <input
+                          type="checkbox"
+                          checked={skipSegment}
+                          onChange={e => setSkipSegment(e.target.checked)}
+                          style={{ marginRight: 5 }}
+                        />
+                        跳过分段继续转写（输出原始切分文本）
+                      </label>
+                    </div>
+                  )}
+                  {!minutesOk && (
+                    <div style={{
+                      marginBottom: 12, padding: '10px 14px',
+                      background: 'var(--error-bg)', borderRadius: 'var(--r-input)',
+                      fontSize: 13, color: 'var(--error)', lineHeight: 1.6,
+                    }}>
+                      分钟额度不足，本视频约需 {estimateData.est_minutes} 分钟。额度每日 04:00 重置。
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <Button
+                      size="large"
+                      onClick={handleCancelEstimate}
+                      disabled={submitting}
+                      style={{ flex: '0 0 112px', borderRadius: 'var(--r-btn)', height: 44 }}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      type="primary"
+                      size="large"
+                      icon={<RocketOutlined />}
+                      loading={submitting}
+                      onClick={handleConfirmSubmit}
+                      disabled={!canSubmit}
+                      block
+                    >
+                      {skipSegment ? '确认（跳过分段）' : '确认并开始提取'}
+                    </Button>
+                  </div>
+                </div>
+              )
+            })()
           ) : (
             <Button
               type="primary"

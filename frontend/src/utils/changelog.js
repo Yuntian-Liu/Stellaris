@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.6.2 Antares'
+export const APP_VERSION = 'V0.7.0 Rigel'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
-export const AGREEMENT_VERSION = '2026-07-20'
+export const AGREEMENT_VERSION = '2026-07-21'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,20 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V0.7.0', codename: 'Rigel', date: '2026-07-21',
+    items: [
+      '计费体系上线：分钟、量子波、引力波三层货币，每一分钱花在哪都看得见',
+      '导航栏三胶囊：分钟余额、引力波、量子波实时显示，悬停查看明细',
+      '量子波不够用也能转写：可跳过智能分段降级提取，不卡你',
+      '双向货币兑换：量子波与引力波自由互兑，二次确认防误触',
+      '扣费透明：操作前预估消耗，完成后显示实际扣额，零头不到四成免单',
+      '提取历史：最近的提取一键回看，不用再跑一遍',
+      '新增计费引导页：导航栏小问号，四页读懂所有规则',
+      '设置页新增诊断日志导出：遇到问题一键打包，排查更快',
+    ],
+    patches: [],
+  },
   {
     version: 'V0.6.0', codename: 'Antares', date: '2026-07-20',
     items: [

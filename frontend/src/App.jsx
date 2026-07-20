@@ -6,8 +6,9 @@
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Layout, Tooltip, Button, Dropdown, Avatar } from 'antd'
-import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined } from '@ant-design/icons'
+import { Layout, Tooltip, Button, Dropdown, Avatar, Popover } from 'antd'
+import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined } from '@ant-design/icons'
+import api from './hooks/api'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
@@ -16,6 +17,9 @@ import SettingsView from './pages/SettingsView'
 import UpdateModals from './components/UpdateModals'
 import AgreementModal from './components/AgreementModal'
 import MeteorShower from './components/MeteorShower'
+import BillingPills from './components/BillingPills'
+import GuideModal from './components/GuideModal'
+import HistoryModal from './components/HistoryModal'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -26,9 +30,21 @@ export default function App() {
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
   const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
+  const [guideOpen, setGuideOpen] = useState(false) // 计费引导
+  const [historyOpen, setHistoryOpen] = useState(false) // 历史记录
   const [meteorOn, setMeteorOn] = useState(false)   // 流星雨彩蛋
+  const [balances, setBalances] = useState(null)    // 头像下拉双货币余额
   const clickRef = useRef({ count: 0, timer: null })
   const { user, loading, logout } = useAuth()
+
+  // 双货币余额（下拉面板显示；兑换/扣费后广播同步）
+  useEffect(() => {
+    if (!user) { setBalances(null); return }
+    const load = () => api.getBilling().then(setBalances).catch(() => {})
+    load()
+    window.addEventListener('stellaris:billing-changed', load)
+    return () => window.removeEventListener('stellaris:billing-changed', load)
+  }, [user])
 
   // 彩蛋：3 秒内连点 logo ✦ 7 次 → 流星雨
   const handleBrandClick = () => {
@@ -93,28 +109,33 @@ export default function App() {
             Stellaris
           </span>
         </div>
-        {/* 右侧入口位:loading 占位;已登录→引力波额度+头像 Dropdown;未登录→登录按钮 */}
+        {/* 右侧入口位:loading 占位;已登录→三胶囊+头像 Dropdown;未登录→登录按钮 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* 计费引导问号（所有状态可见） */}
+          <Popover
+            placement="bottomRight"
+            content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>计费与额度说明</div>}
+          >
+            <QuestionCircleOutlined
+              onClick={() => setGuideOpen(true)}
+              style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
+            />
+          </Popover>
           {loading ? (
             <div style={{ width: 64, height: 30 }} />
           ) : user ? (
             <>
-              <Tooltip title="引力波额度(计费板块上线后接入)">
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 12px',
-                  background: 'var(--surface-1)',
-                  border: '1px solid var(--hairline)',
-                  borderRadius: '9999px',
-                  cursor: 'default',
-                }}>
-                  <WalletOutlined style={{ fontSize: 12, color: 'var(--mute)' }} />
-                  <span className="font-caption" style={{ fontSize: 12 }}>引力波</span>
-                  <span className="font-mono" style={{ fontSize: 12, color: 'var(--hairline-strong)' }}>--</span>
-                </div>
-              </Tooltip>
+              {/* 历史记录入口 */}
+              <Popover
+                placement="bottomRight"
+                content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>提取历史</div>}
+              >
+                <HistoryOutlined
+                  onClick={() => setHistoryOpen(true)}
+                  style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
+                />
+              </Popover>
+              <BillingPills />
               <Dropdown
                 dropdownRender={() => (
                   <div style={{
@@ -141,7 +162,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    {/* 会员等级 + 引力波（占位，计费板块接入） */}
+                    {/* 会员等级 + 双货币余额（图标极简） */}
                     <div style={{
                       margin: '0 12px 10px',
                       padding: '8px 12px',
@@ -154,7 +175,16 @@ export default function App() {
                       color: 'var(--mute)',
                     }}>
                       <span>免费版</span>
-                      <span className="font-mono">引力波 --</span>
+                      <span className="font-mono" style={{ display: 'inline-flex', gap: 10 }}>
+                        <span>
+                          <GlobalOutlined style={{ fontSize: 11, color: 'var(--accent)', marginRight: 3 }} />
+                          {balances?.gravity ?? '--'}
+                        </span>
+                        <span>
+                          <DotChartOutlined style={{ fontSize: 11, color: 'var(--accent)', marginRight: 3 }} />
+                          {balances ? balances.quantum_gift + balances.quantum_perm : '--'}
+                        </span>
+                      </span>
                     </div>
                     <div style={{ borderTop: '1px solid var(--hairline)' }}>
                       <div
@@ -222,6 +252,7 @@ export default function App() {
             onBack={handleBack}
             onNew={() => handleBack()}
             onChatToggle={setChatOpen}
+            onNeedAuth={() => setPage('auth')}
           />
         )}
       </Content>
@@ -232,6 +263,16 @@ export default function App() {
         open={!!agreementView}
         type={agreementView || 'agreement'}
         onClose={() => setAgreementView(null)}
+      />
+
+      {/* 计费引导（问号触发） */}
+      <GuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+
+      {/* 历史记录（点记录直接回结果页） */}
+      <HistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onOpenRecord={(data) => { setTaskData(data); setPage('result') }}
       />
 
       {/* 流星雨彩蛋（连点 logo 7 次） */}
@@ -525,6 +566,10 @@ export default function App() {
 
         /* 建议问题 chip */
         .chat-chip {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
           text-align: left;
           padding: 9px 14px;
           background: var(--surface-1);
@@ -540,6 +585,13 @@ export default function App() {
           color: var(--accent);
           transform: translateX(2px);
         }
+        .chat-chip-cost {
+          font-size: 11px;
+          color: var(--mute);
+          font-family: 'JetBrains Mono', ui-monospace, monospace;
+          flex-shrink: 0;
+        }
+        .chat-chip:hover .chat-chip-cost { color: var(--accent); opacity: 0.8; }
 
         /* AI 解读入口卡 */
         .chat-entry {

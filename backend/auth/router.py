@@ -164,7 +164,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=409, detail="注册失败(账号冲突),请重试")
     await db.refresh(user)
 
-    # ⑤ 删码 + 发 JWT
+    # ⑤ 删码 + 发 JWT（注册礼由计费账户懒发放，见 billing_store._get_or_create）
     await db.delete(record)
     await db.commit()
     token = create_access_token(user.uid, user.email)

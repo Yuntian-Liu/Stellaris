@@ -30,10 +30,12 @@ import api from '../hooks/api'
 import ReactMarkdown from 'react-markdown'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Text, Paragraph } = Typography
 
-export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
+export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNeedAuth }) {
+  const { user } = useAuth()
   // MD 导出状态：从 taskData 初始值来，后续本地维护
   const [mdStatus, setMdStatus] = useState(taskData.md_status || 'idle')
   const [mdError, setMdError] = useState(taskData.md_error || null)
@@ -44,6 +46,11 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
   // 首次提星礼：本设备第一次完成提取时撒花
   const [firstStar, setFirstStar] = useState(false)
   const pollRef = useRef(null)
+
+  // 进入结果页 = 提取计费已结算，刷新导航栏余额
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
+  }, [])
 
   useEffect(() => {
     if (!localStorage.getItem('stellaris_first_star')) {
@@ -98,6 +105,18 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
     })
   }
 
+  // 增值功能登录拦截（未登录弹引导，不发请求）
+  const requireAuth = (featureName, action) => {
+    if (user) { action(); return }
+    Modal.confirm({
+      title: '登录后解锁',
+      content: `${featureName}属于登录用户功能。注册即享完整额度，还有 30 引力波新人礼。`,
+      okText: '去登录',
+      cancelText: '再看看',
+      onOk: () => onNeedAuth?.(),
+    })
+  }
+
   // 触发 MD 导出
   const handleExportMd = async () => {
     setMdStatus('generating')
@@ -121,6 +140,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
       if (s === 'ready') {
         setMdStatus('ready')
         message.success('Markdown 已生成')
+        window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
         return
       }
       if (s === 'failed') {
@@ -247,6 +267,15 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
             color: 'var(--body)',
             justifySelf: 'start',
           }}>{taskData.task_id}</code>
+          {taskData.charged_minutes > 0 && (
+            <>
+              <span style={{ fontSize: 13, color: 'var(--mute)' }}>本次消耗</span>
+              <span style={{ fontSize: 13, color: 'var(--body)', justifySelf: 'start' }}>
+                {taskData.charged_minutes} 分钟
+                {taskData.charged_quantum > 0 && ` + ${taskData.charged_quantum} 量子波`}
+              </span>
+            </>
+          )}
         </div>
 
         {/* 内容概要（增值功能，可折叠） */}
@@ -256,6 +285,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
           initialContent={taskData.summary_content}
           initialError={taskData.summary_error}
           cleaned={cleaned}
+          onNeedAuth={() => requireAuth('内容总结', () => {})}
+          chars={previewText.length}
         />
 
         {/* 预览区：展示真实文本内容 */}
@@ -292,7 +323,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
           <div style={{ marginBottom: 20 }}>
             <button
               className="chat-entry"
-              onClick={() => toggleChat(true)}
+              onClick={() => requireAuth('AI 解读', () => toggleChat(true))}
               disabled={cleaned}
             >
               <BulbOutlined style={{ fontSize: 16, color: 'var(--accent)' }} />
@@ -351,8 +382,10 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle }) {
             <MdExportRow
               status={mdStatus}
               error={mdError}
-              onExport={handleExportMd}
+              onExport={() => requireAuth('Markdown 结构化笔记', handleExportMd)}
               onDownload={() => handleDownload('md', 'Markdown')}
+              cost={taskData.md_cost}
+              est={estCost(previewText.length, 500)}
             />
 
           </Space>
@@ -464,6 +497,12 @@ function FooterSignature() {
 }
 
 /* ── 子组件：单行下载按钮 ── */
+/** 前端预估扣费（仅展示；四成让利取整，与后端一致） */
+function estCost(chars, unit) {
+  const tokens = Math.ceil(chars / 1.5) * 2   // 输入+输出约 2 倍
+  const base = Math.floor(tokens / unit)
+  return base + (tokens % unit > unit * 0.4 ? 1 : 0)
+}
 function DownloadRow({ icon, title, desc, primary = false, onClick }) {
   return (
     <div className="dl-row" style={{
@@ -501,7 +540,7 @@ function DownloadRow({ icon, title, desc, primary = false, onClick }) {
 }
 
 /* ── 子组件：MD 导出行（状态机） ── */
-function MdExportRow({ status, error, onExport, onDownload }) {
+function MdExportRow({ status, error, onExport, onDownload, cost, est }) {
   return (
     <div style={{
       display: 'flex',
@@ -531,7 +570,7 @@ function MdExportRow({ status, error, onExport, onDownload }) {
         <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)' }}>
           {status === 'idle' && '用 LLM 转为结构化 MD，适合 Obsidian / Notion'}
           {status === 'generating' && '正在用 LLM 生成，请稍候...'}
-          {status === 'ready' && '已生成，可下载 .md 文件'}
+          {status === 'ready' && `已生成${cost ? `，消耗 ${cost} 引力波` : ''}，可下载 .md 文件`}
           {status === 'failed' && (error || '生成失败，可重试')}
         </div>
       </div>
@@ -539,7 +578,7 @@ function MdExportRow({ status, error, onExport, onDownload }) {
       {status === 'idle' && (
         <Popconfirm
           title="生成 Markdown 笔记？"
-          description="将调用 LLM 对原文进行结构化转写（增值功能）"
+          description={`预计消耗约 ${est} 引力波（按实际用量结算，零头不到四成免单）`}
           okText="生成"
           cancelText="取消"
           onConfirm={onExport}
@@ -640,10 +679,12 @@ export const MD_COMPONENTS = {
   ),
 }
 
-function SummarySection({ taskId, initialStatus, initialContent, initialError, cleaned }) {
+function SummarySection({ taskId, initialStatus, initialContent, initialError, cleaned, onNeedAuth, chars }) {
+  const { user } = useAuth()
   const [status, setStatus] = useState(initialStatus || 'idle')
   const [content, setContent] = useState(initialContent || '')
   const [error, setError] = useState(initialError || null)
+  const [cost, setCost] = useState(null)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const pollRef = useRef(null)
@@ -664,6 +705,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
   }, [status, content])
 
   const handleGenerate = async () => {
+    if (!user) { onNeedAuth?.(); return }   // 未登录：弹引导，不发请求
     setStatus('generating')
     setError(null)
     try {
@@ -683,7 +725,9 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
       if (s === 'ready') {
         setStatus('ready')
         setContent(data.summary_content || '')
+        if (data.summary_cost) setCost(data.summary_cost)
         message.success('内容概要已生成')
+        window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
         return
       }
       if (s === 'failed') {
@@ -736,7 +780,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
           </div>
           <Popconfirm
             title="生成内容概要？"
-            description="将调用 LLM 对字幕进行总结提炼（增值功能）"
+            description={`预计消耗约 ${estCost(chars || 0, 100)} 量子波（按实际用量结算，零头不到四成免单）`}
             okText="生成"
             cancelText="取消"
             onConfirm={handleGenerate}
@@ -834,6 +878,11 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
           }}>
             增值
           </Tag>
+          {cost > 0 && (
+            <span className="font-mono" style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)', fontWeight: 400 }}>
+              消耗 {cost} 量子波
+            </span>
+          )}
         </div>
         <Button
           type="text"

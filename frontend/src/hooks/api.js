@@ -95,7 +95,7 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
       let evt
       try { evt = JSON.parse(raw.slice(5)) } catch { continue }
       if (evt.type === 'delta') onDelta?.(evt.text)
-      else if (evt.type === 'done') onDone?.(evt.usage)
+      else if (evt.type === 'done') onDone?.(evt.usage, evt.charged)
       else if (evt.type === 'error') throw new Error(evt.message || 'AI 解读失败')
     }
   }
@@ -128,5 +128,10 @@ export const authApi = {
 }
 
 export const getStats = () => request('/api/user/stats')
+export const getHistory = () => request('/api/history')
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, cleanupTask, authApi }
+export const getBilling = () => request('/api/billing/summary')
+export const exchange = (direction, count) =>
+  request('/api/billing/exchange', { method: 'POST', body: { direction, count } })
+
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, cleanupTask, authApi }

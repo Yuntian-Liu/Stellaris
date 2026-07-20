@@ -10,12 +10,13 @@ import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
   IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
-  EditOutlined, GithubOutlined, DownOutlined,
+  EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
 } from '@ant-design/icons'
-import api, { authApi } from '../hooks/api'
+import api, { authApi, getToken } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
 import TurnstileField from '../components/auth/TurnstileField'
+import ExchangeModal from '../components/ExchangeModal'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
 
 const avatarUrl = (seed) => `https://api.dicebear.com/7.x/micah/svg?seed=${seed}`
@@ -45,6 +46,7 @@ function fmt(n) {
 export default function SettingsView({ onBack }) {
   const { user, logout, refresh } = useAuth()
   const [stats, setStats] = useState(null)
+  const [billing, setBilling] = useState(null)
   const [agreementOpen, setAgreementOpen] = useState(false)
   const [agreementType, setAgreementType] = useState('agreement')
   const [changelogOpen, setChangelogOpen] = useState(false)
@@ -52,12 +54,36 @@ export default function SettingsView({ onBack }) {
   const [nicknameOpen, setNicknameOpen] = useState(false)
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [exchangeOpen, setExchangeOpen] = useState(false)
 
   useEffect(() => {
     api.getStats().then(setStats).catch(() => setStats(null))
+    const loadBilling = () => api.getBilling().then(setBilling).catch(() => {})
+    loadBilling()
+    window.addEventListener('stellaris:billing-changed', loadBilling)
+    return () => window.removeEventListener('stellaris:billing-changed', loadBilling)
   }, [])
 
   const openAgreement = (type) => { setAgreementType(type); setAgreementOpen(true) }
+
+  // 导出诊断日志（带 token 的 fetch 下载，脱敏 JSON）
+  const downloadDiagnostics = async () => {
+    try {
+      const res = await fetch('/api/diagnostics/export', {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
+      if (!res.ok) throw new Error(`导出失败 (${res.status})`)
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `stellaris-diagnostics-${Date.now()}.json`
+      a.click()
+      URL.revokeObjectURL(a.href)
+      message.success('诊断日志已导出，可发给开发者排查问题')
+    } catch (e) {
+      message.error(e.message)
+    }
+  }
 
   const handleLogout = () => {
     Modal.confirm({
@@ -71,9 +97,9 @@ export default function SettingsView({ onBack }) {
   }
 
   return (
-    <div className="page-enter" style={{ maxWidth: 560, margin: '0 auto' }}>
+    <div className="page-enter" style={{ maxWidth: 560, margin: '-14px auto 0' }}>
       {/* 顶部：返回 + 标题 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
         <h1 className="font-display font-display-sm" style={{ margin: 0 }}>设置</h1>
       </div>
@@ -151,12 +177,16 @@ export default function SettingsView({ onBack }) {
           value={<span className="font-mono">{user.uid}</span>} />
       </SectionCard>
 
-      {/* ── 会员权益（占位）── */}
+      {/* ── 会员权益（兑换说明 + 余额）── */}
       <SectionTitle>会员权益</SectionTitle>
       <SectionCard>
         <RowItem icon={<CrownOutlined />} tint="#f59e0b" label="会员权益"
           value="敬请期待"
           onClick={() => message.info('会员功能正在路上，敬请期待')} />
+        <Divider />
+        <RowItem icon={<DotChartOutlined />} tint="#6366f1" label="货币兑换"
+          value={billing ? `量子波⇄引力波 · 本月还可兑 ${billing.exchange_month_cap - billing.exchange_month_used} 次` : '量子波⇄引力波'}
+          onClick={() => setExchangeOpen(true)} />
       </SectionCard>
 
       {/* ── 账号安全 ── */}
@@ -179,6 +209,10 @@ export default function SettingsView({ onBack }) {
         <Divider />
         <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
           onClick={() => setChangelogOpen(true)} />
+        <Divider />
+        <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
+          value="排查问题用"
+          onClick={downloadDiagnostics} />
         <Divider />
         <RowItem icon={<GithubOutlined />} tint="#334155" label="开源声明"
           value="MIT" onClick={() => setOssOpen(true)} />
@@ -211,6 +245,12 @@ export default function SettingsView({ onBack }) {
         onClose={() => setAvatarOpen(false)} onSaved={refresh}
       />
       <PasswordModal open={passwordOpen} email={user.email} onClose={() => setPasswordOpen(false)} />
+      <ExchangeModal
+        open={exchangeOpen}
+        billing={billing}
+        onClose={() => setExchangeOpen(false)}
+        onDone={() => api.getBilling().then(setBilling).catch(() => {})}
+      />
     </div>
   )
 }

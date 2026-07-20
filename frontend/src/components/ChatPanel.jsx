@@ -76,6 +76,9 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
     }
   }, [messages, busy])
 
+  /** 扣费完成后刷新导航栏余额（billing-changed 广播） */
+  const notifyBilling = () => window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
+
   // 会话累计 token（输出 + 输入），显示在顶栏
   const totals = messages.reduce((acc, m) => {
     if (m.usage) {
@@ -91,6 +94,9 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
   const estPromptTokens = Math.round(
     ((subtitleText?.length || 0) + historyChars + input.trim().length) / 1.5
   )
+  // 折引力波（1 = 500 tokens，四成让利取整，与后端一致）
+  const estGravity = Math.floor(estPromptTokens / 500) +
+    (estPromptTokens % 500 > 200 ? 1 : 0)
 
   /** 流式追加最后一条 assistant 消息的内容 */
   const appendLast = (text) => {
@@ -118,12 +124,13 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
       setMessages(prev => [...prev, { role: 'assistant', content: '' }])
       await api.chatStream(taskId, question, history, {
         onDelta: appendLast,
-        onDone: (usage) => {
+        onDone: (usage, charged) => {
           setMessages(prev => {
             const next = [...prev]
-            next[next.length - 1] = { ...next[next.length - 1], usage }
+            next[next.length - 1] = { ...next[next.length - 1], usage, charged }
             return next
           })
+          notifyBilling()   // 结算完成，刷新余额
         },
       })
     } catch (e) {
@@ -207,7 +214,8 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                   onClick={() => send(s)}
                   disabled={cleaned}
                 >
-                  {s}
+                  <span>{s}</span>
+                  <span className="chat-chip-cost">≈ {estGravity} 引力波</span>
                 </button>
               ))}
             </div>
@@ -263,6 +271,11 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                             缓存 {Math.round(m.usage.cache_hit_tokens / m.usage.prompt_tokens * 100)}%
                           </span>
                         )}
+                        {m.charged > 0 && (
+                          <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
+                            · 扣 {m.charged} 引力波
+                          </span>
+                        )}
                       </div>
                     )}
                   </>
@@ -284,7 +297,7 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
         <div className="font-mono" style={{
           fontSize: 11, color: 'var(--mute)', marginBottom: 8, textAlign: 'right',
         }}>
-          本轮预计输入 ≈ {fmtTokens(estPromptTokens)} tokens（含字幕全文）
+          本轮预计输入 ≈ {fmtTokens(estPromptTokens)} tokens（含字幕全文）≈ {estGravity} 引力波
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Input
