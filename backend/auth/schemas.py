@@ -62,3 +62,16 @@ class UpdateProfileRequest(BaseModel):
     nickname: str | None = Field(None, min_length=1, max_length=24)
     avatar_seed: str | None = Field(None, min_length=1, max_length=64)
     bio: str | None = Field(None, max_length=100)
+
+
+class ChangePasswordRequest(BaseModel):
+    """设置页修改密码(需登录,旧密码通道)"""
+    old_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ResetPasswordRequest(BaseModel):
+    """忘记密码(免登录,验证码通道)"""
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8)

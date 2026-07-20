@@ -7,11 +7,12 @@
  */
 import { useState, useCallback, useEffect } from 'react'
 import { Layout, Tooltip, Button, Dropdown, Avatar } from 'antd'
-import { WalletOutlined, LogoutOutlined, LoginOutlined } from '@ant-design/icons'
+import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined } from '@ant-design/icons'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
 import AuthPage from './pages/AuthPage'
+import SettingsView from './pages/SettingsView'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -94,16 +95,66 @@ export default function App() {
                   <span className="font-mono" style={{ fontSize: 12, color: 'var(--hairline-strong)' }}>--</span>
                 </div>
               </Tooltip>
-              <Dropdown menu={{
-                items: [
-                  { key: 'uid', label: `UID ${user.uid}`, disabled: true },
-                  { type: 'divider' },
-                  { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, danger: true },
-                ],
-                onClick: ({ key }) => {
-                  if (key === 'logout') { logout(); setPage('home') }
-                },
-              }} placement="bottomRight">
+              <Dropdown
+                dropdownRender={() => (
+                  <div style={{
+                    width: 240,
+                    background: 'var(--surface-1)',
+                    borderRadius: 'var(--r-card)',
+                    border: '1px solid var(--hairline)',
+                    boxShadow: '0 8px 28px rgba(0, 0, 0, 0.08)',
+                    overflow: 'hidden',
+                  }}>
+                    {/* 用户卡 */}
+                    <div style={{ padding: '14px 16px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <Avatar
+                        size={42}
+                        src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
+                        style={{ border: '1px solid var(--hairline)', flexShrink: 0 }}
+                      />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {user.nickname}
+                        </div>
+                        <div className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', marginTop: 2 }}>
+                          UID {user.uid}
+                        </div>
+                      </div>
+                    </div>
+                    {/* 会员等级 + 引力波（占位，计费板块接入） */}
+                    <div style={{
+                      margin: '0 12px 10px',
+                      padding: '8px 12px',
+                      background: 'var(--surface-2)',
+                      borderRadius: 'var(--r-input)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: 12,
+                      color: 'var(--mute)',
+                    }}>
+                      <span>免费版</span>
+                      <span className="font-mono">引力波 --</span>
+                    </div>
+                    <div style={{ borderTop: '1px solid var(--hairline)' }}>
+                      <div
+                        className="dropdown-item"
+                        onClick={() => setPage('settings')}
+                      >
+                        <SettingOutlined style={{ marginRight: 8 }} />设置
+                      </div>
+                      <div
+                        className="dropdown-item dropdown-item--danger"
+                        onClick={() => { logout(); setPage('home') }}
+                      >
+                        <LogoutOutlined style={{ marginRight: 8 }} />退出登录
+                      </div>
+                    </div>
+                  </div>
+                )}
+                placement="bottomRight"
+                trigger={['click']}
+              >
                 <Avatar
                   size={30}
                   src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
@@ -134,6 +185,9 @@ export default function App() {
         )}
         {page === 'home' && (
           <HomePage onSubmit={handleSubmit} />
+        )}
+        {page === 'settings' && (
+          <SettingsView onBack={() => setPage('home')} />
         )}
         {page === 'progress' && taskId && (
           <ProgressPage
@@ -544,6 +598,17 @@ export default function App() {
           background: #fff;
           box-shadow: 0 0 8px 2px rgba(129, 140, 248, 0.55);
         }
+
+        /* 下拉面板条目 */
+        .dropdown-item {
+          padding: 10px 16px;
+          font-size: 13px;
+          color: var(--body);
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .dropdown-item:hover { background: var(--surface-2); }
+        .dropdown-item--danger { color: var(--error); }
 
         /* 尊重系统减弱动效设置 */
         @media (prefers-reduced-motion: reduce) {

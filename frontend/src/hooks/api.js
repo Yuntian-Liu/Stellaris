@@ -121,6 +121,12 @@ export const authApi = {
   loginPassword: (email_or_uid, password) => request('/api/auth/login-password', { method: 'POST', body: { email_or_uid, password } }),
   getMe: () => request('/api/auth/me'),
   updateProfile: (payload) => request('/api/auth/profile', { method: 'PUT', body: payload }),
+  changePassword: (old_password, new_password) =>
+    request('/api/auth/change-password', { method: 'PUT', body: { old_password, new_password } }),
+  resetPassword: (email, code, new_password) =>
+    request('/api/auth/reset-password', { method: 'POST', body: { email, code, new_password } }),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, cleanupTask, authApi }
+export const getStats = () => request('/api/user/stats')
+
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, cleanupTask, authApi }

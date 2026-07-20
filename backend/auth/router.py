@@ -18,6 +18,7 @@ from auth.schemas import (
     SendCodeRequest, SendCodeResponse,
     LoginCodeRequest, LoginCodeResponse, UserPublic,
     RegisterRequest, LoginPasswordRequest, UpdateProfileRequest,
+    ChangePasswordRequest, ResetPasswordRequest,
 )
 from auth.utils import (
     generate_code, check_send_code_rate, create_access_token,
@@ -205,7 +206,7 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """更新昵称/头像/签名(部分更新;改密留后续)"""
+    """更新昵称/头像/签名(部分更新;改密走 change-password/reset-password)"""
     if req.nickname is not None:
         current_user.nickname = req.nickname
     if req.avatar_seed is not None:
@@ -215,3 +216,49 @@ async def update_profile(
     await db.commit()
     await db.refresh(current_user)
     return _user_to_public(current_user)
+
+
+@router.put("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """修改密码(需登录,旧密码通道):验旧密码 → 强度校验 → 更新哈希"""
+    if not current_user.password_hash:
+        raise HTTPException(status_code=400, detail="该账号未设置密码,请用验证码重置")
+    ok = await asyncio.to_thread(verify_password, req.old_password, current_user.password_hash)
+    if not ok:
+        raise HTTPException(status_code=401, detail="旧密码错误")
+
+    pwd_errors = validate_password_strength(req.new_password)
+    if pwd_errors:
+        raise HTTPException(status_code=422, detail="; ".join(pwd_errors))
+
+    current_user.password_hash = await asyncio.to_thread(hash_password, req.new_password)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """忘记密码(免登录,验证码通道):验码 → 强度校验 → 更新哈希 → 销码"""
+    record = await db.get(VerificationCode, req.email)
+    if not record or _is_expired(record.expires_at) or record.code != req.code:
+        raise HTTPException(status_code=400, detail="验证码无效或已过期,请重新发送")
+    if record.attempts >= CODE_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="尝试次数过多,请重新发送验证码")
+
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="该邮箱尚未注册")
+
+    pwd_errors = validate_password_strength(req.new_password)
+    if pwd_errors:
+        raise HTTPException(status_code=422, detail="; ".join(pwd_errors))
+
+    user.password_hash = await asyncio.to_thread(hash_password, req.new_password)
+    await db.delete(record)
+    await db.commit()
+    return {"ok": True}

@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Input, Button, Segmented, Checkbox, Tooltip } from 'antd'
 import { authApi } from '../../hooks/api'
 import AgreementModal from '../AgreementModal'
+import ForgotPasswordModal from './ForgotPasswordModal'
 
 export default function EmailStep({ onSuccess }) {
   const [email, setEmail] = useState('')
@@ -18,6 +19,7 @@ export default function EmailStep({ onSuccess }) {
   const [error, setError] = useState('')
   const [agreementOpen, setAgreementOpen] = useState(false)
   const [agreementType, setAgreementType] = useState('agreement')
+  const [forgotOpen, setForgotOpen] = useState(false)
   const turnstileRef = useRef(null)
   const widgetId = useRef(null)
 
@@ -120,17 +122,35 @@ export default function EmailStep({ onSuccess }) {
       />
 
       {mode === 'password' && (
-        <Input.Password
-          size="large"
-          placeholder="密码"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          style={{ marginBottom: 12 }}
-        />
+        <>
+          <Input.Password
+            size="large"
+            placeholder="密码"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            style={{ marginBottom: 4 }}
+          />
+          <div style={{ textAlign: 'right', marginBottom: 12 }}>
+            <a style={{ fontSize: 12 }} onClick={() => setForgotOpen(true)}>
+              忘记密码？
+            </a>
+          </div>
+        </>
       )}
 
-      {mode === 'code' && pubConfig?.is_prod && (
-        <div ref={turnstileRef} style={{ marginBottom: 12, minHeight: 65 }} />
+      {pubConfig?.is_prod && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div ref={turnstileRef} style={{ minHeight: 65 }} />
+          </div>
+          {['localhost', '127.0.0.1'].includes(window.location.hostname) && (
+            <div style={{ textAlign: 'center', marginTop: 4 }}>
+              <a style={{ fontSize: 12, color: 'var(--mute)' }} onClick={() => setTurnstileToken('dev-bypass')}>
+                开发模式：跳过验证
+              </a>
+            </div>
+          )}
+        </div>
       )}
 
       <div style={{ marginBottom: 16, fontSize: 13, lineHeight: 1.6 }}>
@@ -166,6 +186,7 @@ export default function EmailStep({ onSuccess }) {
       </Tooltip>
 
       <AgreementModal open={agreementOpen} type={agreementType} onClose={() => setAgreementOpen(false)} />
+      <ForgotPasswordModal open={forgotOpen} email={email} onClose={() => setForgotOpen(false)} />
     </div>
   )
 }

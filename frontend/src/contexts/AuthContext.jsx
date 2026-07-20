@@ -39,8 +39,13 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
+  // 资料修改后重新拉取当前用户（昵称/头像即时生效）
+  const refresh = useCallback(() => {
+    return authApi.getMe().then(u => setUser(u)).catch(() => {})
+  }, [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   )

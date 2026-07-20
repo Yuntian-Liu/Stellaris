@@ -11,10 +11,14 @@ async def verify_turnstile(token: str | None, remote_ip: str | None = None) -> b
     """
     校验 Turnstile token。
     - IS_PROD=false:bypass(开发模式)
+    - 本机请求(127.0.0.1/::1) + 特殊 token:dev bypass——本地开发即使
+      IS_PROD=true(测真实发信)也能跳过验证;外网攻击者无法伪造来源 IP,安全
     - IS_PROD=true 但未配 secret:fail-closed(拒绝)
     - IS_PROD=true 且配了 secret:调 Cloudflare siteverify(form-urlencoded)
     """
     if not IS_PROD:
+        return True
+    if token == "dev-bypass" and remote_ip in ("127.0.0.1", "::1", "localhost"):
         return True
     if not TURNSTILE_SECRET_KEY:
         return False  # 生产环境必须配 secret,fail-closed

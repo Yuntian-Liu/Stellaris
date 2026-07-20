@@ -29,5 +29,6 @@ async def init_db():
     # 延迟 import，确保所有模型类已定义并被 Base.metadata 收集
     from auth import models  # noqa: F401
     import chat_store  # noqa: F401
+    import stats_store  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

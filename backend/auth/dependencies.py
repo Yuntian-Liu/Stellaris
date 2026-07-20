@@ -29,3 +29,18 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
     return user
+
+
+async def get_current_user_optional(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """可选登录：无 token 或 token 无效时返回 None(匿名)，不抛异常。
+    用于任务归属统计等「登录则记录、匿名也放行」的场景。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    payload = decode_access_token(authorization[7:])
+    if not payload or payload.get("uid") is None:
+        return None
+    result = await db.execute(select(User).where(User.uid == payload["uid"]))
+    return result.scalar_one_or_none()

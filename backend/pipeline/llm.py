@@ -117,7 +117,18 @@ def _build_chat_system(raw_text: str, video_title: str) -> str:
 
 # ── 核心函数 ──────────────────────────────────────────
 
-def segment_text(raw_text: str, task_id: str) -> str:
+def _usage_dict(completion) -> dict:
+    """从 completion 提取 token 用量（统计/计费用）"""
+    u = getattr(completion, "usage", None)
+    if not u:
+        return {"prompt_tokens": 0, "completion_tokens": 0}
+    return {
+        "prompt_tokens": u.prompt_tokens or 0,
+        "completion_tokens": u.completion_tokens or 0,
+    }
+
+
+def segment_text(raw_text: str, task_id: str) -> tuple[str, dict]:
     """
     TXT 语义分段：将原始 ASR 转录文本按语义重新分段。
 
@@ -130,7 +141,7 @@ def segment_text(raw_text: str, task_id: str) -> str:
     """
     if not raw_text or not raw_text.strip():
         logger.warning("[LLM] 空文本，跳过分段 (task=%s)", task_id)
-        return raw_text
+        return raw_text, {"prompt_tokens": 0, "completion_tokens": 0}
 
     client = _get_client()
     logger.info("[LLM] 语义分段开始: %d 字符 (task=%s)", len(raw_text), task_id)
@@ -150,24 +161,20 @@ def segment_text(raw_text: str, task_id: str) -> str:
 
         logger.info("[LLM] 语义分段完成: %d → %d 字符 (task=%s)",
                     len(raw_text), len(result), task_id)
-        return result
+        return result, _usage_dict(completion)
 
     except Exception as e:
         logger.error("[LLM] 语义分段失败，回退原文 (task=%s): %s", task_id, e)
         # 失败时回退到原文，不阻断主管线
-        return raw_text
+        return raw_text, {"prompt_tokens": 0, "completion_tokens": 0}
 
 
-def text_to_markdown(raw_text: str, task_id: str) -> str:
+def text_to_markdown(raw_text: str, task_id: str) -> tuple[str, dict]:
     """
     原文转写 Markdown：将 ASR 转录文本转为结构化 Markdown 笔记。
 
-    Args:
-        raw_text: 原始拼接文本
-        task_id: 任务 ID（日志追踪）
-
     Returns:
-        结构化 Markdown 文本（含标题/加粗/引用等）
+        (结构化 Markdown 文本, usage 字典)
 
     Raises:
         Exception: 调用失败时抛出（此为用户主动触发的增值功能，失败应告知用户）
@@ -196,19 +203,15 @@ def text_to_markdown(raw_text: str, task_id: str) -> str:
             result = result[:-3].rstrip("\n")
 
     logger.info("[LLM] Markdown 转写完成: %d 字符 (task=%s)", len(result), task_id)
-    return result
+    return result, _usage_dict(completion)
 
 
-def summarize_text(raw_text: str, task_id: str) -> str:
+def summarize_text(raw_text: str, task_id: str) -> tuple[str, dict]:
     """
     内容总结概要：将字幕文本浓缩为结构化概要（增值功能，用户主动触发）。
 
-    Args:
-        raw_text: 原始字幕文本
-        task_id: 任务 ID（日志追踪）
-
     Returns:
-        Markdown 格式的总结概要（概述 + 核心要点）
+        (Markdown 格式的总结概要, usage 字典)
 
     Raises:
         Exception: 调用失败时抛出（增值功能，失败应告知用户）
@@ -237,7 +240,7 @@ def summarize_text(raw_text: str, task_id: str) -> str:
             result = result[:-3].rstrip("\n")
 
     logger.info("[LLM] 总结概要完成: %d 字符 (task=%s)", len(result), task_id)
-    return result
+    return result, _usage_dict(completion)
 
 
 

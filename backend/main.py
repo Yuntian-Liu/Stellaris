@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -36,6 +36,9 @@ from pipeline.export import (
 
 from database import init_db
 from auth.router import router as auth_router
+from auth.dependencies import get_current_user, get_current_user_optional
+from auth.models import User
+from stats_store import incr_stats, get_stats
 
 
 # ===== 内存中的任务存储（生产环境应换 Redis）=====
@@ -146,10 +149,11 @@ async def estimate_cost(request: EstimateRequest):
 async def submit_task(
     request: SubmitRequest,
     background_tasks: BackgroundTasks,
+    current_user: User | None = Depends(get_current_user_optional),
 ):
     """
     提交新的字幕提取任务
-    支持 B站链接 或 文件上传
+    支持 B站链接 或 文件上传；登录用户记录任务归属（统计用）
     """
     # 磁盘空间检查
     if not check_disk_space():
@@ -166,6 +170,7 @@ async def submit_task(
         "url": request.url,
         "sessdata": request.sessdata,
         "source_platform": platform_label(request.url),
+        "owner_uid": current_user.uid if current_user else None,
     }
 
     # 后台执行管线
@@ -186,11 +191,12 @@ async def submit_task(
 
 @app.post("/api/upload", response_model=TaskResponse)
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     sessdata: str | None = None,
-    background_tasks: BackgroundTasks = None,
+    current_user: User | None = Depends(get_current_user_optional),
 ):
-    """上传视频文件提取字幕"""
+    """上传视频文件提取字幕；登录用户记录任务归属（统计用）"""
     if not check_disk_space():
         raise HTTPException(status_code=503, detail="磁盘空间不足")
 
@@ -212,6 +218,7 @@ async def upload_file(
         "file_path": str(file_path),
         "sessdata": sessdata,
         "source_platform": platform_label(None),
+        "owner_uid": current_user.uid if current_user else None,
     }
 
     background_tasks.add_task(
@@ -413,6 +420,14 @@ async def chat_about_video(task_id: str, request: ChatRequest):
         if full_reply:
             await save_chat_message(task_id, "user", request.message)
             await save_chat_message(task_id, "assistant", full_reply, final_usage)
+            # 统计埋点（登录用户才计数）
+            owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
+            if owner_uid and final_usage:
+                await incr_stats(
+                    owner_uid,
+                    chat_rounds=1,
+                    tokens_used=final_usage["prompt_tokens"] + final_usage["completion_tokens"],
+                )
 
     return StreamingResponse(
         sse_generator(),
@@ -428,6 +443,12 @@ async def get_chat(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"messages": await get_chat_history(task_id)}
+
+
+@app.get("/api/user/stats")
+async def get_user_stats(current_user: User = Depends(get_current_user)):
+    """当前用户的累计统计（设置页数据统计卡）"""
+    return await get_stats(current_user.uid)
 
 
 # ===== 核心管线（后台执行）=====
@@ -485,12 +506,21 @@ def _run_pipeline_sync(
 
         # ⑤ LLM 语义分段（默认自动执行）
         _update_status(task_id, TaskStatus.TEXT_PROCESSING, 70)
-        segmented_text = segment_text(raw_text, task_id)
+        segmented_text, seg_usage = segment_text(raw_text, task_id)
 
         # ⑥ 导出（TXT 用分段后的，SRT 用原始 segments 保留时间轴）
         _update_status(task_id, TaskStatus.EXPORTING, 90)
         srt_content = segments_to_srt(segments)
         export_paths = save_exports(task_id, srt_content, segmented_text)
+
+        # ⑦ 统计埋点（登录用户才计数，未登录跳过）
+        task = tasks.get(task_id) or {}
+        _incr_stats_sync(
+            task.get("owner_uid"),
+            videos_extracted=1,
+            chars_transcribed=len(raw_text),
+            tokens_used=seg_usage["prompt_tokens"] + seg_usage["completion_tokens"],
+        )
 
         # ✅ 完成
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
@@ -546,12 +576,21 @@ def _run_pipeline_from_file_sync(
 
         # ④ LLM 语义分段
         _update_status(task_id, TaskStatus.TEXT_PROCESSING, 70)
-        segmented_text = segment_text(raw_text, task_id)
+        segmented_text, seg_usage = segment_text(raw_text, task_id)
 
         # ⑤ 导出
         _update_status(task_id, TaskStatus.EXPORTING, 90)
         srt_content = segments_to_srt(segments)
         save_exports(task_id, srt_content, segmented_text)
+
+        # ⑥ 统计埋点（登录用户才计数，未登录跳过）
+        task = tasks.get(task_id) or {}
+        _incr_stats_sync(
+            task.get("owner_uid"),
+            videos_extracted=1,
+            chars_transcribed=len(raw_text),
+            tokens_used=seg_usage["prompt_tokens"] + seg_usage["completion_tokens"],
+        )
 
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
             "video_title": video_title,
@@ -574,6 +613,16 @@ def _run_pipeline_from_file_sync(
 
 # ===== 内部辅助函数 =====
 
+def _incr_stats_sync(owner_uid: int | None, **fields: int) -> None:
+    """同步上下文（线程池）里累加用户统计；未登录（None）直接跳过"""
+    if not owner_uid or not fields:
+        return
+    try:
+        asyncio.run(incr_stats(owner_uid, **fields))
+    except Exception as e:
+        logger.warning("[Stats] 统计累加失败(不影响主流程): %s", e)
+
+
 def _generate_summary_background(task_id: str):
     """后台生成内容总结：调用 LLM 将字幕浓缩为结构化概要。"""
     task = tasks.get(task_id)
@@ -582,7 +631,7 @@ def _generate_summary_background(task_id: str):
 
     raw_text = task.get("raw_text", "")
     try:
-        summary_content = summarize_text(raw_text, task_id)
+        summary_content, summary_usage = summarize_text(raw_text, task_id)
 
         # 保存到任务目录（方便后续可能的下载需求）
         from utils import get_task_dir
@@ -593,6 +642,10 @@ def _generate_summary_background(task_id: str):
         task["summary_status"] = "ready"
         task["summary_error"] = None
         task["summary_content"] = summary_content   # 直接带回前端展示
+        _incr_stats_sync(
+            task.get("owner_uid"),
+            tokens_used=summary_usage["prompt_tokens"] + summary_usage["completion_tokens"],
+        )
         logger.info("[Summary] 总结完成: %s (%d 字符)", task_id, len(summary_content))
 
     except Exception as e:
@@ -609,7 +662,7 @@ def _generate_md_background(task_id: str):
 
     raw_text = task.get("raw_text", "")
     try:
-        md_content = text_to_markdown(raw_text, task_id)
+        md_content, md_usage = text_to_markdown(raw_text, task_id)
 
         # 保存到任务目录
         from utils import get_task_dir
@@ -619,6 +672,11 @@ def _generate_md_background(task_id: str):
 
         task["md_status"] = "ready"
         task["md_error"] = None
+        _incr_stats_sync(
+            task.get("owner_uid"),
+            md_notes=1,
+            tokens_used=md_usage["prompt_tokens"] + md_usage["completion_tokens"],
+        )
         logger.info("[MD] 导出完成: %s (%d 字符)", task_id, len(md_content))
 
     except Exception as e:
