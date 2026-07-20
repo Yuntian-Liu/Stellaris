@@ -113,13 +113,8 @@ export default function ResultPage({ taskData, onBack, onNew }) {
     }
   }
 
-  const sourceMap = {
-    cc_subtitle: { text: 'CC 字幕', color: 'var(--success)', bg: 'var(--success-bg)' },
-    asr_mimo: { text: 'Mimo ASR', color: 'var(--accent)', bg: 'var(--accent-light)' },
-  }
-  const source = sourceMap[taskData.subtitle_source] || {
-    text: '未知', color: 'var(--mute)', bg: 'var(--surface-2)',
-  }
+  // 来源平台（哔哩哔哩 / 小红书 / 本地上传 / 其他域名），后端 submit 时计算
+  const platform = taskData.source_platform || '未知来源'
 
   // 预览文本（后端返回的真实内容）
   const previewText = taskData.subtitle_txt || '（无文本内容）'
@@ -183,15 +178,15 @@ export default function ResultPage({ taskData, onBack, onNew }) {
         >
           <Descriptions.Item label="来源">
             <Tag style={{
-              background: source.bg,
-              color: source.color,
+              background: 'var(--accent-light)',
+              color: 'var(--accent)',
               border: 'none',
               borderRadius: '9999px',
               fontWeight: 500,
               fontSize: 12,
               padding: '2px 10px',
             }}>
-              {source.text}
+              {platform}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="任务 ID">

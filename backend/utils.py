@@ -15,6 +15,21 @@ def generate_task_id() -> str:
     return f"stellaris-{uuid.uuid4().hex[:12]}"
 
 
+def platform_label(url: str | None) -> str:
+    """从视频链接推断来源平台名称（结果页展示用；本地上传传 None）"""
+    if not url:
+        return "本地上传"
+    u = url.lower()
+    if "bilibili.com" in u or "b23.tv" in u:
+        return "哔哩哔哩"
+    if "xiaohongshu.com" in u or "xhslink.com" in u:
+        return "小红书"
+    # 其他平台：展示域名（如 youtube.com）
+    import re
+    m = re.search(r"https?://(?:www\.)?([^/]+)", u)
+    return m.group(1) if m else "视频链接"
+
+
 def cleanup_temp_files(task_id: str) -> None:
     """清理指定任务的所有临时文件"""
     task_dir = TMP_DIR / task_id

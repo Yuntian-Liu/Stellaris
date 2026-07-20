@@ -53,6 +53,7 @@ class TaskResponse(BaseModel):
     summary_error: Optional[str] = None
     summary_content: Optional[str] = None   # 总结正文（ready 时带回前端展示）
     cleaned: Optional[bool] = None          # 用户已主动清理数据，下载按钮应禁用
+    source_platform: Optional[str] = None   # 来源平台（哔哩哔哩/小红书/本地上传/域名）
     error: Optional[str] = None
 
 

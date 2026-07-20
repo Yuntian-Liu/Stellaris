@@ -16,7 +16,7 @@ from config import (
     MAX_CONCURRENT_TASKS,
     SPEECH_CHARS_PER_MIN, CHARS_PER_TOKEN, LLM_TOKEN_ROUNDTRIP_FACTOR,
 )
-from utils import generate_task_id, cleanup_temp_files, cleanup_old_tasks, check_disk_space
+from utils import generate_task_id, cleanup_temp_files, cleanup_old_tasks, check_disk_space, platform_label
 from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
@@ -158,6 +158,7 @@ async def submit_task(
         "source": request.source.value,
         "url": request.url,
         "sessdata": request.sessdata,
+        "source_platform": platform_label(request.url),
     }
 
     # 后台执行管线
@@ -203,6 +204,7 @@ async def upload_file(
         "source": TaskSource.FILE_UPLOAD.value,
         "file_path": str(file_path),
         "sessdata": sessdata,
+        "source_platform": platform_label(None),
     }
 
     background_tasks.add_task(

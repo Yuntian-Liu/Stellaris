@@ -344,7 +344,7 @@ export default function HomePage({ onSubmit }) {
           padding: '3px 12px',
           fontWeight: 500,
         }}>
-          Stellaris · yt-dlp &amp; Mimo ASR &amp; DeepSeek
+          Stellaris · 多平台视频字幕提取
         </Tag>
       </div>
     </div>

@@ -4,6 +4,7 @@
 B站链接走 pipeline.bilibili_api 纯 API 直连（绕开 yt-dlp 网页抓取被
 412 风控的问题，数据中心 IP 可用）；其他站点走 yt-dlp。
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,34 @@ from pipeline.bilibili_api import (
     download_to_file,
 )
 from utils import get_task_dir
+
+# yt-dlp 对部分站点（如小红书）只给 "XiaoHongShu video #id" 这类通用标题
+_GENERIC_TITLE_RE = re.compile(r" video #[0-9a-f]+\s*$", re.I)
+
+
+def _fetch_page_title(url: str) -> str | None:
+    """抓页面 <title> 作标题兜底（读前 1MB；小红书 head 很大，title 位置靠后；失败返回 None）"""
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/128.0.0.0 Safari/537.36"),
+    })
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        try:
+            html = resp.read(1024 * 1024).decode("utf-8", "replace")
+        finally:
+            resp.close()
+    except Exception:
+        return None
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    if not m:
+        return None
+    # 去掉站点后缀（如 " - 小红书"），只留视频标题
+    title = re.sub(r"\s*-\s*小红书\s*$", "", m.group(1).strip())
+    return title or None
 
 
 def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> dict:
@@ -71,6 +100,8 @@ def _download_via_ytdlp(
     # yt-dlp 命令：只下载最佳音频，转码为 mp3
     # --write-info-json 顺手落一份元数据，用于取真实视频标题
     # （注意：--print 会让 yt-dlp 跳过下载，不能用于此处）
+    # 注意：不要在此加任何站点专属请求头（Referer/Origin/Cookie）——
+    # 此路径服务所有非 B站站点，B站反爬头会被其他平台 CDN 当盗链拒绝(403)。
     cmd = [
         sys.executable, "-m", "yt_dlp",   # 用当前解释器跑 yt_dlp 模块（venv 隔离，不依赖系统 PATH）
         "-x",                          # 只提取音频
@@ -80,23 +111,10 @@ def _download_via_ytdlp(
         "--ffmpeg-location", FFMPEG_PATH,
         "--no-playlist",                # 不下载播放列表
         "--write-info-json",            # 写元数据 JSON（取标题用）
-        # ── 反爬绕过（不依赖用户 cookie,通用解法）──
-        # 1. 最新版 Chrome UA,模拟真实浏览器
         "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "--referer", "https://www.bilibili.com/",
         "--add-header", "Accept-Language:zh-CN,zh;q=0.9,en;q=0.8",
-        # 2. 模拟完整的浏览器请求头,避免被特征识别为爬虫
-        "--add-header", "Origin:https://www.bilibili.com",
-        "--add-header", "Sec-Ch-Ua:\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
-        "--add-header", "Sec-Fetch-Dest:document",
-        "--add-header", "Sec-Fetch-Mode:navigate",
-        "--add-header", "Sec-Fetch-Site:same-origin",
-        # 3. 用 yt-dlp 原生的 B站 extractor 而不是通用抓取
-        "--extractor-args", "bilibili:webpage=1"
     ]
-    # 带用户 B站登录 cookie（SESSDATA），绕过反爬 + 能看会员视频
-    if sessdata:
-        cmd += ["--add-header", f"Cookie:SESSDATA={sessdata}"]
+    # sessdata 是 B站凭证,绝不透传到其他站点（隐私）；B站走 bilibili_api 不经此处
     cmd.append(url)
 
     result = subprocess.run(
@@ -118,9 +136,14 @@ def _download_via_ytdlp(
     if not actual_audio:
         raise RuntimeError("下载完成但未找到音频文件")
 
+    # yt-dlp 通用标题（"xxx video #id"）时抓页面 <title> 兜底
+    title = _read_title_from_info_json(task_dir)
+    if _GENERIC_TITLE_RE.search(title):
+        title = _fetch_page_title(url) or title
+
     return {
         "audio_path": actual_audio,
-        "video_title": _read_title_from_info_json(task_dir),
+        "video_title": title,
     }
 
 
@@ -137,7 +160,7 @@ def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
 
 
 def _probe_via_ytdlp(url: str, sessdata: str | None = None) -> dict:
-    """yt-dlp 通用元数据探测（非 B站站点）"""
+    """yt-dlp 通用元数据探测（非 B站站点）。同下载路径，禁加站点专属头"""
     import json
 
     cmd = [
@@ -146,18 +169,10 @@ def _probe_via_ytdlp(url: str, sessdata: str | None = None) -> dict:
         "--no-playlist",
         "--skip-download",         # 不下载任何内容
         "--ffmpeg-location", FFMPEG_PATH,
-        # 反爬：同 download_bilibili（不依赖 cookie,通用解法）
         "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "--referer", "https://www.bilibili.com/",
         "--add-header", "Accept-Language:zh-CN,zh;q=0.9,en;q=0.8",
-        "--add-header", "Origin:https://www.bilibili.com",
-        "--add-header", "Sec-Ch-Ua:\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
-        "--add-header", "Sec-Fetch-Dest:document",
-        "--add-header", "Sec-Fetch-Mode:navigate",
-        "--add-header", "Sec-Fetch-Site:same-origin",
     ]
-    if sessdata:
-        cmd += ["--add-header", f"Cookie:SESSDATA={sessdata}"]
+    # sessdata 是 B站凭证,不透传到其他站点
     cmd.append(url)
 
     result = subprocess.run(
@@ -181,8 +196,13 @@ def _probe_via_ytdlp(url: str, sessdata: str | None = None) -> dict:
     if duration is None:
         raise RuntimeError("未能获取视频时长")
 
+    title = info.get("title") or "Unknown Title"
+    # yt-dlp 对部分站点（如小红书）只给 "xxx video #id" 通用标题，抓页面 <title> 兜底
+    if _GENERIC_TITLE_RE.search(title):
+        title = _fetch_page_title(url) or title
+
     return {
-        "title": info.get("title") or "Unknown Title",
+        "title": title,
         "duration_sec": float(duration),
     }
 
