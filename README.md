@@ -5,125 +5,143 @@
 <h1 align="center">Stellaris</h1>
 
 <p align="center">
-  <strong>Turning voices into words you can read.</strong>
+  <strong>Turning voices into words you can read.</strong><br/>
+  视频字幕提取 · AI 内容理解 · 三层货币计费的完整产品
 </p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-tech-stack">Tech Stack</a> •
-  <a href="-quick-start">Quick Start</a> •
-  <a href="#-pipeline">Pipeline</a> •
-  <a href="#-license">License</a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.9.2-4f46e5">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12+-blue?logo=python&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/react-18-61dafb?logo=react&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white">
+  <img alt="DeepSeek" src="https://img.shields.io/badge/LLM-DeepSeek-6d28d9">
 </p>
 
 ---
 
 ## ✦ About
 
-Stellaris is a subtitle extraction web app that converts video audio into readable text. Drop a **Bilibili link** or upload a video file — Stellaris pulls existing captions when available, or transcribes the audio from scratch using state-of-the-art ASR.
+Stellaris is a full-featured subtitle extraction & content-understanding web app. Drop a **video link** (Bilibili / 小红书 / more) or **upload a file** — Stellaris pulls platform captions when available or transcribes audio with cloud ASR, then lets an LLM segment, summarize, structure and even *discuss* the content with you.
 
-Ships clean `.srt` and `.txt` exports.
+Built around a **three-currency billing system** and a **membership program** (via 爱发电), with history retention, redeem codes and a full admin dashboard.
 
 ### The Name
 
-**Stellaris** — *of the stars*. Audio is stellar matter; each word is light captured in text.
+**Stellaris** — *of the stars*. Audio is stellar matter; each extraction leaves a trail of light — 我们叫它「星轨」。
 
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| 🎬 **Bilibili Integration** | Paste a B站 URL — auto-downloads and extracts audio via `yt-dlp` |
-| 📁 **File Upload** | Upload any video file (MP4, MKV, AVI…) directly |
-| 🎙️ **Cloud ASR** | Powered by [Xiaomi Mimo](https://platform.mimo.com.cn/) (`mimo-v2.5-asr`) — automatic speech recognition with timestamped segments |
-| 📝 **CC Subtitle Fallback** | Fetches platform-provided closed captions when available (optional SESSDATA) |
-| 📐 **Long Audio Support** | Automatic chunking for videos of any length — no 8192 token wall |
-| 💾 **Dual Export** | Download as **SRT** (subtitle-ready) or **TXT** (plain text) |
-| 🎨 **Starlight UI** | Clean, minimal interface — Vercel precision × Linear surfaces × Apple simplicity |
+### 🎬 Extraction
+- **Multi-platform**: Bilibili (official API direct-connect, anti-412) / 小红书 & other sites (yt-dlp) / local file upload
+- **Cloud ASR**: Xiaomi Mimo `mimo-v2.5-asr`, automatic chunking for videos of any length
+- **CC subtitle fallback**: platform captions fetched first when available
+- **Smart degradation**: graceful fallback when quantum balance runs low
+
+| Platform | Method | Notes |
+|----------|--------|-------|
+| 哔哩哔哩 | Official API direct | Stable, anti-412 resistant |
+| 小红书 | yt-dlp | Video notes |
+| 本地上传 | FFmpeg | MP4 / MKV / AVI … |
+
+### 🤖 AI Layer (DeepSeek)
+- **Semantic segmentation** — raw transcript → readable paragraphs（默认开启）
+- **Summary** — one-click content digest（概述 + 要点）
+- **Markdown notes** — structured, downloadable `.md`
+- **AI Chat** — multi-turn Q&A over the subtitle, SSE streaming, prefix-cache friendly
+
+### 👤 Accounts & Billing
+- Email + UID dual login, password & code channels, Turnstile protection
+- **Three currencies** — every operation is metered, estimated, and settled honestly:
+
+| Currency | Unit | For | Cycle |
+|----------|------|-----|-------|
+| ⏱ Minutes | 视频时长 | ASR 转写 | 日/周/月自然周期重置 |
+| 🌊 量子波 | 1 = 100 tokens | 智能分段 · 总结概要 | 每周重发 + 永久活动钱包 |
+| 💫 引力波 | 1 = 500 tokens | MD 笔记 · AI 解读 | 永不过期 |
+
+- Transparent metering: pre-estimate, post-settlement, 40% round-down forgiveness
+- Consumption ledger with dual-wallet breakdown — every wave is traceable
+- History retention by tier: free 1h → up to 30d, audio deleted right after ASR
+
+### 💎 Membership (爱发电)
+| Tier | Price | Highlights |
+|------|-------|-----------|
+| **Stargazer** 观星者 | ¥8/mo | 480 min/mo · 650 量子波/周 · 24h history |
+| **Voyager** 远航者 | ¥18/mo | 1200 min/mo · 1700 量子波/周 · 7d history |
+| **Odyssey** 奥德赛 | ¥68/mo | 3600 min/mo · 5000 量子波/周 · 30d history |
+
+- Webhook auto-fulfillment (RSA-verified, idempotent), redeem codes, tier-based history retention
+- Cross-tier purchase lock · celebration on arrival ✦
+
+### 🛡 Admin Dashboard (is_admin only)
+- Metrics: users / tasks / tokens / revenue / **cost & margin estimation** / 30-day trends (recharts)
+- User management: search, balance adjust, tier grant/revoke — all behind a 6-digit PIN
+- Redeem code studio (custom codes incl. invitation tier), order review & manual fulfillment
+
+### 🖼 Screenshots
+
+<p align="center">
+  <img src="screenshots/home.png" alt="首页 · 预估确认" width="80%" /><br/>
+  <sub>首页 · 贴上链接，预估一目了然</sub>
+</p>
+
+<p align="center">
+  <img src="screenshots/result.png" alt="结果页 · AI 解读分栏" width="90%" /><br/>
+  <sub>结果页 · 字幕、概要、AI 解读同屏</sub>
+</p>
+
+<p align="center">
+  <img src="screenshots/membership.png" alt="会员页 · 逐星计划" width="90%" /><br/>
+  <sub>逐星计划 · 四档会员卡</sub>
+</p>
+
+<p align="center">
+  <img src="screenshots/admin.png" alt="管理看板" width="90%" /><br/>
+  <sub>管理看板 · 数据、成本、趋势一页尽览（仅开发者）</sub>
+</p>
+
+---
+
+## 🗺 Roadmap
+
+- [x] Multi-platform extraction & cloud ASR
+- [x] AI understanding layer (segment / summary / MD / chat)
+- [x] Accounts & three-currency billing
+- [x] Membership via 爱发电 (auto-fulfillment)
+- [x] Admin dashboard with trends & cost estimation
+- [ ] Annual plans & more member perks
+- [ ] More platforms & batch processing
+
+---
+
+## ❓ FAQ
+
+**为什么要注册？**
+未登录每日可体验 10 分钟基础转写；注册解锁每日 30 分钟 + 量子波周赠 + 引力波注册礼 + 历史记录。
+
+**额度怎么算？**
+提交前预估、完成后按真实用量结算，零头不足 40% 免单；失败操作零扣费。每笔消耗都可在「消耗记录」里查到。
+
+**数据安全吗？**
+任务数据按档位时限自动清理（免费 1 小时起），音频转写后即删，只留文本；协议与隐私政策在应用内可查。
 
 ---
 
 ## 🛠 Tech Stack
 
-```
-┌─────────────────────────────────────┐
-│            Frontend                 │
-│  React 18 · Vite · Ant Design 6.x  │
-│  Starlight Design System            │
-└──────────────┬──────────────────────┘
-               │ REST API
-┌──────────────▼──────────────────────┐
-│            Backend                  │
-│  Python 3.11+ · FastAPI             │
-├─────────────────────────────────────┤
-│  Pipeline                           │
-│  yt-dlp → FFmpeg → Mimo ASR         │
-│  SRT / TXT export                   │
-└─────────────────────────────────────┘
-```
-
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18, Vite, Ant Design 6.x, Google Fonts (Cormorant Garamond / Inter) |
-| Backend | Python 3.11+, FastAPI, OpenAI SDK (Mimo-compatible) |
-| Audio | FFmpeg (compression & chunking), yt-dlp (Bilibili download) |
-| ASR | [Xiaomi Mimo Platform](https://platform.mimo.com.cn/) `mimo-v2.5-asr` model |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Python 3.11+** with pip
-- **Node.js 18+** (for frontend dev)
-- **FFmpeg** — [download](https://ffmpeg.org/download.html) or `winget install Gyan.FFmpeg`
-- **yt-dlp** — `pip install yt-dlp`
-- **Mimo API Key** — register at [Xiaomi Mimo Platform](https://platform.mimo.com.cn/)
-
-### 1. Clone & Configure
-
-```bash
-git clone https://github.com/YuntianLiu/Stellaris.git
-cd Stellaris/backend
-
-# Copy environment template
-cp .env.example .env
-# Edit .env and fill in your MIMO_API_KEY
-```
-
-`.env` configuration:
-
-```env
-MIMO_API_KEY=sk-your-mimo-api-key-here
-BILIBILI_SESSDATA=                    # optional, for CC subtitles
-```
-
-### 2. Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-# → http://localhost:8000/health
-```
-
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-# → http://localhost:3004 (proxied to backend :8000)
-```
-
-### 4. Use
-
-1. Open `http://localhost:3004`
-2. Paste a Bilibili URL **or** drag & drop a video file
-3. Click **Extract Subtitles**
-4. Preview results → Download **SRT** or **TXT**
+| Frontend | React 18 · Vite · Ant Design 5 · Starlight Design System (Cormorant Garamond / Inter) |
+| Backend | Python 3.12+ · FastAPI · SQLAlchemy 2.0 (aiosqlite) · SQLite |
+| ASR | [Xiaomi Mimo](https://platform.mimo.com.cn/) `mimo-v2.5-asr` |
+| LLM | DeepSeek (OpenAI-compatible) — segmentation / summary / markdown / chat |
+| Media | FFmpeg · yt-dlp |
+| Auth | JWT · bcrypt · Cloudflare Turnstile · Resend |
+| Payment | 爱发电 Webhook (RSA-SHA256) |
+| Deploy | Single-service Dockerfile · Zeabur (Volume persistence, gzip, immutable assets) |
 
 ---
 
@@ -131,112 +149,89 @@ npm run dev
 
 ```
 Input (URL / File)
-        │
-        ▼
-  ┌─────────────┐
-  │  1. Download │  ← yt-dlp (URL) or FFmpeg extract (file)
-  │   + Extract  │
-  └──────┬──────┘
-         │ audio.mp3
-         ▼
-  ┌─────────────┐
-  │ 2. Compress  │  ← FFmpeg: 16kHz mono 64k (if >10MB)
-  └──────┬──────┘
-         │ compressed.mp3
-         ▼
-  ┌─────────────┐
-  │ 3. Split     │  ← ~25s chunks (if duration >20s)
-  └──────┬──────┘
-         │ chunk_001.mp3, chunk_002.mp3, ...
-         ▼
-  ┌─────────────┐
-  │ 4. Transcribe│  ← Mimo ASR (per chunk, with offset)
-  └──────┬──────┘
-         │ segments [{start, end, text}, ...]
-         ▼
-  ┌─────────────┐
-  │ 5. Export    │  → output.srt + output.txt
-  └─────────────┘
+   │  ① Download / extract audio (B站 API | yt-dlp | FFmpeg)
+   ▼  ② ASR transcribe (auto-chunking) ── audio deleted right after
+   │  ③ LLM semantic segmentation (量子波)
+   ▼  ④ Export .srt + .txt ── history retained per tier (1h → 30d)
+   └─→ ⑤ On demand: Summary (量子波) · MD notes (引力波) · AI Chat (引力波)
 ```
 
 ---
 
-## 📁 Project Structure
+## 🚀 Quick Start
 
+### Prerequisites
+
+- **Python 3.12+** · **Node.js 18+** · **FFmpeg** (in PATH)
+- API keys: [Xiaomi Mimo](https://platform.mimo.com.cn/) · [DeepSeek](https://platform.deepseek.com/)
+
+### 1. Configure
+
+```bash
+git clone https://github.com/Yuntian-Liu/Stellaris.git
+cd Stellaris/backend
+cp .env.example .env      # fill MIMO_API_KEY / LLM_API_KEY / auth keys
 ```
-Stellaris/
-├── backend/
-│   ├── main.py              # FastAPI app entry point
-│   ├── config.py            # Global configuration & env loading
-│   ├── models.py            # Pydantic request/response models
-│   ├── utils.py             # Task ID generation, disk checks, cleanup
-│   ├── requirements.txt     # Python dependencies
-│   ├── .env.example         # Environment template
-│   └── pipeline/
-│       ├── __init__.py
-│       ├── download.py      # Step 1: yt-dlp / FFmpeg audio extraction
-│       ├── asr.py           # Step 2: Mimo ASR with chunking
-│       ├── subtitle.py      # Step 2b: Bilibili CC subtitle fetch
-│       └── export.py        # Step 3: SRT / TXT formatting & save
-│
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx          # Root component + Starlight design tokens
-│   │   ├── main.jsx         # Entry point + AntD ConfigProvider
-│   │   ├── hooks/api.js     # Backend API client
-│   │   └── pages/
-│   │       ├── HomePage.jsx      # Input form (URL + upload)
-│   │       ├── ProgressPage.jsx  # Real-time progress tracking
-│   │       └── ResultPage.jsx    # Preview + download
-│   ├── index.html           # Google Fonts (Cormorant Garamond / Inter)
-│   ├── public/favicon.svg
-│   ├── package.json
-│   └── vite.config.js      # Dev proxy :3004 → :8000
-│
-├── README.md
-├── DEVELOPMENT.md           # Development notes & roadmap
-└── .gitignore
+
+### 2. Backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m uvicorn main:app --port 8000
 ```
+
+### 3. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev          # → http://localhost:3000 (proxied to :8000)
+```
+
+### 4. Use
+
+Paste a video link → confirm estimate → watch it transcribe → download SRT/TXT, or open AI chat on the right.
+
+---
+
+## 🐳 Deploy
+
+Single-service Dockerfile (frontend build → backend static serving on port 8000). On Zeabur:
+
+- Mount a Volume at `/app/storage` (SQLite + task files persist across deploys)
+- Set env vars (API keys, auth secrets, 爱发电 webhook config)
+- Schema migrations self-heal on startup (`_ensure_columns`)
+
+---
+
+## 💖 Support
+
+If Stellaris saved you hours, consider supporting on **爱发电**:
+**[ifdian.net/a/ytunx](https://ifdian.net/a/ytunx)** — memberships or a cup of coffee ☕
+
+Every bit of support becomes a small cell of electricity on the server bill ⚡
 
 ---
 
 ## 🙏 Acknowledgments
 
-<p align="center">
-  <img src="xiaomimimo.png" alt="Xiaomi Mimo" width="120" height="120" />
-</p>
-
-<p align="center">
-  <strong>Speech recognition powered by</strong><br/>
-  <a href="https://platform.mimo.com.cn/">Xiaomi Mimo Platform</a> · <code>mimo-v2.5-asr</code>
-</p>
-- **yt-dlp** — Reliable video/audio downloading from 1000+ sites.
-- **FFmpeg** — Swiss-army knife for audio processing.
-- **Ant Design** — Enterprise-grade UI components.
-- **Vercel / Linear / Apple / Claude** — Design inspiration for the Starlight system.
+- **Xiaomi Mimo** — speech recognition
+- **DeepSeek** — content understanding
+- **yt-dlp / FFmpeg** — media plumbing
+- **Ant Design** — UI components
+- **爱发电** — membership & payment infrastructure
+- Apple / Vercel / Claude — design inspiration for Starlight
 
 ---
 
 ## 📜 License
 
-This project is licensed under the **MIT License**.
-
-```
-Copyright (c) 2025 Yuntian Liu (碳碳四键)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
+MIT License — Copyright (c) 2025-2026 Yuntian Liu (碳碳四键)
 
 ---
 
 <p align="center">
-  <sub>Built with ♥ by <a href="https://github.com/YuntianLiu">Yuntian Liu</a> · Every star is a word collected.</sub>
+  <sub>Built with ♥ by <a href="https://github.com/Yuntian-Liu">Yuntian Liu</a> · 每一段声音，都是一颗星 ✦</sub>
 </p>
