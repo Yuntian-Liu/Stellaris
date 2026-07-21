@@ -4,10 +4,10 @@
  * 档位配色与 utils/tier.js 同源；开通跳转爱发电（/api/config 下发店铺链接）
  */
 import { useEffect, useState } from 'react'
-import { Button, message, Modal, Popover } from 'antd'
+import { Button, message } from 'antd'
 import {
   ClockCircleOutlined, DotChartOutlined, GlobalOutlined, HistoryOutlined,
-  HeartOutlined, QuestionCircleOutlined,
+  HeartOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -33,7 +33,6 @@ const TIERS = [
       { icon: 'gravity', text: <>引力波 <b>150</b>/月 · 约 25 篇 MD 笔记</> },
       { icon: 'history', text: <>历史记录保留 <b>7 天</b></> },
     ],
-    trial: '先试 7 天 ¥5 →',
   },
   {
     key: 'odyssey', name: 'Odyssey', cn: '奥德赛', price: 68,
@@ -70,7 +69,6 @@ export default function MembershipCards({ billing }) {
   const { user } = useAuth()
   const [shopUrl, setShopUrl] = useState('')
   const [planUrls, setPlanUrls] = useState({})
-  const [trialOpen, setTrialOpen] = useState(false)   // 试用确认弹窗
   useEffect(() => {
     fetch('/api/config').then(r => r.json())
       .then(c => {
@@ -179,30 +177,12 @@ export default function MembershipCards({ billing }) {
               })}
             </div>
 
-            {/* 底部按钮（试用链接在按钮上方；无试用的档补同高占位，保证四卡按钮对齐） */}
+            {/* 底部按钮（无试用档后，上方占位保留以保证卡片按钮对齐） */}
             <div style={{ padding: '0 18px 16px' }}>
               <div style={{ minHeight: 22, marginBottom: 6, textAlign: 'center' }}>
                 {isTrialCard && (
                   <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}>
                     试用中{expireText ? ` · ${expireText.replace('有效期至', '')} 到期` : ''}
-                  </span>
-                )}
-                {t.trial && !isCurrent && !hasPaid && currentTier !== 'trial' && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span
-                      onClick={() => setTrialOpen(true)}
-                      style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer' }}
-                    >{t.trial}</span>
-                    <Popover
-                      placement="top"
-                      content={
-                        <div style={{ width: 220, fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
-                          7 天体验：共 280 分钟转写（不分日周）· 量子波 1100 · 引力波 35（永不过期）· 历史保留 7 天
-                        </div>
-                      }
-                    >
-                      <QuestionCircleOutlined style={{ fontSize: 11, color: 'var(--mute)', cursor: 'default' }} />
-                    </Popover>
                   </span>
                 )}
               </div>
@@ -259,35 +239,6 @@ export default function MembershipCards({ billing }) {
         赞赏支持
       </Button>
     </div>
-
-    {/* 试用确认弹窗（点「先试 7 天 ¥5」后，先看清配额再跳支付） */}
-    <Modal
-      open={trialOpen}
-      onCancel={() => setTrialOpen(false)}
-      footer={null}
-      width={380}
-      centered
-      title={<span className="font-display">Voyager · 7 天体验舱</span>}
-    >
-      <div style={{ fontSize: 13, color: 'var(--body)', lineHeight: 2.1, padding: '6px 0 2px' }}>
-        <div>✦ 共 <b>280 分钟</b> 转写（7 天大池子，不分日周）</div>
-        <div>✦ 量子波 <b>1100</b>（智能分段 + 约 14 次总结概要）</div>
-        <div>✦ 引力波 <b>35</b>（约 5 篇 MD 笔记，永不过期）</div>
-        <div>✦ 历史记录保留 <b>7 天</b></div>
-        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
-          到期自动恢复免费版，不自动续费；体验满意可随时升级正式档，剩余时间按新档重算
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-        <Button block onClick={() => setTrialOpen(false)}>再想想</Button>
-        <Button
-          block type="primary"
-          onClick={() => { setTrialOpen(false); openShop('trial') }}
-        >
-          去支付 ¥5
-        </Button>
-      </div>
-    </Modal>
   </>
   )
 }

@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.8.2 Capella'
+export const APP_VERSION = 'V0.8.3 Capella'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-21'
@@ -35,6 +35,12 @@ export const CHANGELOG = [
       '界面细节：标题栏常驻吸顶、会员专属徽章与头像框、二级界面转场更丝滑',
     ],
     patches: [
+      {
+        version: 'V0.8.3', date: '2026-07-21',
+        items: [
+          '七天体验入口下线：新用户可直接选择正式档位，免费版依然天天有额度可体验',
+        ],
+      },
       {
         version: 'V0.8.2', date: '2026-07-21',
         items: [
