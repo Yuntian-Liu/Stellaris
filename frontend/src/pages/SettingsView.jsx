@@ -4,19 +4,26 @@
  * 分区：用户信息行 / 数据统计卡 / 个人资料 / 会员权益(占位) /
  *       账号安全(修改密码双通道) / 关于(版本+协议+版本日志) / 退出登录
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button, Input, Modal, Tabs, message } from 'antd'
 import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
   IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
+  GiftOutlined, CreditCardOutlined,
 } from '@ant-design/icons'
 import api, { authApi, getToken } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
 import TurnstileField from '../components/auth/TurnstileField'
 import ExchangeModal from '../components/ExchangeModal'
+import MembershipCards from '../components/MembershipCards'
+import RedeemModal from '../components/RedeemModal'
+import MembershipHistoryModal from '../components/MembershipHistoryModal'
+import TierBadge from '../components/TierBadge'
+import LedgerView from '../components/LedgerView'
+import { tierMeta } from '../utils/tier'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
 
 const avatarUrl = (seed) => `https://api.dicebear.com/7.x/micah/svg?seed=${seed}`
@@ -43,7 +50,7 @@ function fmt(n) {
   return String(n)
 }
 
-export default function SettingsView({ onBack }) {
+export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory }) {
   const { user, logout, refresh } = useAuth()
   const [stats, setStats] = useState(null)
   const [billing, setBilling] = useState(null)
@@ -55,6 +62,19 @@ export default function SettingsView({ onBack }) {
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [exchangeOpen, setExchangeOpen] = useState(false)
+  const [redeemOpen, setRedeemOpen] = useState(false)     // 兑换码弹窗
+  const [memHistoryOpen, setMemHistoryOpen] = useState(false) // 开通记录弹窗
+  const [ledgerView, setLedgerView] = useState(false)   // 消耗记录二级界面
+  const [ledgerTab, setLedgerTab] = useState('minute')  // 消耗记录初始页签
+
+  // 标题栏余额区「消耗记录 →」入口联动（App 下钻，带货币页签）
+  useEffect(() => {
+    if (initLedger) {
+      setLedgerTab(initLedger)
+      setLedgerView(true)
+      onConsumeInit?.()
+    }
+  }, [initLedger])
 
   useEffect(() => {
     api.getStats().then(setStats).catch(() => setStats(null))
@@ -65,6 +85,18 @@ export default function SettingsView({ onBack }) {
   }, [])
 
   const openAgreement = (type) => { setAgreementType(type); setAgreementOpen(true) }
+
+  // 会员信息速览（头像区 + 入口行共用）
+  const paidTiers = ['stargazer', 'voyager', 'odyssey']
+  const isPaid = paidTiers.includes(billing?.tier)
+  const isStella = billing?.tier === 'stella'
+  const expireDate = billing?.expire_at ? new Date(billing.expire_at) : null
+  const expireLine = isPaid && expireDate
+    ? `有效期至 ${expireDate.getFullYear()} 年 ${expireDate.getMonth() + 1} 月 ${expireDate.getDate()} 日`
+    : isStella ? '会员永久有效' : null
+  const memberShort = isPaid && expireDate
+    ? `${billing.tier_name} · ${expireDate.getMonth() + 1} 月 ${expireDate.getDate()} 日到期`
+    : isStella ? 'Stella · 永久' : (billing?.tier_name || '免费版')
 
   // 导出诊断日志（带 token 的 fetch 下载，脱敏 JSON）
   const downloadDiagnostics = async () => {
@@ -96,13 +128,49 @@ export default function SettingsView({ onBack }) {
     })
   }
 
+  // ── 二级界面关闭（覆盖式：先滑出再卸载，主界面始终挂载在底层）──
+  const [memberClosing, setMemberClosing] = useState(false)
+  const [ledgerClosing, setLedgerClosing] = useState(false)
+  const closeMember = () => {
+    // 滑出与容器收缩并行（AI 解读收起同款节奏）：立即触发收缩，滑出动画跑完再卸载
+    setMemberClosing(true)
+    setMemberView(false)
+    setTimeout(() => {
+      setMemberClosing(false)
+      window.scrollTo(0, savedScroll.current)   // 回到设置页原滚动位置
+    }, 320)
+  }
+  const closeLedger = () => {
+    setLedgerClosing(true)
+    setTimeout(() => {
+      setLedgerView(false)
+      setLedgerClosing(false)
+      window.scrollTo(0, savedScroll.current)
+    }, 320)
+  }
+  const overlayStyle = {
+    // top -14 抵消主内容的负边距，bottom 0 拉满到容器底，确保把主界面完全盖住
+    position: 'absolute', top: -14, bottom: 0, left: 0, right: 0,
+    minHeight: '85vh', background: 'var(--canvas)', zIndex: 5,
+  }
+
+  // 二级界面进出时的滚动位置管理：进入滚到顶，返回恢复原位置（iOS 转场惯例）
+  const savedScroll = useRef(0)
+  useEffect(() => {
+    if (memberView || ledgerView) {
+      savedScroll.current = window.scrollY
+      window.scrollTo(0, 0)
+    }
+  }, [memberView, ledgerView])
+
   return (
-    <div className="page-enter" style={{ maxWidth: 560, margin: '-14px auto 0' }}>
-      {/* 顶部：返回 + 标题 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
-        <h1 className="font-display font-display-sm" style={{ margin: 0 }}>设置</h1>
-      </div>
+    <div style={{ position: 'relative' }}>
+      <div className="page-enter" style={{ maxWidth: 560, margin: '-14px auto 0' }}>
+        {/* 顶部：返回 + 标题 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
+          <h1 className="font-display font-display-sm" style={{ margin: 0 }}>设置</h1>
+        </div>
 
       {/* ── 用户信息行 ── */}
       <div className="card" style={{
@@ -110,17 +178,21 @@ export default function SettingsView({ onBack }) {
       }}>
         <img
           src={avatarUrl(user.avatar_seed)} alt="头像"
-          style={{ width: 56, height: 56, borderRadius: '50%', border: '1px solid var(--hairline)' }}
+          style={{
+            width: 56, height: 56, borderRadius: '50%', border: '1px solid var(--hairline)',
+            boxShadow: tierMeta(billing?.tier).ring
+              ? `0 0 0 2.5px ${tierMeta(billing?.tier).ring}` : 'none',
+          }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
             {user.nickname}
-            <span style={{
-              fontSize: 11, fontWeight: 500, color: 'var(--accent)',
-              background: 'var(--accent-light)', borderRadius: 9999, padding: '1px 8px',
-            }}>免费版</span>
+            <TierBadge tier={billing?.tier} />
           </div>
           <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 3 }}>{user.email}</div>
+          {expireLine && (
+            <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 2 }}>{expireLine}</div>
+          )}
         </div>
       </div>
 
@@ -177,16 +249,36 @@ export default function SettingsView({ onBack }) {
           value={<span className="font-mono">{user.uid}</span>} />
       </SectionCard>
 
-      {/* ── 会员权益（兑换说明 + 余额）── */}
+      {/* ── 会员权益（入口 → 二级界面会员卡）── */}
       <SectionTitle>会员权益</SectionTitle>
       <SectionCard>
         <RowItem icon={<CrownOutlined />} tint="#f59e0b" label="会员权益"
-          value="敬请期待"
-          onClick={() => message.info('会员功能正在路上，敬请期待')} />
+          value={memberShort}
+          onClick={() => setMemberView(true)} />
         <Divider />
         <RowItem icon={<DotChartOutlined />} tint="#6366f1" label="货币兑换"
-          value={billing ? `量子波⇄引力波 · 本月还可兑 ${billing.exchange_month_cap - billing.exchange_month_used} 次` : '量子波⇄引力波'}
+          value={billing
+            ? (billing.exchange_month_cap == null
+              ? '量子波⇄引力波 · 不限次'
+              : `量子波⇄引力波 · 本月还可兑 ${billing.exchange_month_cap - billing.exchange_month_used} 次`)
+            : '量子波⇄引力波'}
           onClick={() => setExchangeOpen(true)} />
+        <Divider />
+        <RowItem icon={<HistoryOutlined />} tint="#0ea5e9" label="消耗记录"
+          value="分钟 / 量子波 / 引力波流水"
+          onClick={() => setLedgerView(true)} />
+        <Divider />
+        <RowItem icon={<FileTextOutlined />} tint="#10b981" label="提取历史"
+          value="回到任意一次结果页"
+          onClick={onOpenHistory} />
+        <Divider />
+        <RowItem icon={<GiftOutlined />} tint="#ec4899" label="兑换码"
+          value="会员 / 邀请码激活"
+          onClick={() => setRedeemOpen(true)} />
+        <Divider />
+        <RowItem icon={<CreditCardOutlined />} tint="#f59e0b" label="开通记录"
+          value="爱发电 / 兑换码"
+          onClick={() => setMemHistoryOpen(true)} />
       </SectionCard>
 
       {/* ── 账号安全 ── */}
@@ -251,6 +343,57 @@ export default function SettingsView({ onBack }) {
         onClose={() => setExchangeOpen(false)}
         onDone={() => api.getBilling().then(setBilling).catch(() => {})}
       />
+      <RedeemModal
+        open={redeemOpen}
+        onClose={() => setRedeemOpen(false)}
+        onDone={() => api.getBilling().then(setBilling).catch(() => {})}
+      />
+      <MembershipHistoryModal open={memHistoryOpen} onClose={() => setMemHistoryOpen(false)} />
+      </div>
+
+      {/* ── 会员权益二级界面（覆盖式滑入，主界面在底层不卸载）── */}
+      {(memberView || memberClosing) && (
+        <div className={memberClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
+          <div style={{ width: '100%', marginTop: -14 }}>
+            {/* 返回 + 标题：贴界面左上角 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Button type="text" icon={<ArrowLeftOutlined />} onClick={closeMember} />
+              <h1 className="font-display font-display-sm" style={{ margin: 0 }}>会员权益</h1>
+            </div>
+
+            {/* 诗意头部（星空主题） */}
+            <div style={{ textAlign: 'center', margin: '26px 0 30px', position: 'relative' }}>
+              <span className="star-dot" style={{ left: '18%', top: 6, fontSize: 13 }}>✦</span>
+              <span className="star-dot" style={{ right: '20%', top: 26, fontSize: 10 }}>✦</span>
+              <span className="star-dot" style={{ left: '30%', bottom: 0, fontSize: 9 }}>✦</span>
+              <div style={{
+                fontSize: 11, letterSpacing: 5, color: 'var(--accent)',
+                marginBottom: 10, fontWeight: 500,
+              }}>MEMBERSHIP</div>
+              <h2 className="font-display font-display-md" style={{ margin: 0, color: 'var(--ink)' }}>
+                逐星计划，由此启程
+              </h2>
+              <div style={{ marginTop: 10, fontSize: 13, color: 'var(--mute)' }}>
+                选择属于你的航线，去更远的星海聆听
+              </div>
+            </div>
+
+            <MembershipCards billing={billing} />
+
+            <div style={{ fontSize: 12, color: 'var(--mute)', textAlign: 'center', lineHeight: 1.8, marginTop: 4 }}>
+              会员周期自开通时刻起 30 天 · 支付由爱发电提供支持<br />
+              引力波永不过期 · 分钟与量子波按自然周期重置
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 消耗记录二级界面（覆盖式滑入）── */}
+      {(ledgerView || ledgerClosing) && (
+        <div className={ledgerClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
+          <LedgerView onBack={closeLedger} initialTab={ledgerTab} />
+        </div>
+      )}
     </div>
   )
 }

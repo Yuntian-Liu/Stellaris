@@ -17,6 +17,7 @@ from sqlalchemy import select, desc
 from config import (
     IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY, TURNSTILE_SITE_KEY,
     RESEND_API_KEY, TMP_DIR, DATA_DIR,
+    AFDIAN_USER_ID, AFDIAN_API_TOKEN, AFDIAN_SHOP_URL, AFDIAN_PLAN_MAP,
 )
 from database import async_session
 from billing_store import UserBilling, BillingLedger, BILLING_TIERS
@@ -82,6 +83,11 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
     }
 
     # ── 配置标志（脱敏：只报是否配置）──
+    import json as _json
+    try:
+        plan_map_count = len(_json.loads(AFDIAN_PLAN_MAP or "{}"))
+    except _json.JSONDecodeError:
+        plan_map_count = -1   # JSON 解析失败（配置错误，诊断要看见）
     config_flags = {
         "is_prod": IS_PROD,
         "llm_model": LLM_MODEL,
@@ -89,6 +95,11 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "llm_key_set": bool(LLM_API_KEY),
         "turnstile_set": bool(TURNSTILE_SITE_KEY),
         "resend_set": bool(RESEND_API_KEY),
+        # 爱发电（V0.8.0 会员支付链路）
+        "afdian_user_id_set": bool(AFDIAN_USER_ID),
+        "afdian_token_set": bool(AFDIAN_API_TOKEN),
+        "afdian_shop_url_set": bool(AFDIAN_SHOP_URL),
+        "afdian_plan_map_count": plan_map_count,
     }
 
     # ── 用户上下文（本人）──
@@ -98,19 +109,39 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
     except Exception:
         pass
     try:
+        # 有效档位（含 admin 覆盖/到期降级），分钟限额按档位显示
+        from billing_store import _effective_tier_key
+        from auth.models import User as AuthUser
         async with async_session() as session:
+            u = (await session.execute(
+                select(AuthUser).where(AuthUser.uid == uid))).scalar_one_or_none()
+            user_ctx["is_admin"] = bool(u and u.is_admin)
             b = await session.get(UserBilling, uid)
             if b:
-                tier = BILLING_TIERS.get(b.membership_tier, BILLING_TIERS["free"])
+                tier_key = await _effective_tier_key(session, b)
+                tier = BILLING_TIERS.get(tier_key, BILLING_TIERS["free"])
+                unlimited = bool(tier.get("unlimited"))
+
+                def _lim(used, limit):
+                    if unlimited:
+                        return f"{used}/∞"
+                    return f"{used}/{limit if limit is not None else '∞'}"
+
                 user_ctx["billing"] = {
-                    "tier": b.membership_tier,
+                    "tier": tier_key,
+                    "tier_db": b.membership_tier,   # 库内原始档位（购买记录，可能与有效档位不同）
+                    "membership_expire_at": b.membership_expire_at.isoformat() if b.membership_expire_at else None,
+                    "gravity_grant_at": b.gravity_grant_at.isoformat() if b.gravity_grant_at else None,
                     "minutes": {
-                        "day": f"{b.minutes_day}/{tier['minutes_day']}",
-                        "week": f"{b.minutes_week}/{tier['minutes_week']}",
-                        "month": f"{b.minutes_month}/{tier['minutes_month']}",
+                        "day": _lim(b.minutes_day, tier.get("minutes_day")),
+                        "week": _lim(b.minutes_week, tier.get("minutes_week")),
+                        "month": _lim(b.minutes_month, tier.get("minutes_month")),
                     },
-                    "quantum": b.quantum_gift + b.quantum_perm,
+                    "quantum_gift": b.quantum_gift,
+                    "quantum_perm": b.quantum_perm,
                     "gravity": b.gravity,
+                    "exchange_month": f"{b.exchange_month_count}/{tier.get('exchange_cap', 5) if not tier.get('exchange_unlimited') else '∞'}",
+                    "history_hours": tier.get("history_hours"),
                 }
             ledger = await session.execute(
                 select(BillingLedger).where(BillingLedger.user_uid == uid)
@@ -120,10 +151,39 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
                 {
                     "feature": r.feature, "currency": r.currency,
                     "amount": r.amount, "balance_after": r.balance_after,
+                    "from_gift": r.from_gift, "from_perm": r.from_perm,
                     "task_id": r.task_id,
                 }
                 for r in ledger.scalars()
             ]
+            # 爱发电订单 + 兑换记录（本人）
+            from afdian_store import AfdianOrder
+            from redeem_store import RedeemCode
+            orders = await session.execute(
+                select(AfdianOrder).where(AfdianOrder.user_uid == uid)
+                .order_by(desc(AfdianOrder.created_at)).limit(10)
+            )
+            user_ctx["afdian_orders"] = [
+                {"out_trade_no": o.out_trade_no, "status": o.status,
+                 "amount": o.total_amount}
+                for o in orders.scalars()
+            ]
+            redeems = await session.execute(
+                select(RedeemCode).where(RedeemCode.used_by == uid)
+                .order_by(desc(RedeemCode.used_at)).limit(10)
+            )
+            user_ctx["redemptions"] = [
+                {"tier": r.tier, "days": r.days, "note": r.note}
+                for r in redeems.scalars()
+            ]
+            # 历史记录数（分档保留排查用）
+            from history_store import TaskRecord
+            from sqlalchemy import func as _func
+            rec_count = (await session.execute(
+                select(_func.count()).select_from(TaskRecord)
+                .where(TaskRecord.owner_uid == uid)
+            )).scalar_one()
+            user_ctx["task_records_count"] = rec_count
     except Exception as e:
         user_ctx["billing_error"] = str(e)
 
@@ -135,6 +195,7 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
             "progress": t.get("progress"),
             "source_platform": t.get("source_platform"),
             "owner_uid": t.get("owner_uid"),
+            "rehydrated": bool(t.get("rehydrated")),   # 冷启动重建标记（V0.8.0）
             "error": (t.get("error") or "")[:300] or None,
         }
         for t in list(tasks.values())[-20:]

@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.7.0 Rigel'
+export const APP_VERSION = 'V0.8.0 Capella'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-21'
@@ -21,6 +21,21 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V0.8.0', codename: 'Capella', date: '2026-07-21',
+    items: [
+      '会员体系上线：Stargazer 观星者 / Voyager 远航者 / Odyssey 奥德赛 三档，另有 ¥5 七天体验',
+      '逐星计划会员页：四档卡片一览权益，支付后自动开通，回站撒花欢迎你登船',
+      '会员权益：更多转写分钟、每月加赠引力波、历史保留最长延至 30 天',
+      '历史记录更可靠：保留期内随时回看，下载与 AI 解读照常可用，重启不再丢失',
+      '消耗记录：分钟 / 量子波 / 引力波三本账分开记，永久可查',
+      '开通记录：每一次开通与兑换都留痕，设置页随时翻',
+      '兑换码：会员码与邀请码站内核销，兑换前先看清楚再确认',
+      '赞赏入口：若这里曾照亮你，可以请开发者喝杯咖啡',
+      '界面细节：标题栏常驻吸顶、会员专属徽章与头像框、二级界面转场更丝滑',
+    ],
+    patches: [],
+  },
   {
     version: 'V0.7.0', codename: 'Rigel', date: '2026-07-21',
     items: [

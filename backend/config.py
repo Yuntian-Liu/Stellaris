@@ -100,3 +100,27 @@ TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
 
 # 运行环境（true=真实发邮件+强制Turnstile；false=验证码打印日志+Turnstile bypass）
 IS_PROD = os.getenv("IS_PROD", "false").lower() == "true"
+
+# ===== 爱发电（会员开通）=====
+# 店铺主页（会员卡"开通"按钮跳转；方案建好后换具体方案链接）
+AFDIAN_SHOP_URL = os.getenv("AFDIAN_SHOP_URL", "")
+# 开发者后台凭证（webhook 验签不依赖，query-order 反查/人工核验用）
+AFDIAN_USER_ID = os.getenv("AFDIAN_USER_ID", "")
+AFDIAN_API_TOKEN = os.getenv("AFDIAN_API_TOKEN", "")
+# 方案映射（JSON）：{"plan_id": {"tier": "voyager", "days": 30}, "试用plan_id": {"tier": "voyager", "days": 7}}
+AFDIAN_PLAN_MAP = os.getenv("AFDIAN_PLAN_MAP", "{}")
+# 各档位方案直链（JSON）：{"stargazer": "https://ifdian.net/a/xxx?plan_id=...", ...}
+# 未配的档位回退用 AFDIAN_SHOP_URL；前端跳转时自动附带 custom_order_id=UID
+AFDIAN_PLAN_URLS = os.getenv("AFDIAN_PLAN_URLS", "{}")
+# webhook RSA 验签公钥（爱发电官方公钥，开发者文档固定值；env 可覆盖便于测试）
+AFDIAN_PUBLIC_KEY = os.getenv("AFDIAN_PUBLIC_KEY", (
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwwdaCg1Bt+UKZKs0R54y\n"
+    "lYnuANma49IpgoOwNmk3a0rhg/PQuhUJ0EOZSowIC44l0K3+fqGns3Ygi4AfmEfS\n"
+    "4EKbdk1ahSxu7Zkp2rHMt+R9GarQFQkwSS/5x1dYiHNVMiR8oIXDgjmvxuNes2Cr\n"
+    "8fw9dEF0xNBKdkKgG2qAawcN1nZrdyaKWtPVT9m2Hl0ddOO9thZmVLFOb9NVzgYf\n"
+    "jEgI+KWX6aY19Ka/ghv/L4t1IXmz9pctablN5S0CRWpJW3Cn0k6zSXgjVdKm4uN7\n"
+    "jRlgSRaf/Ind46vMCm3N2sgwxu/g3bnooW+db0iLo13zzuvyn727Q3UDQ0MmZcEW\n"
+    "MQIDAQAB\n"
+    "-----END PUBLIC KEY-----"
+))

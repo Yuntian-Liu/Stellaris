@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { Modal, Button, message } from 'antd'
 import { RightOutlined, HistoryOutlined } from '@ant-design/icons'
 import api from '../hooks/api'
+import { RETENTION_COPY } from '../utils/tier'
 
 function timeAgo(iso) {
   if (!iso) return ''
@@ -19,12 +20,17 @@ function timeAgo(iso) {
 export default function HistoryModal({ open, onClose, onOpenRecord }) {
   const [records, setRecords] = useState(null)
   const [opening, setOpening] = useState(null)
+  const [retentionCopy, setRetentionCopy] = useState(RETENTION_COPY.free)
 
   useEffect(() => {
     if (!open) return
     api.getHistory()
       .then(d => setRecords(d.records))
       .catch(() => setRecords([]))
+    // 空态文案按档位（星空语境，见 utils/tier.js RETENTION_COPY）
+    api.getBilling()
+      .then(b => setRetentionCopy(RETENTION_COPY[b.tier] || RETENTION_COPY.free))
+      .catch(() => {})
   }, [open])
 
   const openRecord = async (taskId) => {
@@ -59,7 +65,9 @@ export default function HistoryModal({ open, onClose, onOpenRecord }) {
         {records?.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--mute)', padding: '24px 0', fontSize: 13, lineHeight: 1.8 }}>
             暂无提取记录
-            <div style={{ fontSize: 11, marginTop: 4 }}>记录保留 1 小时，过期自动清理</div>
+            <div style={{ fontSize: 11, marginTop: 4, color: 'var(--accent)', opacity: 0.85 }}>
+              {retentionCopy}
+            </div>
           </div>
         )}
         {records?.map(r => (

@@ -6,7 +6,7 @@
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Layout, Tooltip, Button, Dropdown, Avatar, Popover } from 'antd'
+import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal } from 'antd'
 import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined } from '@ant-design/icons'
 import api from './hooks/api'
 import HomePage from './pages/HomePage'
@@ -18,8 +18,11 @@ import UpdateModals from './components/UpdateModals'
 import AgreementModal from './components/AgreementModal'
 import MeteorShower from './components/MeteorShower'
 import BillingPills from './components/BillingPills'
+import Confetti from './components/Confetti'
 import GuideModal from './components/GuideModal'
 import HistoryModal from './components/HistoryModal'
+import TierBadge from './components/TierBadge'
+import { tierMeta } from './utils/tier'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -34,6 +37,10 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false) // 历史记录
   const [meteorOn, setMeteorOn] = useState(false)   // 流星雨彩蛋
   const [balances, setBalances] = useState(null)    // 头像下拉双货币余额
+  const [dropOpen, setDropOpen] = useState(false)   // 头像下拉开合（点菜单后需手动收起）
+  const [memberOpen, setMemberOpen] = useState(false) // 会员权益二级界面（标题栏随其展开）
+  const [ledgerInit, setLedgerInit] = useState(false) // 余额区「消耗记录 →」下钻设置页
+  const [celebrateTier, setCelebrateTier] = useState(null) // 会员开通欢迎弹窗（档位跃迁检测）
   const clickRef = useRef({ count: 0, timer: null })
   const { user, loading, logout } = useAuth()
 
@@ -45,6 +52,23 @@ export default function App() {
     window.addEventListener('stellaris:billing-changed', load)
     return () => window.removeEventListener('stellaris:billing-changed', load)
   }, [user])
+
+  // 离开设置页即复位会员二级界面态（防展开态泄漏到其他页面：品牌点击/历史回看等路径）
+  useEffect(() => {
+    if (page !== 'settings') setMemberOpen(false)
+  }, [page])
+
+  // 会员开通检测：爱发电付款在站外完成，webhook 发货后用户回站时档位跃迁 → 撒花欢迎
+  useEffect(() => {
+    const tier = balances?.tier
+    if (!tier) return
+    const prev = localStorage.getItem('stellaris_tier')
+    localStorage.setItem('stellaris_tier', tier)
+    if (prev && prev !== tier
+        && ['stargazer', 'voyager', 'odyssey', 'stella'].includes(tier)) {
+      setCelebrateTier(tier)
+    }
+  }, [balances?.tier])
 
   // 彩蛋：3 秒内连点 logo ✦ 7 次 → 流星雨
   const handleBrandClick = () => {
@@ -85,12 +109,21 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'var(--canvas)' }}>
-      {/* ── 顶部导航栏（预留用户系统 / 设置二级界面入口）── */}
+      {/* ── 顶部导航栏（常驻吸顶：返回二级界面不缺席 + 随时可见额度）── */}
       <div style={{
-        maxWidth: chatOpen ? 1312 : 760,
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        background: 'color-mix(in srgb, var(--canvas) 88%, transparent)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--hairline)',
+      }}>
+      <div style={{
+        maxWidth: (chatOpen || memberOpen) ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
-        padding: '18px 24px 0',
+        padding: '14px 24px 12px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -135,8 +168,10 @@ export default function App() {
                   style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
                 />
               </Popover>
-              <BillingPills />
+              <BillingPills onOpenLedger={(c) => { setLedgerInit(c); setPage('settings') }} />
               <Dropdown
+                open={dropOpen}
+                onOpenChange={setDropOpen}
                 dropdownRender={() => (
                   <div style={{
                     width: 240,
@@ -151,7 +186,11 @@ export default function App() {
                       <Avatar
                         size={42}
                         src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
-                        style={{ border: '1px solid var(--hairline)', flexShrink: 0 }}
+                        style={{
+                          border: '1px solid var(--hairline)', flexShrink: 0,
+                          boxShadow: tierMeta(balances?.tier).ring
+                            ? `0 0 0 2px ${tierMeta(balances?.tier).ring}` : 'none',
+                        }}
                       />
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -174,7 +213,7 @@ export default function App() {
                       fontSize: 12,
                       color: 'var(--mute)',
                     }}>
-                      <span>免费版</span>
+                      <TierBadge tier={balances?.tier} />
                       <span className="font-mono" style={{ display: 'inline-flex', gap: 10 }}>
                         <span>
                           <GlobalOutlined style={{ fontSize: 11, color: 'var(--accent)', marginRight: 3 }} />
@@ -189,13 +228,13 @@ export default function App() {
                     <div style={{ borderTop: '1px solid var(--hairline)' }}>
                       <div
                         className="dropdown-item"
-                        onClick={() => setPage('settings')}
+                        onClick={() => { setDropOpen(false); setPage('settings') }}
                       >
                         <SettingOutlined style={{ marginRight: 8 }} />设置
                       </div>
                       <div
                         className="dropdown-item dropdown-item--danger"
-                        onClick={() => { logout(); setPage('home') }}
+                        onClick={() => { setDropOpen(false); logout(); setPage('home') }}
                       >
                         <LogoutOutlined style={{ marginRight: 8 }} />退出登录
                       </div>
@@ -208,7 +247,12 @@ export default function App() {
                 <Avatar
                   size={30}
                   src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
-                  style={{ cursor: 'pointer', border: '1px solid var(--hairline)' }}
+                  style={{
+                    cursor: 'pointer', border: '1px solid var(--hairline)',
+                    // 档位头像框（Google One 式）：颜色 = 档位色，免费版无框
+                    boxShadow: tierMeta(balances?.tier).ring
+                      ? `0 0 0 2px ${tierMeta(balances?.tier).ring}` : 'none',
+                  }}
                 />
               </Dropdown>
             </>
@@ -219,9 +263,10 @@ export default function App() {
           )}
         </div>
       </div>
+      </div>
 
       <Content style={{
-        maxWidth: chatOpen ? 1312 : 760,
+        maxWidth: (chatOpen || memberOpen) ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
         width: '100%',
@@ -237,7 +282,14 @@ export default function App() {
           <HomePage onSubmit={handleSubmit} />
         )}
         {page === 'settings' && (
-          <SettingsView onBack={() => setPage('home')} />
+          <SettingsView
+            onBack={() => { setMemberOpen(false); setPage('home') }}
+            memberView={memberOpen}
+            setMemberView={setMemberOpen}
+            initLedger={ledgerInit}
+            onConsumeInit={() => setLedgerInit(false)}
+            onOpenHistory={() => setHistoryOpen(true)}
+          />
         )}
         {page === 'progress' && taskId && (
           <ProgressPage
@@ -248,6 +300,7 @@ export default function App() {
         )}
         {page === 'result' && taskData && (
           <ResultPage
+            key={taskData.task_id}
             taskData={taskData}
             onBack={handleBack}
             onNew={() => handleBack()}
@@ -272,8 +325,37 @@ export default function App() {
       <HistoryModal
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        onOpenRecord={(data) => { setTaskData(data); setPage('result') }}
+        onOpenRecord={(data) => { setChatOpen(false); setTaskData(data); setPage('result') }}
       />
+
+      {/* 会员开通欢迎（webhook 发货后回站，档位跃迁触发撒花） */}
+      {celebrateTier && <Confetti />}
+      <Modal
+        open={!!celebrateTier}
+        footer={null}
+        onCancel={() => setCelebrateTier(null)}
+        centered
+        width={360}
+      >
+        {celebrateTier && (
+          <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
+            <div className="font-display" style={{ fontSize: 30, color: 'var(--accent)', lineHeight: 1 }}>✦</div>
+            <h2 className="font-display font-display-sm" style={{ margin: '10px 0 6px' }}>
+              欢迎登船，{tierMeta(celebrateTier).label}
+            </h2>
+            <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+              {tierMeta(celebrateTier).cn && <>{tierMeta(celebrateTier).cn} · </>}会员权益已生效<br />
+              愿星轨常伴你左右
+            </div>
+            <Button
+              type="primary" style={{ marginTop: 18, borderRadius: 'var(--r-btn)' }}
+              onClick={() => setCelebrateTier(null)}
+            >
+              开始远航
+            </Button>
+          </div>
+        )}
+      </Modal>
 
       {/* 流星雨彩蛋（连点 logo 7 次） */}
       {meteorOn && <MeteorShower />}
@@ -355,6 +437,7 @@ export default function App() {
         .font-display-md { font-size: 28px; line-height: 1.2; letter-spacing: -0.015em; }
         .font-display-sm { font-size: 22px; line-height: 1.25; letter-spacing: -0.01em; }
         .font-display-xs { font-size: 18px; line-height: 1.3; }
+        .tier-benefit b { color: var(--accent); font-weight: 600; }
 
         /* Body: Inter sans */
         .font-body {
@@ -541,6 +624,41 @@ export default function App() {
           animation: chatPanelEnter 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s both;
         }
 
+        /* 设置二级界面推入（iOS push 感：右滑入 + 淡入） */
+        @keyframes subviewEnter {
+          from { opacity: 0; transform: translateX(28px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        .subview-enter { animation: subviewEnter 0.38s cubic-bezier(0.4, 0, 0.2, 1) both; }
+        /* 二级界面退出（右滑出 + 淡出；覆盖式结构，主界面始终在底下不卸载） */
+        @keyframes subviewExit {
+          from { opacity: 1; transform: translateX(0); }
+          to   { opacity: 0; transform: translateX(28px); }
+        }
+        .subview-exit { animation: subviewExit 0.32s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 会员卡 hover：克制的浮起（抬离桌面感，非弹跳） */
+        .member-card {
+          transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                      box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .member-card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 16px 44px rgba(49, 46, 129, 0.10),
+                      0 4px 14px rgba(0, 0, 0, 0.05);
+        }
+        .member-card-head { transition: filter 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+        .member-card:hover .member-card-head { filter: brightness(1.07); }
+
+        /* AntD 弹窗 ✕：去掉 focus 紫框，保持纯字符（a11y 由 Esc/点击遮罩兜底） */
+        .ant-modal-close:focus,
+        .ant-modal-close:focus-visible,
+        .ant-drawer-close:focus,
+        .ant-drawer-close:focus-visible {
+          outline: none !important;
+          box-shadow: none !important;
+        }
+
         /* 消息气泡入场 */
         @keyframes chatMsgEnter {
           from { opacity: 0; transform: translateY(8px); }
@@ -718,7 +836,7 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) {
           .page-enter, .estimate-enter, .check-pop,
           .pulse-ring, .node-spin, .progress-shimmer,
-          .ellipsis-anim span, .chat-panel-enter,
+          .ellipsis-anim span, .chat-panel-enter, .subview-enter, .subview-exit,
           .chat-msg-enter, .chat-dot,
           .star-dot, .brand-star:hover { animation: none !important; }
         }

@@ -3,8 +3,6 @@
 """
 import uuid
 import shutil
-import os
-import time
 from pathlib import Path
 
 from config import TMP_DIR, MIN_DISK_SPACE_MB
@@ -31,36 +29,10 @@ def platform_label(url: str | None) -> str:
 
 
 def cleanup_temp_files(task_id: str) -> None:
-    """清理指定任务的所有临时文件"""
+    """清理指定任务的所有临时文件（仅三处合法调用：用户手动删除 / 管线失败 / 分档过期清理）"""
     task_dir = TMP_DIR / task_id
     if task_dir.exists():
         shutil.rmtree(task_dir, ignore_errors=True)
-
-
-def cleanup_old_tasks(max_age_hours: float = 1.0) -> list[str]:
-    """
-    扫描 tmp/ 目录，清理超过 max_age_hours 的任务目录（按目录 mtime 判断）。
-    用于自动延迟清理：任务完成后保留一段时间供下载，超期自动删除。
-
-    Returns:
-        被清理的任务 ID 列表（调用方需联动清理对话记录等关联数据）
-    """
-    if not TMP_DIR.exists():
-        return []
-    max_age_sec = max_age_hours * 3600
-    now = time.time()
-    removed = []
-    for task_dir in TMP_DIR.iterdir():
-        if not task_dir.is_dir():
-            continue
-        try:
-            mtime = task_dir.stat().st_mtime
-        except OSError:
-            continue
-        if now - mtime > max_age_sec:
-            shutil.rmtree(task_dir, ignore_errors=True)
-            removed.append(task_dir.name)
-    return removed
 
 
 def check_disk_space() -> bool:

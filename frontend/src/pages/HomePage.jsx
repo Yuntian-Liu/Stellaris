@@ -248,13 +248,18 @@ export default function HomePage({ onSubmit }) {
                   value={`${estimateData.est_minutes} 分钟 + ${estimateData.est_quantum} 量子波`}
                   tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单"
                 />
-                {estimateData.minutes_left && (
-                  <EstimateRow
-                    icon={<FileTextOutlined />}
-                    label="当前余量"
-                    value={`${Math.min(estimateData.minutes_left.day, estimateData.minutes_left.week, estimateData.minutes_left.month)} 分钟 · ${estimateData.quantum_left} 量子波`}
-                  />
-                )}
+                {estimateData.minutes_left && (() => {
+                  // 周期值为 null = 该周期不限（如 Stella 日/周），只在有上限的周期里取最小
+                  const vals = Object.values(estimateData.minutes_left).filter(v => v !== null)
+                  if (!vals.length) return null
+                  return (
+                    <EstimateRow
+                      icon={<FileTextOutlined />}
+                      label="当前余量"
+                      value={`${Math.min(...vals)} 分钟 · ${estimateData.quantum_left} 量子波`}
+                    />
+                  )
+                })()}
                 {/* 积分系统上线后，在此处追加「预计消耗积分」行 */}
               </div>
 
@@ -345,10 +350,9 @@ export default function HomePage({ onSubmit }) {
           {/* CTA 区：确认态 = 确认+取消；输入态 = 开始提取 */}
           {estimateData ? (
             (() => {
-              const minutesOk = !estimateData.minutes_left || (
-                estimateData.est_minutes <= estimateData.minutes_left.day &&
-                estimateData.est_minutes <= estimateData.minutes_left.week &&
-                estimateData.est_minutes <= estimateData.minutes_left.month)
+              const minutesOk = !estimateData.minutes_left ||
+                Object.values(estimateData.minutes_left).every(
+                  v => v === null || estimateData.est_minutes <= v)
               const quantumOk = estimateData.quantum_left == null ||
                 estimateData.est_quantum <= estimateData.quantum_left
               const canSubmit = minutesOk && (quantumOk || skipSegment)

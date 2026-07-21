@@ -5,19 +5,24 @@ Stellaris 后端入口 — FastAPI 应用
 import asyncio
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import (FastAPI, UploadFile, File, HTTPException, BackgroundTasks,
+                     Depends, Request, Query, Header)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import (
     MAX_CONCURRENT_TASKS,
     SPEECH_CHARS_PER_MIN, CHARS_PER_TOKEN, LLM_TOKEN_ROUNDTRIP_FACTOR,
+    TMP_DIR,
 )
-from utils import generate_task_id, cleanup_temp_files, cleanup_old_tasks, check_disk_space, platform_label
+from utils import generate_task_id, cleanup_temp_files, check_disk_space, platform_label
 from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
@@ -29,30 +34,38 @@ from pipeline.subtitle import fetch_cc_subtitle
 from pipeline.asr import transcribe_with_mimo
 from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_with_subtitle_stream
 from chat_store import save_chat_message, get_chat_history, delete_chat_messages
-from history_store import save_task_record, list_task_records, delete_task_record
+from history_store import (
+    save_task_record, list_task_records, delete_task_record,
+    get_task_owner_map, get_task_record,
+)
 from diagnostics import attach_log_buffer, build_diagnostics
 from pipeline.export import (
     segments_to_srt, segments_to_txt,
     bilibili_subtitle_to_segments, save_exports,
 )
 
-from database import init_db
+from database import init_db, get_db
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, get_current_user_optional
 from auth.models import User
+from auth.utils import decode_access_token   # R1：下载路由 ?token= 解析复用
 from stats_store import incr_stats, get_stats
 from billing_store import (
-    BILLING_TIERS, QUANTUM_PER_TOKEN_UNIT, round_tokens,
+    BILLING_TIERS, TIER_DISPLAY, QUANTUM_PER_TOKEN_UNIT, round_tokens,
     get_billing, consume_minutes, consume_quantum, consume_gravity,
     check_minutes, check_quantum, check_gravity,
-    check_and_consume_anon, exchange as billing_exchange,
+    check_and_consume_anon, refund_anon_minutes, exchange as billing_exchange,
     InsufficientError, SEG_TOKENS_PER_MIN,
+    retention_hours_map, get_ledger, grant_membership,
 )
 
 
 # ===== 内存中的任务存储（生产环境应换 Redis）=====
 tasks: dict[str, dict] = {}
 running_tasks: set = set()  # 正在运行的任务 ID 集合
+# R2 串行信号量：兑现 MAX_CONCURRENT_TASKS 的承诺，管线 / MD / 概要后台任务排队执行，
+# 既防 4GB 内存被打爆，也消除扣费 TOCTOU。chat SSE 流不包（轻量即时，扣费已原子化）。
+_pipeline_sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +75,11 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动/关闭时的初始化/清理"""
     print("[Stellaris] starting up...")
     attach_log_buffer()   # 内存环形日志缓冲（诊断导出用）
+    # 初始化数据库（建表）——分档清理依赖 task_records/user_billing，须先建表
+    await init_db()
+    print("[Stellaris] 数据库已就绪")
     # 启动时清理上次进程留下的过期任务文件（联动删对话记录/历史记录）
-    removed = cleanup_old_tasks(max_age_hours=1)
+    removed = await _cleanup_expired_tasks()
     if removed:
         print(f"[Stellaris] 启动清理：删除 {len(removed)} 个过期任务目录")
         for tid in removed:
@@ -71,23 +87,51 @@ async def lifespan(app: FastAPI):
             await delete_task_record(tid)
     # 起后台定时清理任务（每 10 分钟扫一次）
     cleanup_task = asyncio.create_task(_periodic_cleanup())
-    # 初始化数据库（建表）
-    await init_db()
-    print("[Stellaris] 数据库已就绪")
     yield
-    # 关闭：取消定时任务 + 清理所有临时文件
+    # 关闭：只取消定时任务。任务文件【不】在关闭时删除——交给分档清理按各档位
+    # 保留时长处理；否则每次重启/部署都会清空会员的长保留数据（碳碳实测踩坑：
+    # admin 永久保留的任务在重启后目录消失）
     cleanup_task.cancel()
-    for task_id in list(tasks.keys()):
-        cleanup_temp_files(task_id)
-    print("[Stellaris] shut down. Temp files cleaned.")
+    print("[Stellaris] shut down.")
+
+
+async def _cleanup_expired_tasks() -> list[str]:
+    """分档保留清理：按任务归属用户的有效档位 history_hours 判定过期。
+    匿名/无记录任务按 1 小时；admin/Stella（None）永久保留。返回被清理的 task_id 列表。"""
+    if not TMP_DIR.exists():
+        return []
+    now = time.time()
+    dirs = []
+    for task_dir in TMP_DIR.iterdir():
+        if not task_dir.is_dir():
+            continue
+        try:
+            dirs.append((task_dir.name, task_dir.stat().st_mtime))
+        except OSError:
+            continue
+    if not dirs:
+        return []
+    owners = await get_task_owner_map([name for name, _ in dirs])
+    uids = list({u for u in owners.values() if u})
+    retention = await retention_hours_map(uids)
+    removed = []
+    for name, mtime in dirs:
+        uid = owners.get(name)
+        hours = retention.get(uid, 1) if uid else 1   # 匿名/无记录 = 1 小时
+        if hours is None:
+            continue                                   # 永久保留档
+        if now - mtime > hours * 3600:
+            cleanup_temp_files(name)
+            removed.append(name)
+    return removed
 
 
 async def _periodic_cleanup():
-    """后台定时清理：每 10 分钟扫描并清理超过 1 小时的任务文件（联动删对话/历史记录）。"""
+    """后台定时清理：每 10 分钟扫描并清理过期任务文件（联动删对话/历史记录）。"""
     while True:
         await asyncio.sleep(600)
         try:
-            removed = cleanup_old_tasks(max_age_hours=1)
+            removed = await _cleanup_expired_tasks()
             if removed:
                 logger.info("[Cleanup] 定时清理：删除 %d 个过期任务", len(removed))
                 for tid in removed:
@@ -100,7 +144,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.7.0-rigel",
+    version="0.8.0-capella",
     lifespan=lifespan,
 )
 
@@ -130,8 +174,17 @@ async def get_public_config():
     """前端公开配置（Turnstile site key 公开,secret 不返回）。
     运行时拿,避免 Vite build-time env 依赖（Zeabur 等平台 build 阶段拿不到 runtime env）。
     """
-    from config import TURNSTILE_SITE_KEY, IS_PROD
-    return {"turnstile_site_key": TURNSTILE_SITE_KEY, "is_prod": IS_PROD}
+    from config import TURNSTILE_SITE_KEY, IS_PROD, AFDIAN_SHOP_URL, AFDIAN_PLAN_URLS
+    try:
+        plan_urls = json.loads(AFDIAN_PLAN_URLS or "{}")
+    except json.JSONDecodeError:
+        plan_urls = {}
+    return {
+        "turnstile_site_key": TURNSTILE_SITE_KEY,
+        "is_prod": IS_PROD,
+        "afdian_shop_url": AFDIAN_SHOP_URL,
+        "afdian_plan_urls": plan_urls,
+    }
 
 
 @app.post("/api/estimate", response_model=EstimateResponse)
@@ -167,19 +220,25 @@ async def estimate_cost(
 
     # 登录用户：返回余量与可负担判断
     if current_user:
-        b = await get_billing(current_user.uid)
-        tier = BILLING_TIERS.get(b.membership_tier, BILLING_TIERS["free"])
-        resp.minutes_left = {
-            "day": tier["minutes_day"] - b.minutes_day,
-            "week": tier["minutes_week"] - b.minutes_week,
-            "month": tier["minutes_month"] - b.minutes_month,
-        }
-        resp.quantum_left = b.quantum_gift + b.quantum_perm
-        minutes_ok = (est_minutes <= resp.minutes_left["day"]
-                      and est_minutes <= resp.minutes_left["week"]
-                      and est_minutes <= resp.minutes_left["month"])
-        resp.quantum_enough = minutes_ok and est_quantum <= resp.quantum_left
-        resp.can_afford = minutes_ok and est_quantum <= resp.quantum_left
+        b, tier_key = await get_billing(current_user.uid)
+        tier = BILLING_TIERS.get(tier_key, BILLING_TIERS["free"])
+        if tier.get("unlimited"):
+            resp.minutes_left = None
+            resp.quantum_left = b.quantum_gift + b.quantum_perm
+            resp.quantum_enough = True
+            resp.can_afford = True
+        else:
+            # minutes_* 为 None 表示该周期不限（如 Stella 日/周），只卡有上限的周期
+            resp.minutes_left = {
+                p: (None if tier.get(f"minutes_{p}") is None
+                    else tier[f"minutes_{p}"] - getattr(b, f"minutes_{p}"))
+                for p in ("day", "week", "month")
+            }
+            resp.quantum_left = b.quantum_gift + b.quantum_perm
+            minutes_ok = all(left is None or est_minutes <= left
+                             for left in resp.minutes_left.values())
+            resp.quantum_enough = minutes_ok and est_quantum <= resp.quantum_left
+            resp.can_afford = minutes_ok and est_quantum <= resp.quantum_left
     else:
         # 匿名：只走当日 10 分钟体验额度（消耗提示在前端做）
         resp.can_afford = None
@@ -231,6 +290,7 @@ async def submit_task(
         "sessdata": request.sessdata,
         "source_platform": platform_label(request.url),
         "owner_uid": current_user.uid if current_user else None,
+        "owner_ip": req.client.host if req.client else "unknown",  # R3：匿名失败退还预占额度用
         "est_minutes": est_minutes,
         "skip_segment": request.skip_segment,
     }
@@ -297,18 +357,105 @@ async def upload_file(
     )
 
 
+def _authorize_task(task: dict, current_user: User | None) -> None:
+    """R1 任务级鉴权：匿名任务(owner_uid 为 None)放行；有主则仅本人可访问，
+    他人一律 404（掩藏存在性，不返 403）。"""
+    owner_uid = task.get("owner_uid")
+    if owner_uid is None:
+        return  # 匿名任务：无账号归属，放行（靠 1 小时自动清理兜底）
+    if current_user is not None and current_user.uid == owner_uid:
+        return
+    raise HTTPException(status_code=404, detail="任务不存在")
+
+
+async def _resolve_user_for_download(
+    authorization: str | None, token: str | None, db: AsyncSession,
+) -> User | None:
+    """R1 下载专用：下载是 <a href> 裸跳转不带 Authorization header，
+    故额外支持 ?token= 查询参数；header 优先，其次 query。"""
+    raw = None
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization[7:]
+    elif token:
+        raw = token
+    if not raw:
+        return None
+    payload = decode_access_token(raw)
+    if not payload or payload.get("uid") is None:
+        return None
+    result = await db.execute(select(User).where(User.uid == payload["uid"]))
+    return result.scalar_one_or_none()
+
+
 @app.get("/api/task/{task_id}", response_model=TaskResponse)
-async def get_task_status(task_id: str):
-    """查询任务状态和结果"""
+async def get_task_status(
+    task_id: str,
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """查询任务状态和结果（内存缺失时冷启动重建，会员长保留依赖）"""
     task = tasks.get(task_id)
     if not task:
+        task = await _rehydrate_task(task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-
+    _authorize_task(task, current_user)
     return TaskResponse(**task)
 
 
+async def _rehydrate_task(task_id: str) -> dict | None:
+    """冷启动重建：服务器重启后内存态丢失，从任务目录文件 + task_records 重建结果页状态。
+    没有它，Voyager 7 天 / Odyssey 30 天 / Stella·admin 永久保留重启即'已失效'（P0）。
+    重建内容：output.txt → 预览文本 + MD/概要/解读的输入文本；output.srt → 下载；
+    output.md 存在则 MD 标记 ready；标题/来源平台取 task_records。"""
+    task_dir = TMP_DIR / task_id
+    txt_path = task_dir / "output.txt"
+    if not txt_path.exists():
+        return None
+    try:
+        text = txt_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    srt_path = task_dir / "output.srt"
+    record = await get_task_record(task_id)
+    # Y4：概要文件名以 _generate_summary_background 实际写入为准（output_summary.md）。
+    # 重建时一并恢复 ready 状态 + 内容，避免重启后被当成"未生成"重复扣量子波。
+    summary_path = task_dir / "output_summary.md"
+    summary_status = "idle"
+    summary_content = None
+    if summary_path.exists():
+        try:
+            summary_content = summary_path.read_text(encoding="utf-8")
+            summary_status = "ready"
+        except OSError:
+            pass
+    task = {
+        "task_id": task_id,
+        "status": TaskStatus.COMPLETED,
+        "message": "完成！",
+        "progress": 100,
+        "video_title": (record or {}).get("title"),
+        "source_platform": (record or {}).get("source_platform"),
+        # Y3：重建任务也要带归属，否则 R1 owner 鉴权永远过不了、chat 统计归属丢失。
+        "owner_uid": (record or {}).get("owner_uid"),
+        "subtitle_srt": str(srt_path) if srt_path.exists() else None,
+        "subtitle_txt": text,
+        # 分段后文本（与原文同词，仅段落整理）作为 MD/概要/解读的输入
+        "raw_text": text,
+        "subtitle_source": None,
+        "md_status": "ready" if (task_dir / "output.md").exists() else "idle",
+        "summary_status": summary_status,
+        "summary_content": summary_content,
+        "rehydrated": True,
+    }
+    tasks[task_id] = task   # 重建后回种内存，后续请求直接命中
+    return task
+
+
 @app.delete("/api/task/{task_id}", response_model=TaskResponse)
-async def delete_task(task_id: str):
+async def delete_task(
+    task_id: str,
+    current_user: User | None = Depends(get_current_user_optional),
+):
     """
     用户主动清理任务数据（删除临时文件，不可恢复）。
     任务状态保留在内存（前端刷新仍能看到 cleaned 标记）。
@@ -316,6 +463,7 @@ async def delete_task(task_id: str):
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    _authorize_task(task, current_user)
 
     cleanup_temp_files(task_id)
     await delete_chat_messages(task_id)
@@ -327,10 +475,25 @@ async def delete_task(task_id: str):
 
 
 @app.get("/api/download/{task_id}/{format}")
-async def download_result(task_id: str, format: str):
-    """下载生成的字幕文件（srt/txt/md）"""
+async def download_result(
+    task_id: str,
+    format: str,
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """下载生成的字幕文件（srt/txt/md）。
+    R1：下载是 <a href> 裸跳转不带 JWT header，故兼容 ?token= 查询参数。"""
     if format not in ("srt", "txt", "md"):
         raise HTTPException(status_code=400, detail="格式仅支持 srt、txt 或 md")
+
+    current_user = await _resolve_user_for_download(authorization, token, db)
+    task = tasks.get(task_id)
+    if not task:
+        task = await _rehydrate_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="文件不存在（任务可能尚未完成或已清理）")
+    _authorize_task(task, current_user)
 
     from utils import get_task_dir
     task_dir = get_task_dir(task_id)
@@ -535,11 +698,17 @@ async def chat_about_video(
 
 
 @app.get("/api/chat/{task_id}")
-async def get_chat(task_id: str):
+async def get_chat(
+    task_id: str,
+    current_user: User | None = Depends(get_current_user_optional),
+):
     """取回某任务的 AI 解读对话记录（面板打开/刷新时恢复）"""
     task = tasks.get(task_id)
     if not task:
+        task = await _rehydrate_task(task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    _authorize_task(task, current_user)
     return {"messages": await get_chat_history(task_id)}
 
 
@@ -573,21 +742,31 @@ async def export_diagnostics(current_user: User = Depends(get_current_user)):
 
 @app.get("/api/billing/summary")
 async def billing_summary(current_user: User = Depends(get_current_user)):
-    """三胶囊数据：分钟日/周/月已用+限额、量子波（赠送/活动）、引力波"""
-    b = await get_billing(current_user.uid)
-    tier = BILLING_TIERS.get(b.membership_tier, BILLING_TIERS["free"])
+    """三胶囊数据：分钟日/周/月已用+限额、量子波（赠送/活动）、引力波 + 档位信息"""
+    b, tier_key = await get_billing(current_user.uid)
+    tier = BILLING_TIERS.get(tier_key, BILLING_TIERS["free"])
+    unlimited = bool(tier.get("unlimited"))
+    name, cn = TIER_DISPLAY.get(tier_key, TIER_DISPLAY["free"])
+    expire = b.membership_expire_at
+    expire_iso = expire.isoformat() + ("Z" if expire and not expire.tzinfo else "") if expire else None
     return {
-        "tier": b.membership_tier,
+        "tier": tier_key,
+        "tier_name": name,
+        "tier_cn": cn,
+        "unlimited": unlimited,
+        # 付费档到期时间（9999 = 永久档不下发）；free/admin 为 None；补 Z 按 UTC 序列化
+        "expire_at": (expire_iso if expire and expire.year < 9999 else None),
         "minutes": {
-            "day": {"used": b.minutes_day, "limit": tier["minutes_day"]},
-            "week": {"used": b.minutes_week, "limit": tier["minutes_week"]},
-            "month": {"used": b.minutes_month, "limit": tier["minutes_month"]},
+            p: {"used": getattr(b, f"minutes_{p}"),
+                "limit": None if unlimited else tier.get(f"minutes_{p}")}
+            for p in ("day", "week", "month")
         },
         "quantum_gift": b.quantum_gift,
         "quantum_perm": b.quantum_perm,
         "gravity": b.gravity,
         "exchange_month_used": b.exchange_month_count,
-        "exchange_month_cap": 5,
+        "exchange_month_cap": (None if tier.get("exchange_unlimited")
+                               else tier.get("exchange_cap", 5)),
     }
 
 
@@ -607,6 +786,165 @@ async def billing_exchange_route(
     return result
 
 
+@app.get("/api/billing/ledger")
+async def billing_ledger_route(
+    page: int = 1,
+    size: int = 20,
+    currency: str | None = None,
+    current_user: User = Depends(get_current_user),
+):
+    """消耗记录（分页，时间倒序）：分钟/量子波（含双钱包拆分）/引力波流水，可按货币筛选"""
+    page = max(1, page)
+    size = min(max(1, size), 50)
+    if currency not in (None, "minute", "quantum", "gravity"):
+        currency = None
+    return await get_ledger(current_user.uid, page, size, currency)
+
+
+@app.post("/api/afdian/webhook")
+async def afdian_webhook(req: Request):
+    """爱发电订单回调（路径 A 主路）：RSA 验签 → 幂等 → 按方案映射开通会员。
+    必须返回 {"ec":200} 确认，否则平台视为失败重试；无法处理的订单落库标记人工处理。"""
+    from afdian_store import verify_webhook_sign, order_exists, record_order
+    from config import AFDIAN_PLAN_MAP
+    try:
+        body = await req.json()
+    except Exception:
+        return {"ec": 400, "em": "bad json"}
+    data = body.get("data") or {}
+    if body.get("ec") != 200 or data.get("type") != "order":
+        return {"ec": 200, "em": ""}          # 非订单推送（如联通测试）直接确认
+    order = data.get("order") or {}
+    out_trade_no = order.get("out_trade_no", "")
+    plan_id = order.get("plan_id", "")
+    total_amount = order.get("total_amount", "")
+    payload = json.dumps(body, ensure_ascii=False)
+
+    # ① RSA 验签（防伪造推送）
+    if not verify_webhook_sign(order, data.get("sign", "")):
+        if out_trade_no and not await order_exists(out_trade_no):
+            await record_order(out_trade_no, None, plan_id, total_amount, "bad_sign", payload)
+        logger.warning("[Afdian] 验签失败，拒绝发货: %s", out_trade_no)
+        return {"ec": 401, "em": "invalid sign"}
+
+    # ② 幂等（平台可能重复推送）
+    if await order_exists(out_trade_no):
+        return {"ec": 200, "em": ""}
+
+    # ③ 仅处理支付成功（status=2，目前平台也只推这类）
+    if order.get("status") != 2:
+        await record_order(out_trade_no, None, plan_id, total_amount, "ignored", payload)
+        return {"ec": 200, "em": ""}
+
+    # ③.5 自选金额（plan_id 为空）= 赞赏：只落库致谢，不涉及会员开通
+    # （顺带承担"生产支付链路冒烟测试"职责：一笔赞赏即可验证 推送→验签→落库 全链路）
+    if not plan_id:
+        uid = None
+        m = re.search(r"\d+", str(order.get("custom_order_id") or ""))
+        if m:
+            uid = int(m.group())
+        await record_order(out_trade_no, uid, "", total_amount, "donation", payload)
+        logger.info("[Afdian] 收到赞赏: ¥%s (uid=%s, order=%s)", total_amount, uid, out_trade_no)
+        return {"ec": 200, "em": ""}
+
+    # ④ 用户映射（custom_order_id = Stellaris UID，付款链接 URL 传参携带）
+    uid = None
+    custom = str(order.get("custom_order_id") or "")
+    m = re.search(r"\d+", custom)
+    if m:
+        uid = int(m.group())
+    if not uid:
+        await record_order(out_trade_no, None, plan_id, total_amount, "unmapped_user", payload)
+        logger.warning("[Afdian] 无法关联用户(custom_order_id=%r): %s", custom, out_trade_no)
+        return {"ec": 200, "em": ""}
+
+    # ⑤ 方案映射（plan_id → 档位 + 天数；试用档在映射里配 days=7）
+    try:
+        plan_map = json.loads(AFDIAN_PLAN_MAP or "{}")
+    except json.JSONDecodeError:
+        plan_map = {}
+    plan = plan_map.get(plan_id)
+    if not plan:
+        await record_order(out_trade_no, uid, plan_id, total_amount, "unknown_plan", payload)
+        logger.warning("[Afdian] 方案未配置(plan_id=%s): %s", plan_id, out_trade_no)
+        return {"ec": 200, "em": ""}
+
+    # ⑥ 开通（month 为购买月数，天数按倍数顺延；同档续费在 grant_membership 内累加）
+    # Y1：先 INSERT OR IGNORE 原子占位抢锁——rowcount=0 即并发败者或重复推送，直接确认；
+    # 占位成功再 grant，grant 异常置 grant_failed（订单已落库可追，不丢单、不 500）。
+    from afdian_store import update_order_status
+    months = max(1, int(order.get("month") or 1))
+    days = int(plan["days"]) * months
+    if await record_order(out_trade_no, uid, plan_id, total_amount, "granting", payload) == 0:
+        return {"ec": 200, "em": ""}   # 并发败者/重复推送，已由先到者处理
+    try:
+        await grant_membership(uid, plan["tier"], days)
+        await update_order_status(out_trade_no, "processed")
+        logger.info("[Afdian] 会员开通: uid=%s tier=%s days=%s order=%s",
+                    uid, plan["tier"], days, out_trade_no)
+    except Exception as ge:
+        await update_order_status(out_trade_no, "grant_failed")
+        logger.error("[Afdian] 开通失败(订单已占位,待人工): %s - %s", out_trade_no, ge)
+    return {"ec": 200, "em": ""}
+
+
+@app.get("/api/redeem/preview")
+async def redeem_preview(code: str, current_user: User = Depends(get_current_user)):
+    """兑换前预览（不核销）：返回档位+天数，无效码 404"""
+    from redeem_store import preview_code, RedeemError
+    try:
+        return await preview_code(code)
+    except RedeemError as e:
+        raise HTTPException(status_code=404, detail=e.detail)
+
+
+@app.get("/api/membership/history")
+async def membership_history(current_user: User = Depends(get_current_user)):
+    """会员开通记录：爱发电订单 + 兑换码兑换，合并按时间倒序"""
+    from afdian_store import get_orders_for_user
+    from redeem_store import get_redemptions_for_user
+    from config import AFDIAN_PLAN_MAP
+    try:
+        plan_map = json.loads(AFDIAN_PLAN_MAP or "{}")
+    except json.JSONDecodeError:
+        plan_map = {}
+    items = []
+    for o in await get_orders_for_user(current_user.uid):
+        plan = plan_map.get(o["plan_id"], {})
+        items.append({
+            "source": "爱发电",
+            "tier": plan.get("tier"),
+            "days": plan.get("days"),
+            "amount": o["total_amount"],
+            "time": o["created_at"],
+        })
+    for r in await get_redemptions_for_user(current_user.uid):
+        items.append({
+            "source": "兑换码" if not r["note"] else r["note"],
+            "tier": r["tier"],
+            "days": r["days"],
+            "amount": None,
+            "time": r["used_at"],
+        })
+    items.sort(key=lambda x: x["time"] or "", reverse=True)
+    return {"items": items}
+
+
+@app.post("/api/redeem")
+async def redeem_route(req: Request, current_user: User = Depends(get_current_user)):
+    """核销兑换码（二次确认后调用）：开通会员，已用/过期 409"""
+    from redeem_store import redeem_code, RedeemError
+    body = await req.json()
+    code = str(body.get("code", "")).strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="请输入兑换码")
+    try:
+        result = await redeem_code(code, current_user.uid)
+    except RedeemError as e:
+        raise HTTPException(status_code=409, detail=e.detail)
+    return result
+
+
 # ===== 核心管线（后台执行）=====
 
 async def run_pipeline(
@@ -615,9 +953,10 @@ async def run_pipeline(
     url: str | None,
     sessdata: str | None,
 ):
-    """B站链接的完整管线（async 包装，实际在线程池跑同步管线）"""
-    import asyncio
-    await asyncio.to_thread(_run_pipeline_sync, task_id, source, url, sessdata)
+    """B站链接的完整管线（async 包装，实际在线程池跑同步管线）。
+    R2：信号量串行化，超出的请求排队（不再并发）。"""
+    async with _pipeline_sem:
+        await asyncio.to_thread(_run_pipeline_sync, task_id, source, url, sessdata)
 
 
 def _run_pipeline_sync(
@@ -656,6 +995,10 @@ def _run_pipeline_sync(
         else:
             segments = cc_segments
             subtitle_source = "cc_subtitle"
+
+        # 音频用完即删：结果页全部操作（下载/概要/MD/解读）只依赖字幕文本，
+        # 延长保留期只存文本（会员分档保留的存储成本因此几乎为零）
+        Path(audio_path).unlink(missing_ok=True)
 
         # ④ 拼接原始全文（供 LLM 分段 + 后续 MD 导出使用）
         raw_text = segments_to_txt(segments)
@@ -714,6 +1057,15 @@ def _run_pipeline_sync(
     except Exception as e:
         _update_status(task_id, TaskStatus.FAILED, error=str(e))
         cleanup_temp_files(task_id)
+        # R3：匿名任务失败退还预占的当日体验额度（upload 管线无预占，见 fix_prompt 出入 1）
+        task = tasks.get(task_id) or {}
+        if not task.get("owner_uid") and task.get("est_minutes"):
+            try:
+                asyncio.run(refund_anon_minutes(
+                    task.get("owner_ip", "unknown"), task["est_minutes"],
+                ))
+            except Exception as re:
+                logger.warning("[Billing] 匿名额度退还失败(不影响主流程): %s", re)
     finally:
         running_tasks.discard(task_id)
 
@@ -723,9 +1075,10 @@ async def run_pipeline_from_file(
     file_path: Path,
     sessdata: str | None,
 ):
-    """文件上传管线（async 包装，实际在线程池跑同步管线）"""
-    import asyncio
-    await asyncio.to_thread(_run_pipeline_from_file_sync, task_id, file_path, sessdata)
+    """文件上传管线（async 包装，实际在线程池跑同步管线）。
+    R2：信号量串行化，超出的请求排队（不再并发）。"""
+    async with _pipeline_sem:
+        await asyncio.to_thread(_run_pipeline_from_file_sync, task_id, file_path, sessdata)
 
 
 def _run_pipeline_from_file_sync(
@@ -741,11 +1094,13 @@ def _run_pipeline_from_file_sync(
         result = extract_audio_from_file(file_path, task_id)
         audio_path = result["audio_path"]
         video_title = result["video_title"]
+        Path(file_path).unlink(missing_ok=True)   # 原始上传文件用完即删
 
         # ② ASR
         _update_status(task_id, TaskStatus.TRANSCRIBING, 50)
         asr_result = transcribe_with_mimo(audio_path, task_id)
         segments = asr_result["segments"]
+        Path(audio_path).unlink(missing_ok=True)  # 音频用完即删（延长保留只存文本）
 
         # ③ 拼接原始全文
         raw_text = segments_to_txt(segments)
@@ -842,8 +1197,14 @@ def _settle_billing_sync(owner_uid: int | None, minutes: int,
         logger.warning("[Billing] 结算失败(不影响主流程): %s", e)
 
 
-def _generate_summary_background(task_id: str):
-    """后台生成内容总结：调用 LLM 将字幕浓缩为结构化概要。"""
+async def _generate_summary_background(task_id: str):
+    """R2：async wrapper，信号量串行化后台概要生成；sync 实现丢线程池，不阻塞事件循环。"""
+    async with _pipeline_sem:
+        await asyncio.to_thread(_generate_summary_impl, task_id)
+
+
+def _generate_summary_impl(task_id: str):
+    """后台生成内容总结的同步实现：调用 LLM 将字幕浓缩为结构化概要。"""
     task = tasks.get(task_id)
     if not task:
         return
@@ -882,8 +1243,14 @@ def _generate_summary_background(task_id: str):
         logger.error("[Summary] 总结失败: %s - %s", task_id, e)
 
 
-def _generate_md_background(task_id: str):
-    """后台生成 Markdown：调用 LLM 将原始转录文本转为结构化 MD。"""
+async def _generate_md_background(task_id: str):
+    """R2：async wrapper，信号量串行化后台 MD 生成；sync 实现丢线程池，不阻塞事件循环。"""
+    async with _pipeline_sem:
+        await asyncio.to_thread(_generate_md_impl, task_id)
+
+
+def _generate_md_impl(task_id: str):
+    """后台生成 Markdown 的同步实现：调用 LLM 将原始转录文本转为结构化 MD。"""
     task = tasks.get(task_id)
     if not task:
         return

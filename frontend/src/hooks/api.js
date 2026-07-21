@@ -102,9 +102,12 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
 }
 export const cleanupTask = (taskId) => request(`/api/task/${taskId}`, { method: 'DELETE' })
 
-// 下载是 <a> 直接触发,不走 fetch(后端 download 未加鉴权,无需 token)
+// 下载是 <a> 直接触发,不走 fetch；R1 后下载需鉴权,<a href> 无法加 header,
+// 故登录态把 token 拼到 query（匿名任务 owner_uid=None 放行,无 token 也 200）
 export function getDownloadUrl(taskId, format) {
-  return `/api/download/${taskId}/${format}`
+  const token = getToken()
+  const base = `/api/download/${taskId}/${format}`
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }
 
 /* ═══ Auth 接口 ═══ */
@@ -133,5 +136,12 @@ export const getHistory = () => request('/api/history')
 export const getBilling = () => request('/api/billing/summary')
 export const exchange = (direction, count) =>
   request('/api/billing/exchange', { method: 'POST', body: { direction, count } })
+export const getLedger = (page = 1, size = 20, currency) =>
+  request(`/api/billing/ledger?page=${page}&size=${size}${currency ? `&currency=${currency}` : ''}`)
+export const redeemPreview = (code) =>
+  request(`/api/redeem/preview?code=${encodeURIComponent(code)}`)
+export const redeem = (code) =>
+  request('/api/redeem', { method: 'POST', body: { code } })
+export const getMembershipHistory = () => request('/api/membership/history')
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, cleanupTask, authApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi }

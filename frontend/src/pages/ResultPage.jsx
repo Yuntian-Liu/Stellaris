@@ -27,6 +27,7 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
+import { RETENTION_TEXT } from '../utils/tier'
 import ReactMarkdown from 'react-markdown'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
@@ -43,6 +44,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
   const [cleaned, setCleaned] = useState(taskData.cleaned || false)
   // AI 解读分栏态（展开时通知 App 扩宽容器）
   const [chatOpen, setChatOpen] = useState(false)
+  // 保留时长文案（按档位；未登录按 free 1 小时）
+  const [retention, setRetention] = useState('1 小时')
   // 首次提星礼：本设备第一次完成提取时撒花
   const [firstStar, setFirstStar] = useState(false)
   const pollRef = useRef(null)
@@ -51,6 +54,13 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+    api.getBilling()
+      .then(b => setRetention(RETENTION_TEXT[b.tier] || '1 小时'))
+      .catch(() => {})
+  }, [user])
 
   useEffect(() => {
     if (!localStorage.getItem('stellaris_first_star')) {
@@ -166,6 +176,15 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
     <div className="page-enter">
       {/* 首次提星礼（本设备第一次完成提取，撒花 4s） */}
       {firstStar && <Confetti />}
+      {/* 顶部返回（历史回看/流程结束均有显性出口） */}
+      <div style={{ marginBottom: 12 }}>
+        <Button
+          type="text" icon={<ArrowLeftOutlined />} onClick={onBack}
+          style={{ color: 'var(--mute)', paddingLeft: 0 }}
+        >
+          返回
+        </Button>
+      </div>
       {/* ── 完成标识（三部分竖排堆叠：标题 / 视频标题 / 保留提示）── */}
       <div style={{
         textAlign: 'center',
@@ -220,7 +239,9 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
             <InfoCircleOutlined style={{ marginRight: 6 }} />
             {cleaned
               ? '数据已清理，下载功能已关闭'
-              : '为节省服务器资源，提取结果将暂存 1 小时，请在此期间完成下载。'}
+              : retention === '永久'
+                ? '提取结果为你永久保留，可随时回来下载与解读。'
+                : `为节省服务器资源，提取结果将暂存 ${retention}，请在此期间完成下载。`}
           </Text>
         </div>
       </div>

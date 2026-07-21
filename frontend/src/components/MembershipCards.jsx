@@ -1,0 +1,240 @@
+/**
+ * 会员卡 — 设置页「会员权益」四档卡片
+ * Stargazer ¥8 / Voyager ¥18（主推，挂 ¥5 试用小按钮）/ Odyssey ¥68 / Stella 仅邀请
+ * 档位配色与 utils/tier.js 同源；开通跳转爱发电（/api/config 下发店铺链接）
+ */
+import { useEffect, useState } from 'react'
+import { Button, message } from 'antd'
+import {
+  ClockCircleOutlined, DotChartOutlined, GlobalOutlined, HistoryOutlined,
+  HeartOutlined,
+} from '@ant-design/icons'
+import { useAuth } from '../contexts/AuthContext'
+
+const TIERS = [
+  {
+    key: 'stargazer', name: 'Stargazer', cn: '观星者', price: 8,
+    tag: '轻量尝鲜',
+    gradient: 'linear-gradient(135deg, #4338ca, #6366f1)',
+    benefits: [
+      { icon: 'clock', text: <>每日 <b>40 分钟</b> 转写 · 月 480 分钟</> },
+      { icon: 'quantum', text: <>量子波 <b>650</b>/周 · 约 7 次总结概要</> },
+      { icon: 'gravity', text: <>引力波 <b>50</b>/月 · 约 8 篇 MD 笔记</> },
+      { icon: 'history', text: <>历史记录保留 <b>24 小时</b></> },
+    ],
+  },
+  {
+    key: 'voyager', name: 'Voyager', cn: '远航者', price: 18, featured: true,
+    tag: '主推',
+    gradient: 'linear-gradient(135deg, #6d28d9, #8b5cf6)',
+    benefits: [
+      { icon: 'clock', text: <>每日 <b>100 分钟</b> 转写 · 月 1200 分钟</> },
+      { icon: 'quantum', text: <>量子波 <b>1700</b>/周 · 约 22 次总结概要</> },
+      { icon: 'gravity', text: <>引力波 <b>150</b>/月 · 约 25 篇 MD 笔记</> },
+      { icon: 'history', text: <>历史记录保留 <b>7 天</b></> },
+    ],
+    trial: '先试 7 天 ¥5 →',
+  },
+  {
+    key: 'odyssey', name: 'Odyssey', cn: '奥德赛', price: 68,
+    tag: '量大管饱',
+    gradient: 'linear-gradient(135deg, #92400e, #f59e0b)',
+    benefits: [
+      { icon: 'clock', text: <>每日 <b>300 分钟</b> 转写 · 月 3600 分钟</> },
+      { icon: 'quantum', text: <>量子波 <b>5000</b>/周 · 约 61 次总结概要</> },
+      { icon: 'gravity', text: <>引力波 <b>500</b>/月 · 约 83 篇 MD 笔记</> },
+      { icon: 'history', text: <>历史记录保留 <b>30 天</b></> },
+    ],
+  },
+  {
+    key: 'stella', name: 'Stella', cn: '启明', price: null, inviteOnly: true,
+    tag: '仅此一颗',
+    gradient: 'linear-gradient(135deg, #1e1b4b, #6d28d9)',
+    benefits: [
+      { icon: 'clock', text: <>转写日/周 <b>不限</b> · 月 6000 分钟</> },
+      { icon: 'quantum', text: <>量子波 <b>9999</b>/周 · 概要随心用</> },
+      { icon: 'gravity', text: <>引力波 <b>500</b>/月 · 永不过期</> },
+      { icon: 'history', text: <>历史记录 <b>永久保留</b></> },
+    ],
+  },
+]
+
+const ICONS = {
+  clock: ClockCircleOutlined,
+  quantum: DotChartOutlined,
+  gravity: GlobalOutlined,
+  history: HistoryOutlined,
+}
+
+export default function MembershipCards({ billing }) {
+  const { user } = useAuth()
+  const [shopUrl, setShopUrl] = useState('')
+  const [planUrls, setPlanUrls] = useState({})
+  useEffect(() => {
+    fetch('/api/config').then(r => r.json())
+      .then(c => {
+        setShopUrl(c.afdian_shop_url || '')
+        setPlanUrls(c.afdian_plan_urls || {})
+      }).catch(() => {})
+  }, [])
+
+  // 跳爱发电付款：优先档位直链，附带 custom_order_id=UID（webhook 凭它关联发货对象）
+  const openShop = (tierKey) => {
+    let url = planUrls[tierKey] || shopUrl
+    if (!url) {
+      message.info('会员开通即将上线，敬请期待')
+      return
+    }
+    if (user?.uid) {
+      url += (url.includes('?') ? '&' : '?') + `custom_order_id=${user.uid}`
+    }
+    window.open(url, '_blank')
+  }
+
+  const currentTier = billing?.tier
+  // 已开通付费档期间，其他付费档禁用（防误购覆盖；后端仍兜底发货防资损）
+  const hasPaid = ['stargazer', 'voyager', 'odyssey'].includes(currentTier)
+  const expireText = billing?.expire_at
+    ? `有效期至 ${new Date(billing.expire_at).getMonth() + 1} 月 ${new Date(billing.expire_at).getDate()} 日`
+    : null
+
+  return (
+    <>
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(232px, 1fr))',
+      gap: 14, marginBottom: 16,
+    }}>
+      {TIERS.map(t => {
+        const isCurrent = currentTier === t.key
+        const crossTierBlocked = hasPaid && !isCurrent && !t.inviteOnly
+        return (
+          <div key={t.key} className="member-card" style={{
+            borderRadius: 'var(--r-card)', overflow: 'hidden',
+            border: isCurrent ? '1.5px solid var(--accent)' : '1px solid var(--hairline)',
+            background: 'var(--surface-1)',
+            boxShadow: t.featured ? '0 6px 24px rgba(109, 40, 217, 0.12)' : 'none',
+            position: 'relative', display: 'flex', flexDirection: 'column',
+          }}>
+            {/* 卡片头：渐变 + 英文名 + 中文副标 */}
+            <div className="member-card-head" style={{
+              background: t.gradient, padding: '16px 18px 14px',
+              position: 'relative', overflow: 'hidden',
+            }}>
+              <div style={{
+                position: 'absolute', top: -20, right: -20, width: 80, height: 80,
+                borderRadius: '50%', background: 'rgba(255,255,255,0.10)',
+              }} />
+              <div style={{
+                position: 'absolute', bottom: 8, right: 16,
+                color: 'rgba(255,255,255,0.35)', fontSize: 14,
+              }}>✦</div>
+              {t.tag && (
+                <div style={{
+                  position: 'absolute', top: 10, right: 12, fontSize: 10,
+                  borderRadius: 9999, padding: '1px 8px', fontWeight: 500,
+                  // 主推档反白实心突出，其余档半透明描边感
+                  ...(t.featured
+                    ? { color: '#6d28d9', background: '#fff' }
+                    : { color: '#fff', background: 'rgba(255,255,255,0.22)' }),
+                }}>{t.tag}</div>
+              )}
+              <div className="font-display" style={{
+                color: '#fff', fontSize: 22, fontWeight: 600, letterSpacing: 0.5,
+              }}>{t.name}</div>
+              <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, marginTop: 1 }}>
+                {t.cn}
+              </div>
+              <div style={{
+                marginTop: 8, color: '#fff',
+                height: 34, display: 'flex', alignItems: 'center', gap: 1,
+              }}>
+                {t.price != null ? (
+                  <>
+                    <span style={{ fontSize: 13, opacity: 0.85 }}>¥</span>
+                    <span className="font-mono" style={{ fontSize: 26, fontWeight: 700, lineHeight: 1 }}>{t.price}</span>
+                    <span style={{ fontSize: 12, opacity: 0.85 }}>&nbsp;/月</span>
+                  </>
+                ) : (
+                  <span style={{ fontSize: 13, opacity: 0.9, letterSpacing: 1 }}>仅此一颗星</span>
+                )}
+              </div>
+            </div>
+
+            {/* 权益列表 */}
+            <div style={{ padding: '12px 18px', flex: 1 }}>
+              {t.benefits.map((b, i) => {
+                const Icon = ICONS[b.icon]
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    fontSize: 12.5, color: 'var(--body)', lineHeight: 2,
+                  }}>
+                    <Icon style={{ color: 'var(--accent)', fontSize: 12, flexShrink: 0 }} />
+                    <span className="tier-benefit">{b.text}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* 底部按钮（试用链接在按钮上方；无试用的档补同高占位，保证四卡按钮对齐） */}
+            <div style={{ padding: '0 18px 16px' }}>
+              <div style={{ minHeight: 22, marginBottom: 6, textAlign: 'center' }}>
+                {t.trial && !isCurrent && !hasPaid && (
+                  <span
+                    onClick={() => openShop('trial')}
+                    style={{ fontSize: 12, color: 'var(--accent)', cursor: 'pointer' }}
+                  >{t.trial}</span>
+                )}
+              </div>
+              {isCurrent ? (
+                <Button block disabled>
+                  当前档位{expireText ? ` · ${expireText}` : ''}
+                </Button>
+              ) : t.inviteOnly ? (
+                <Button block disabled style={{ color: 'var(--mute)' }}>仅邀请</Button>
+              ) : crossTierBlocked ? (
+                <Button block disabled style={{ color: 'var(--mute)' }}>已开通其他档位</Button>
+              ) : (
+                <Button
+                  block type="primary"
+                  style={{ background: t.gradient, border: 'none', fontWeight: 500 }}
+                  onClick={() => openShop(t.key)}
+                >
+                  开通 {t.name}
+                </Button>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+
+    {/* 换档说明（已开通付费档时显示） */}
+    {hasPaid && (
+      <div style={{
+        textAlign: 'center', fontSize: 12, color: 'var(--mute)',
+        marginBottom: 12, lineHeight: 1.7,
+      }}>
+        会员期间暂不可切换档位 · 到期后可自由选择 · 同档续费随时可用
+      </div>
+    )}
+
+    {/* 赞赏入口（爱发电自选金额；也是支付链路的生产冒烟通道） */}
+    <div style={{
+      textAlign: 'center', marginTop: 4, marginBottom: 16,
+      paddingTop: 14, borderTop: '1px dashed var(--hairline)',
+    }}>
+      <span style={{ fontSize: 12, color: 'var(--mute)', marginRight: 10 }}>
+        星轨漫长，若这里曾照亮你 ✦
+      </span>
+      <Button
+        size="small" type="text" icon={<HeartOutlined />}
+        style={{ color: 'var(--accent)' }}
+        onClick={openShop}
+      >
+        赞赏支持
+      </Button>
+    </div>
+  </>
+  )
+}

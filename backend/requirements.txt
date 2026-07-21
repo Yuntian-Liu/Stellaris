@@ -22,3 +22,4 @@ bcrypt>=4.0.0              # 密码哈希（直接用,不通过 passlib——pas
 pyjwt>=2.8.0               # JWT 签发/校验
 httpx>=0.27.0              # Resend 邮件 + Turnstile 的 HTTP 调用
 email-validator>=2.0.0     # Pydantic EmailStr 依赖
+cryptography>=42.0.0       # 爱发电 webhook RSA-SHA256 验签

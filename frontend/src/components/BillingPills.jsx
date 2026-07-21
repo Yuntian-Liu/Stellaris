@@ -25,7 +25,7 @@ const pillStyle = {
   fontSize: 12,
 }
 
-export default function BillingPills() {
+export default function BillingPills({ onOpenLedger }) {
   const [data, setData] = useState(null)
   const [exchangeOpen, setExchangeOpen] = useState(false)
   const [exchangeTab, setExchangeTab] = useState('q2g')
@@ -41,8 +41,16 @@ export default function BillingPills() {
 
   if (!data) return null
 
-  const { minutes, quantum_gift, quantum_perm, gravity } = data
-  const dayLeft = minutes.day.limit - minutes.day.used
+  const { minutes, quantum_gift, quantum_perm, gravity, unlimited } = data
+  // ∞ 用衬线字体渲染并放大：等宽字体里的 ∞ 又小又呆
+  const INF = (
+    <span style={{ fontFamily: 'Georgia, "Times New Roman", serif', fontSize: 15, lineHeight: 1 }}>∞</span>
+  )
+  // 胶囊显示第一个有上限周期的余量（Stella 日/周不限 → 显示月余量）；全不限 → ∞
+  const pillLeft = [minutes.day, minutes.week, minutes.month]
+    .map(m => (m.limit == null ? null : m.limit - m.used))
+    .find(v => v !== null)
+  const dayLeft = pillLeft ?? INF
   const quantumTotal = quantum_gift + quantum_perm
   const openExchange = (tab) => { setExchangeTab(tab); setExchangeOpen(true) }
 
@@ -53,7 +61,9 @@ export default function BillingPills() {
         placement="bottomRight"
         content={
           <div style={{ width: 230, padding: '2px 0' }}>
-            {[['日', minutes.day], ['周', minutes.week], ['月', minutes.month]].map(([label, m]) => (
+            {[['日', minutes.day], ['周', minutes.week], ['月', minutes.month]].map(([label, m]) => {
+              const noCap = m.limit == null   // 该周期不限（admin 全不限 / Stella 日周不限）
+              return (
               <div key={label} style={{ marginBottom: 12 }}>
                 <div style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -61,19 +71,29 @@ export default function BillingPills() {
                 }}>
                   <span style={{ color: 'var(--mute)' }}>{label}限额</span>
                   <span className="font-mono" style={{ color: 'var(--body)' }}>
-                    {m.used} / {m.limit} 分钟
+                    {noCap ? <>{m.used} / {INF}</> : `${m.used} / ${m.limit}`} 分钟
                   </span>
                 </div>
                 <Progress
-                  percent={Math.round(m.used / m.limit * 100)}
+                  percent={noCap ? 100 : Math.round(m.used / m.limit * 100)}
                   showInfo={false}
                   size="small"
-                  strokeColor={m.used / m.limit > 0.8 ? '#f59e0b' : 'var(--accent)'}
+                  strokeColor={
+                    noCap
+                      ? { '0%': '#c7d2fe', '100%': '#a5b4fc' }   // 不限量：浅蓝满条，表"无界"
+                      : (m.used / m.limit > 0.8 ? '#f59e0b' : 'var(--accent)')
+                  }
                 />
               </div>
-            ))}
+              )
+            })}
             <div style={{ fontSize: 11, color: 'var(--mute)', lineHeight: 1.6 }}>
-              每日 04:00 / 每周一 04:00 / 每月 1 日 04:00 重置（UTC+8）
+              {unlimited
+                ? '分钟不限量 · 消耗照常记账'
+                : '每日 04:00 / 每周一 04:00 / 每月 1 日 04:00 重置（UTC+8）'}
+            </div>
+            <div style={{ marginTop: 6, textAlign: 'right' }}>
+              <a onClick={() => onOpenLedger?.('minute')} style={{ fontSize: 11 }}>消耗记录 →</a>
             </div>
           </div>
         }
@@ -93,6 +113,9 @@ export default function BillingPills() {
             高级功能货币 · 永不过期
             <div style={{ marginTop: 6 }}>
               <a onClick={() => openExchange('g2q')} style={{ fontSize: 12 }}>兑换量子波（1:20）→</a>
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <a onClick={() => onOpenLedger?.('gravity')} style={{ fontSize: 12 }}>消耗记录 →</a>
             </div>
           </div>
         }
@@ -128,11 +151,16 @@ export default function BillingPills() {
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <span style={{ fontSize: 11, color: 'var(--mute)' }}>
-                25:1 兑换引力波 · 本月还可兑 {data.exchange_month_cap - data.exchange_month_used} 次
+                {data.exchange_month_cap == null
+                  ? '25:1 兑换引力波 · 不限次'
+                  : `25:1 兑换引力波 · 本月还可兑 ${data.exchange_month_cap - data.exchange_month_used} 次`}
               </span>
               <Button size="small" type="primary" ghost onClick={() => openExchange('q2g')}>
                 兑换
               </Button>
+            </div>
+            <div style={{ marginTop: 6, textAlign: 'right' }}>
+              <a onClick={() => onOpenLedger?.('quantum')} style={{ fontSize: 11 }}>消耗记录 →</a>
             </div>
           </div>
         }
