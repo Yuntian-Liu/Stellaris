@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.9.1 Procyon'
+export const APP_VERSION = 'V0.9.2 Procyon'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-21'
@@ -27,6 +27,10 @@ export const CHANGELOG = [
       '管理后台上线：站点数据、用户、兑换码、订单，一页尽览（仅开发者可见）',
     ],
     patches: [
+      {
+        version: 'V0.9.2', date: '2026-07-21',
+        items: ['网站加载速度大幅提升：静态资源开启压缩，二次访问近乎秒开'],
+      },
       {
         version: 'V0.9.1', date: '2026-07-21',
         items: ['修复部署启动稳定性问题'],

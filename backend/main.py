@@ -150,9 +150,26 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.9.1-procyon",
+    version="0.9.2-procyon",
     lifespan=lifespan,
 )
+
+# gzip 压缩（V0.9.2：静态产物此前裸传 1MB+，跨境慢线下载 136s → 压缩后约 1/3）
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def static_cache_headers(request, call_next):
+    """静态缓存头（V0.9.2）：vite 产物文件名带内容 hash，可永久缓存；
+    index.html 不缓存（每次发版即时生效）"""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path == "/" or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 # CORS（前端开发时需要）
 app.add_middleware(
