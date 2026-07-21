@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.8.1 Capella'
+export const APP_VERSION = 'V0.8.2 Capella'
 
 /** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-21'
@@ -35,6 +35,13 @@ export const CHANGELOG = [
       '界面细节：标题栏常驻吸顶、会员专属徽章与头像框、二级界面转场更丝滑',
     ],
     patches: [
+      {
+        version: 'V0.8.2', date: '2026-07-21',
+        items: [
+          '试用期间会员页正确显示「试用中 · 到期时间」，开通会员后撒花欢迎不再缺席',
+          '规则明确：任何会员身份期间暂不可开通其他档位，到期恢复免费版后自由选择',
+        ],
+      },
       {
         version: 'V0.8.1', date: '2026-07-21',
         items: [

@@ -93,8 +93,8 @@ export default function MembershipCards({ billing }) {
   }
 
   const currentTier = billing?.tier
-  // 已开通付费档期间，其他付费档禁用（防误购覆盖；后端仍兜底发货防资损）
-  const hasPaid = ['stargazer', 'voyager', 'odyssey'].includes(currentTier)
+  // 任何会员身份（含试用）期间全部禁用开通；仅 free 状态可购买（碳碳定：升级走人工或到期再充）
+  const hasPaid = ['trial', 'stargazer', 'voyager', 'odyssey'].includes(currentTier)
   const expireText = billing?.expire_at
     ? `有效期至 ${new Date(billing.expire_at).getMonth() + 1} 月 ${new Date(billing.expire_at).getDate()} 日`
     : null
@@ -108,6 +108,8 @@ export default function MembershipCards({ billing }) {
       {TIERS.map(t => {
         const isCurrent = currentTier === t.key
         const crossTierBlocked = hasPaid && !isCurrent && !t.inviteOnly
+        // 试用中：Voyager 卡显示试用状态 + 主按钮变升级 CTA（试用→正式是转化主路径）
+        const isTrialCard = currentTier === 'trial' && t.key === 'voyager'
         return (
           <div key={t.key} className="member-card" style={{
             borderRadius: 'var(--r-card)', overflow: 'hidden',
@@ -180,7 +182,12 @@ export default function MembershipCards({ billing }) {
             {/* 底部按钮（试用链接在按钮上方；无试用的档补同高占位，保证四卡按钮对齐） */}
             <div style={{ padding: '0 18px 16px' }}>
               <div style={{ minHeight: 22, marginBottom: 6, textAlign: 'center' }}>
-                {t.trial && !isCurrent && !hasPaid && (
+                {isTrialCard && (
+                  <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}>
+                    试用中{expireText ? ` · ${expireText.replace('有效期至', '')} 到期` : ''}
+                  </span>
+                )}
+                {t.trial && !isCurrent && !hasPaid && currentTier !== 'trial' && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     <span
                       onClick={() => setTrialOpen(true)}
@@ -207,6 +214,10 @@ export default function MembershipCards({ billing }) {
                 <Button block disabled style={{ color: 'var(--mute)' }}>仅邀请</Button>
               ) : crossTierBlocked ? (
                 <Button block disabled style={{ color: 'var(--mute)' }}>已开通其他档位</Button>
+              ) : isTrialCard ? (
+                <Button block disabled style={{ color: 'var(--mute)' }}>
+                  试用中 · 到期后可开通
+                </Button>
               ) : (
                 <Button
                   block type="primary"

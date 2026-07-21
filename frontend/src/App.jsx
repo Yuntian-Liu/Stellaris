@@ -76,7 +76,7 @@ export default function App() {
     const prev = localStorage.getItem('stellaris_tier')
     localStorage.setItem('stellaris_tier', tier)
     if (prev && prev !== tier
-        && ['stargazer', 'voyager', 'odyssey', 'stella'].includes(tier)) {
+        && ['trial', 'stargazer', 'voyager', 'odyssey', 'stella'].includes(tier)) {
       setCelebrateTier(tier)
     }
   }, [balances?.tier])

@@ -86,8 +86,8 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
 
   const openAgreement = (type) => { setAgreementType(type); setAgreementOpen(true) }
 
-  // 会员信息速览（头像区 + 入口行共用）
-  const paidTiers = ['stargazer', 'voyager', 'odyssey']
+  // 会员信息速览（头像区 + 入口行共用）；trial 也显示到期时间
+  const paidTiers = ['trial', 'stargazer', 'voyager', 'odyssey']
   const isPaid = paidTiers.includes(billing?.tier)
   const isStella = billing?.tier === 'stella'
   const expireDate = billing?.expire_at ? new Date(billing.expire_at) : null
