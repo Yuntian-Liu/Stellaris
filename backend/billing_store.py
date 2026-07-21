@@ -66,6 +66,13 @@ BILLING_TIERS = {
         "quantum_weekly_gift": 5000, "gravity_monthly_gift": 500,
         "exchange_cap": 50, "history_hours": 720, "premium": True,
     },
+    # ── 试用档（¥5 / 7 天体验舱）：分钟大池子 280（日/周不限、月 280 封顶），
+    # 量子波一次性 1100，引力波 35。到期自动回 free，升级正式档无缝覆盖 ──
+    "trial": {
+        "minutes_day": None, "minutes_week": None, "minutes_month": 280,
+        "quantum_weekly_gift": 1100, "gravity_monthly_gift": 35,
+        "exchange_cap": 5, "history_hours": 168, "premium": True,
+    },
     # ── 邀请制（Stella · 启明）：日/周不限，月线 6000 保险丝；历史永久 ──
     "stella": {
         "minutes_day": None, "minutes_week": None, "minutes_month": 6000,
@@ -87,6 +94,7 @@ BILLING_TIERS = {
 # 档位展示名（英文主名 / 中文副标），summary 路由下发前端
 TIER_DISPLAY = {
     "free": ("免费版", ""),
+    "trial": ("Trial", "体验舱"),
     "stargazer": ("Stargazer", "观星者"),
     "voyager": ("Voyager", "远航者"),
     "odyssey": ("Odyssey", "奥德赛"),
@@ -295,6 +303,13 @@ async def grant_membership(uid: int, tier_key: str, days: int | None) -> dict:
         if gift:
             row.gravity += gift
             await _record(session, uid, "membership_gift", "gravity", gift, row.gravity)
+        # 开通即补齐量子波赠送钱包到新档周赠量（否则要等下周一才按新档重发，体验断层）
+        weekly = BILLING_TIERS[tier_key].get("quantum_weekly_gift", 0)
+        if weekly > row.quantum_gift:
+            topup = weekly - row.quantum_gift
+            row.quantum_gift = weekly
+            await _record(session, uid, "membership_gift", "quantum", topup,
+                          row.quantum_gift + row.quantum_perm)
         await session.commit()
         return {"tier": tier_key, "expire_at": _iso_utc(row.membership_expire_at)}
 

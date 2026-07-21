@@ -50,7 +50,18 @@ export default function App() {
     const load = () => api.getBilling().then(setBalances).catch(() => {})
     load()
     window.addEventListener('stellaris:billing-changed', load)
-    return () => window.removeEventListener('stellaris:billing-changed', load)
+    // 站外支付（爱发电）回页：重新拉余额 + 广播（三处显示同步），触发档位跃迁欢迎弹窗
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        load()
+        window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('stellaris:billing-changed', load)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [user])
 
   // 离开设置页即复位会员二级界面态（防展开态泄漏到其他页面：品牌点击/历史回看等路径）
@@ -168,7 +179,7 @@ export default function App() {
                   style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
                 />
               </Popover>
-              <BillingPills onOpenLedger={(c) => { setLedgerInit(c); setPage('settings') }} />
+              <BillingPills onOpenLedger={(c) => { setLedgerInit(c); setMemberOpen(false); setPage('settings') }} />
               <Dropdown
                 open={dropOpen}
                 onOpenChange={setDropOpen}

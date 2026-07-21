@@ -136,7 +136,7 @@ export default function BillingPills({ onOpenLedger }) {
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               fontSize: 12, marginBottom: 8,
             }}>
-              <span style={{ color: 'var(--mute)' }}>本周赠送（周一 04:00 清零）</span>
+              <span style={{ color: 'var(--mute)' }}>本周赠送（周一 04:00 重发）</span>
               <span className="font-mono" style={{ color: 'var(--body)' }}>{quantum_gift}</span>
             </div>
             <div style={{

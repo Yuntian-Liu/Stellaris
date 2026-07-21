@@ -7,6 +7,10 @@ export const TIER_META = {
     label: '免费版', cn: '',
     color: '#8a8f99', bg: 'var(--surface-2)', ring: null,
   },
+  trial: {
+    label: 'Trial', cn: '体验舱',
+    color: '#7c3aed', bg: '#f3e8ff', ring: '#c4b5fd',
+  },
   stargazer: {
     label: 'Stargazer', cn: '观星者',
     color: '#4f46e5', bg: '#eef2ff', ring: '#818cf8',
