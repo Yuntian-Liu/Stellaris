@@ -31,6 +31,17 @@ async def get_current_user(
     return user
 
 
+async def get_admin_user(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """admin 守卫：未登录/凭证无效 401（同 get_current_user），已登录但非 is_admin → 403。"""
+    user = await get_current_user(authorization, db)
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="无权限")
+    return user
+
+
 async def get_current_user_optional(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),

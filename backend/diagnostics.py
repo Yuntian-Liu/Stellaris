@@ -116,6 +116,7 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
             u = (await session.execute(
                 select(AuthUser).where(AuthUser.uid == uid))).scalar_one_or_none()
             user_ctx["is_admin"] = bool(u and u.is_admin)
+            user_ctx["admin_pin_set"] = bool(u and u.admin_pin_hash)  # 管理密码已设置（V0.9.0）
             b = await session.get(UserBilling, uid)
             if b:
                 tier_key = await _effective_tier_key(session, b)

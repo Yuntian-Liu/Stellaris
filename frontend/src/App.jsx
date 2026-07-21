@@ -5,15 +5,17 @@
  *   Apple 极简克制 + Claude 衬线编辑感 + Vercel 开发者精度
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal } from 'antd'
-import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined } from '@ant-design/icons'
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react'
+import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal, Spin } from 'antd'
+import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined, DashboardOutlined } from '@ant-design/icons'
 import api from './hooks/api'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
 import AuthPage from './pages/AuthPage'
 import SettingsView from './pages/SettingsView'
+// 管理看板（含 recharts）代码分割：仅 admin 点进看板时才加载，不进主包
+const AdminView = lazy(() => import('./pages/AdminView'))
 import UpdateModals from './components/UpdateModals'
 import AgreementModal from './components/AgreementModal'
 import MeteorShower from './components/MeteorShower'
@@ -39,6 +41,7 @@ export default function App() {
   const [balances, setBalances] = useState(null)    // 头像下拉双货币余额
   const [dropOpen, setDropOpen] = useState(false)   // 头像下拉开合（点菜单后需手动收起）
   const [memberOpen, setMemberOpen] = useState(false) // 会员权益二级界面（标题栏随其展开）
+  const adminOpen = page === 'admin' // 管理看板独立页面（派生态，page 变化即自动复位）
   const [ledgerInit, setLedgerInit] = useState(false) // 余额区「消耗记录 →」下钻设置页
   const [celebrateTier, setCelebrateTier] = useState(null) // 会员开通欢迎弹窗（档位跃迁检测）
   const clickRef = useRef({ count: 0, timer: null })
@@ -68,6 +71,11 @@ export default function App() {
   useEffect(() => {
     if (page !== 'settings') setMemberOpen(false)
   }, [page])
+
+  // 管理看板防呆：非 admin 进入 admin 页（如登录态切换）弹回首页
+  useEffect(() => {
+    if (page === 'admin' && user && !user.is_admin) setPage('home')
+  }, [page, user])
 
   // 会员开通检测：爱发电付款在站外完成，webhook 发货后用户回站时档位跃迁 → 撒花欢迎
   useEffect(() => {
@@ -131,7 +139,7 @@ export default function App() {
         borderBottom: '1px solid var(--hairline)',
       }}>
       <div style={{
-        maxWidth: (chatOpen || memberOpen) ? 1312 : 760,
+        maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
         padding: '14px 24px 12px',
@@ -237,6 +245,14 @@ export default function App() {
                       </span>
                     </div>
                     <div style={{ borderTop: '1px solid var(--hairline)' }}>
+                      {user.is_admin && (
+                        <div
+                          className="dropdown-item"
+                          onClick={() => { setDropOpen(false); setMemberOpen(false); setPage('admin') }}
+                        >
+                          <DashboardOutlined style={{ marginRight: 8 }} />管理后台
+                        </div>
+                      )}
                       <div
                         className="dropdown-item"
                         onClick={() => { setDropOpen(false); setPage('settings') }}
@@ -277,7 +293,7 @@ export default function App() {
       </div>
 
       <Content style={{
-        maxWidth: (chatOpen || memberOpen) ? 1312 : 760,
+        maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
         width: '100%',
@@ -301,6 +317,16 @@ export default function App() {
             onConsumeInit={() => setLedgerInit(false)}
             onOpenHistory={() => setHistoryOpen(true)}
           />
+        )}
+        {/* 管理看板（仅 is_admin 可达；渲染守卫双保险，非 admin 直接改 state 也看不到） */}
+        {page === 'admin' && user?.is_admin && (
+          <Suspense fallback={
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+              <Spin />
+            </div>
+          }>
+            <AdminView onBack={() => setPage('home')} />
+          </Suspense>
         )}
         {page === 'progress' && taskId && (
           <ProgressPage

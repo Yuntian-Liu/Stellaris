@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import (FastAPI, UploadFile, File, HTTPException, BackgroundTasks,
@@ -46,7 +47,7 @@ from pipeline.export import (
 
 from database import init_db, get_db
 from auth.router import router as auth_router
-from auth.dependencies import get_current_user, get_current_user_optional
+from auth.dependencies import get_current_user, get_current_user_optional, get_admin_user
 from auth.models import User
 from auth.utils import decode_access_token   # R1：下载路由 ?token= 解析复用
 from stats_store import incr_stats, get_stats
@@ -57,6 +58,11 @@ from billing_store import (
     check_and_consume_anon, refund_anon_minutes, exchange as billing_exchange,
     InsufficientError, SEG_TOKENS_PER_MIN,
     retention_hours_map, get_ledger, grant_membership,
+)
+from admin_store import (
+    AdminError, PinError, get_overview, get_user_usage, get_trends, search_users,
+    adjust_balance, revoke_membership, list_codes, list_orders, fulfill_order,
+    recheck_order, set_pin, pin_status, verify_admin_pin,
 )
 
 
@@ -144,7 +150,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.8.3-capella",
+    version="0.9.0-procyon",
     lifespan=lifespan,
 )
 
@@ -943,6 +949,222 @@ async def redeem_route(req: Request, current_user: User = Depends(get_current_us
     except RedeemError as e:
         raise HTTPException(status_code=409, detail=e.detail)
     return result
+
+
+# ===== 管理看板（V0.9.0，全部 get_admin_user 守卫：非 admin 403）=====
+
+async def _check_admin_pin(current_user: User, body: dict) -> None:
+    """敏感操作 PIN 二次验证：未设 409 / 错误 403 / 锁定 423"""
+    try:
+        await verify_admin_pin(current_user.uid, str(body.get("pin", "") or "").strip())
+    except PinError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/admin/pin/set")
+async def admin_set_pin(
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """设置/更新管理 PIN {pin}：6 位纯数字，bcrypt 哈希落库"""
+    body = await req.json()
+    try:
+        await set_pin(current_user.uid, str(body.get("pin", "") or "").strip())
+    except AdminError as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+    return {"pin_set": True}
+
+
+@app.get("/api/admin/pin/status")
+async def admin_pin_status(current_user: User = Depends(get_admin_user)):
+    """PIN 是否已设置（前端决定弹「设置」还是「验证」）"""
+    return {"pin_set": await pin_status(current_user.uid)}
+
+
+@app.get("/api/admin/trends")
+async def admin_trends(
+    days: int = 30,
+    current_user: User = Depends(get_admin_user),
+):
+    """趋势图表数据：近 N 天每日消耗/收入/新增注册（UTC+8 04:00 界，缺天补零）"""
+    return await get_trends(days)
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(current_user: User = Depends(get_admin_user)):
+    """看板统计卡数据（口径见 admin_store.get_overview docstring）"""
+    # 内存中未完成任务无 task_records 记录，补入计数（已完成的有记录，不重复计）
+    active = sum(1 for t in tasks.values() if t.get("status") != TaskStatus.COMPLETED)
+    return await get_overview(active)
+
+
+@app.get("/api/admin/users")
+async def admin_search_users(
+    query: str = "",
+    current_user: User = Depends(get_admin_user),
+):
+    """用户搜索：email 模糊 或 uid 精确，返回计费摘要（limit 20）"""
+    return {"items": await search_users(query)}
+
+
+@app.post("/api/admin/user/adjust")
+async def admin_adjust_balance(
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """调余额 {uid, quantum_delta?, gravity_delta?}：±调整（下限 0），流水记 admin_adjust。
+    敏感操作：body 须带 pin（PIN 二次验证）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    uid = int(body.get("uid", 0) or 0)
+    quantum_delta = int(body.get("quantum_delta", 0) or 0)
+    gravity_delta = int(body.get("gravity_delta", 0) or 0)
+    if not uid:
+        raise HTTPException(status_code=400, detail="缺少 uid")
+    if not quantum_delta and not gravity_delta:
+        raise HTTPException(status_code=400, detail="调整量不能全为 0")
+    try:
+        return await adjust_balance(uid, quantum_delta, gravity_delta)
+    except AdminError as e:
+        raise HTTPException(status_code=404, detail=e.detail)
+
+
+@app.get("/api/admin/user/{uid}/usage")
+async def admin_user_usage(
+    uid: int,
+    current_user: User = Depends(get_admin_user),
+):
+    """单用户用量详情：今日/累计三货币消耗 + 功能使用次数 + 最近 20 条流水 + 累计统计"""
+    try:
+        return await get_user_usage(uid)
+    except AdminError as e:
+        raise HTTPException(status_code=404, detail=e.detail)
+
+
+@app.post("/api/admin/user/tier")
+async def admin_set_tier(
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """调档位 {uid, tier, days?}：tier="free" = 收回；其余复用 grant_membership
+    （days=None 为 Stella 永久档，非 stella 必须传正整数天数）。
+    敏感操作：body 须带 pin（PIN 二次验证）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    uid = int(body.get("uid", 0) or 0)
+    tier = str(body.get("tier", "")).strip()
+    days = body.get("days")
+    days = int(days) if days not in (None, "") else None
+    if not uid or not tier:
+        raise HTTPException(status_code=400, detail="缺少 uid 或 tier")
+    if tier == "free":
+        try:
+            return await revoke_membership(uid)
+        except AdminError as e:
+            raise HTTPException(status_code=404, detail=e.detail)
+    if tier not in ("trial", "stargazer", "voyager", "odyssey", "stella"):
+        raise HTTPException(status_code=400, detail=f"非法的会员档位：{tier}")
+    if tier != "stella" and (days is None or days <= 0):
+        raise HTTPException(status_code=400, detail="非 Stella 档必须传正整数天数")
+    try:
+        return await grant_membership(uid, tier, days)
+    except InsufficientError as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+
+
+@app.get("/api/admin/codes")
+async def admin_list_codes(current_user: User = Depends(get_admin_user)):
+    """兑换码列表（时间倒序，含用量/使用者/过期/备注）"""
+    return {"items": await list_codes()}
+
+
+@app.post("/api/admin/codes")
+async def admin_create_codes(
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """生成兑换码 {tier, days?, count, custom_code?, note?, expires_at?}
+    Stella 邀请码 = tier stella + days 空 + custom_code 自定义内容。
+    敏感操作：body 须带 pin（PIN 二次验证）"""
+    from redeem_store import create_code
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    tier = str(body.get("tier", "")).strip()
+    days = body.get("days")
+    days = int(days) if days not in (None, "") else None
+    count = int(body.get("count", 1) or 1)
+    custom_code = (body.get("custom_code") or "").strip() or None
+    note = str(body.get("note", "") or "")[:64]
+    expires_raw = (body.get("expires_at") or "").strip()
+    if tier not in ("trial", "stargazer", "voyager", "odyssey", "stella"):
+        raise HTTPException(status_code=400, detail=f"非法的会员档位：{tier}")
+    if tier != "stella" and (days is None or days <= 0):
+        raise HTTPException(status_code=400, detail="非 Stella 档必须传正整数天数")
+    if not 1 <= count <= 50:
+        raise HTTPException(status_code=400, detail="数量须在 1~50 之间")
+    if custom_code and count != 1:
+        raise HTTPException(status_code=400, detail="自定义码一次只能生成一个")
+    expires_at = None
+    if expires_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="expires_at 格式错误（ISO 8601）")
+    codes = []
+    try:
+        for _ in range(count):
+            codes.append(await create_code(tier, days, note=note, custom_code=custom_code,
+                                           expires_at=expires_at))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    logger.info("[Admin] 生成兑换码: tier=%s days=%s count=%d operator=%s",
+                tier, days, count, current_user.uid)
+    return {"codes": codes}
+
+
+@app.get("/api/admin/orders")
+async def admin_list_orders(
+    status: str | None = None,
+    current_user: User = Depends(get_admin_user),
+):
+    """订单列表（默认全部；status 可筛 processed/grant_failed/unmapped_user 等）"""
+    return {"items": await list_orders(status or None)}
+
+
+@app.post("/api/admin/orders/{out_trade_no}/fulfill")
+async def admin_fulfill_order(
+    out_trade_no: str,
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """人工补发 {uid, tier, days}：开通会员 + 订单状态改 processed。
+    敏感操作：body 须带 pin（PIN 二次验证）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    uid = int(body.get("uid", 0) or 0)
+    tier = str(body.get("tier", "")).strip()
+    days = body.get("days")
+    days = int(days) if days not in (None, "") else None
+    if not uid or not tier:
+        raise HTTPException(status_code=400, detail="缺少 uid 或 tier")
+    try:
+        return await fulfill_order(out_trade_no, uid, tier, days)
+    except AdminError as e:
+        raise HTTPException(status_code=404, detail=e.detail)
+    except InsufficientError as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+
+
+@app.post("/api/admin/orders/{out_trade_no}/recheck")
+async def admin_recheck_order(
+    out_trade_no: str,
+    current_user: User = Depends(get_admin_user),
+):
+    """query-order 反查爱发电真实状态（网络/平台错误返回 502 友好信息，不 500）"""
+    try:
+        return await recheck_order(out_trade_no)
+    except AdminError as e:
+        raise HTTPException(status_code=502, detail=e.detail)
 
 
 # ===== 核心管线（后台执行）=====

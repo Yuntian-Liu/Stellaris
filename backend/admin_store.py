@@ -1,0 +1,510 @@
+"""
+管理看板 — 查询与动作助手（仅 /api/admin/* 调用，路由层已做 get_admin_user 守卫）
+
+口径说明：
+- "今日"边界与计费一致：UTC+8 凌晨 04:00（_period_keys 的 day_key）
+- tokens 无精确流水字段：累计取 user_stats.tokens_used 求和，流水笔数取 billing_ledger 行数
+- 收入 = afdian_orders 中 processed/donation 状态的 total_amount（字符串）转 float 求和，保留 2 位
+"""
+import asyncio
+import json
+import logging
+import re
+import time
+from datetime import datetime, timedelta
+
+from sqlalchemy import case, func, select
+
+from database import async_session
+from auth.models import User
+from auth.utils import hash_password, verify_password
+from billing_store import (
+    UserBilling, BillingLedger, _get_or_create, _record, _iso_utc,
+    _period_keys, _TZ_CN, grant_membership,
+)
+from redeem_store import RedeemCode
+from afdian_store import AfdianOrder, api_sign, update_order_status
+from stats_store import UserStats, get_stats
+from history_store import TaskRecord
+
+logger = logging.getLogger(__name__)
+
+# 成本估算单价（元/单位，粗口径仅供运营参考，非精确账单）：
+# 分钟 = ASR 时长折算 0.0083；量子波 = 100 tokens ≈ 0.0008；引力波 = 500 tokens ≈ 0.004
+COST_PER_MINUTE = 0.0083
+COST_PER_QUANTUM = 0.0008
+COST_PER_GRAVITY = 0.004
+
+_CURRENCIES = ("minute", "quantum", "gravity")
+
+
+class AdminError(Exception):
+    """管理操作失败。detail 给前端展示"""
+    def __init__(self, detail: str):
+        self.detail = detail
+        super().__init__(detail)
+
+
+class PinError(AdminError):
+    """PIN 校验失败。status_code：409 未设置 / 403 错误 / 423 锁定"""
+    def __init__(self, detail: str, status_code: int):
+        super().__init__(detail)
+        self.status_code = status_code
+
+
+def _today_start_utc() -> datetime:
+    """今日起点（naive UTC）：day_key 日 04:00（UTC+8）= day_key 00:00 UTC - 4h"""
+    day_key, _, _ = _period_keys()
+    return datetime.strptime(day_key, "%Y-%m-%d") - timedelta(hours=4)
+
+
+def _week_start_utc() -> datetime:
+    """本周起点（naive UTC）：周一 04:00（UTC+8），与"今日"同界"""
+    shifted = datetime.now(_TZ_CN) - timedelta(hours=4)
+    monday = datetime(shifted.year, shifted.month, shifted.day) - timedelta(days=shifted.weekday())
+    return monday - timedelta(hours=4)
+
+
+def _est_cost(minute: int, quantum: int, gravity: int) -> float:
+    """估算成本（元，保留 2 位）：按 COST_PER_* 单价折算，粗口径"""
+    return round(minute * COST_PER_MINUTE + quantum * COST_PER_QUANTUM
+                 + gravity * COST_PER_GRAVITY, 2)
+
+
+async def _consumption(session, since: datetime | None = None) -> dict[str, int]:
+    """三货币消耗量（billing_ledger 中 amount<0 的绝对值求和；since 限定起点）"""
+    out = {}
+    for cur in _CURRENCIES:
+        stmt = select(func.coalesce(func.sum(-BillingLedger.amount), 0)).where(
+            BillingLedger.currency == cur, BillingLedger.amount < 0,
+        )
+        if since is not None:
+            stmt = stmt.where(BillingLedger.created_at >= since)
+        out[cur] = (await session.execute(stmt)).scalar_one()
+    return out
+
+
+# ===== 看板统计 =====
+
+async def get_overview(active_tasks: int = 0) -> dict:
+    """统计卡数据。active_tasks：内存中未完成任务数（无 task_records 记录，补入今日/累计）"""
+    today_start = _today_start_utc()
+    week_start = _week_start_utc()
+    async with async_session() as session:
+        users_total = (await session.execute(select(func.count(User.id)))).scalar_one()
+        users_today = (await session.execute(
+            select(func.count(User.id)).where(User.created_at >= today_start)
+        )).scalar_one()
+        users_week = (await session.execute(
+            select(func.count(User.id)).where(User.created_at >= week_start)
+        )).scalar_one()
+        admin_users = (await session.execute(
+            select(func.count(User.id)).where(User.is_admin.is_(True))
+        )).scalar_one()
+        tasks_total = (await session.execute(select(func.count(TaskRecord.task_id)))).scalar_one()
+        tasks_today = (await session.execute(
+            select(func.count(TaskRecord.task_id)).where(TaskRecord.created_at >= today_start)
+        )).scalar_one()
+        ledger_total = (await session.execute(select(func.count(BillingLedger.id)))).scalar_one()
+        ledger_today = (await session.execute(
+            select(func.count(BillingLedger.id)).where(BillingLedger.created_at >= today_start)
+        )).scalar_one()
+        tokens_total = (await session.execute(
+            select(func.coalesce(func.sum(UserStats.tokens_used), 0))
+        )).scalar_one()
+        # 今日活跃：今日有流水（含消耗与赠送）的去重用户数
+        active_users_today = (await session.execute(
+            select(func.count(func.distinct(BillingLedger.user_uid)))
+            .where(BillingLedger.created_at >= today_start)
+        )).scalar_one()
+        consumed_today = await _consumption(session, today_start)
+        consumed_total = await _consumption(session)
+        # 会员分布：user_billing 原始档位计数（admin 档靠 users.is_admin 解析，单列）
+        tier_rows = (await session.execute(
+            select(UserBilling.membership_tier, func.count())
+            .group_by(UserBilling.membership_tier)
+        )).all()
+        # 收入：total_amount 是字符串，转 float 求和
+        rows = (await session.execute(
+            select(AfdianOrder.status, AfdianOrder.total_amount)
+        )).all()
+    revenue = round(sum(float(amount or 0) for status, amount in rows
+                        if status in ("processed", "donation")), 2)
+    paid_orders = sum(1 for status, _ in rows if status in ("processed", "donation"))
+    status_counts: dict[str, int] = {}
+    for status, _ in rows:
+        status_counts[status] = status_counts.get(status, 0) + 1
+    cost_today = _est_cost(consumed_today["minute"], consumed_today["quantum"],
+                           consumed_today["gravity"])
+    cost_total = _est_cost(consumed_total["minute"], consumed_total["quantum"],
+                           consumed_total["gravity"])
+    return {
+        "users_total": users_total,
+        "users_today": users_today,
+        "users_week": users_week,
+        "admin_users": admin_users,
+        "tasks_today": tasks_today + active_tasks,
+        "tasks_total": tasks_total + active_tasks,
+        "ledger_today": ledger_today,
+        "ledger_total": ledger_total,
+        "tokens_total": tokens_total,
+        "active_users_today": active_users_today,
+        "consumed_today": consumed_today,
+        "consumed_total": consumed_total,
+        "cost_today": cost_today,
+        "cost_total": cost_total,
+        "margin": round(revenue - cost_total, 2),   # 毛利 = 收入 - 估算成本（累计，估算口径）
+        "tier_distribution": {tier: c for tier, c in tier_rows},
+        "revenue": revenue,
+        "paid_orders": paid_orders,
+        "order_status_counts": status_counts,
+    }
+
+
+async def get_user_usage(uid: int) -> dict:
+    """单用户用量详情：今日/累计三货币消耗 + 功能使用次数 + 最近 20 条流水 + user_stats"""
+    today_start = _today_start_utc()
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        if not user:
+            raise AdminError(f"用户不存在：uid={uid}")
+        base = select(func.coalesce(func.sum(-BillingLedger.amount), 0)).where(
+            BillingLedger.user_uid == uid, BillingLedger.amount < 0,
+        )
+        consumed_today = {}
+        consumed_total = {}
+        for cur in _CURRENCIES:
+            consumed_total[cur] = (await session.execute(
+                base.where(BillingLedger.currency == cur))).scalar_one()
+            consumed_today[cur] = (await session.execute(
+                base.where(BillingLedger.currency == cur,
+                           BillingLedger.created_at >= today_start))).scalar_one()
+        # 功能使用次数（feature 原样返回，前端做展示名映射）
+        feature_rows = (await session.execute(
+            select(BillingLedger.feature, func.count())
+            .where(BillingLedger.user_uid == uid)
+            .group_by(BillingLedger.feature)
+        )).all()
+        recent = (await session.execute(
+            select(BillingLedger)
+            .where(BillingLedger.user_uid == uid)
+            .order_by(BillingLedger.created_at.desc(), BillingLedger.id.desc())
+            .limit(20)
+        )).scalars().all()
+    return {
+        "uid": uid,
+        "consumed_today": consumed_today,
+        "consumed_total": consumed_total,
+        "feature_counts": {f: c for f, c in feature_rows},
+        "recent_ledger": [
+            {
+                "id": r.id,
+                "feature": r.feature,
+                "currency": r.currency,
+                "amount": r.amount,
+                "from_gift": r.from_gift,
+                "from_perm": r.from_perm,
+                "balance_after": r.balance_after,
+                "created_at": _iso_utc(r.created_at),
+            }
+            for r in recent
+        ],
+        "stats": await get_stats(uid),
+    }
+
+
+# ===== 用户管理 =====
+
+async def search_users(q: str, limit: int = 20) -> list[dict]:
+    """按 email 模糊 或 uid 精确搜索，返回用户 + 计费账户摘要"""
+    q = q.strip()
+    if not q:
+        return []
+    async with async_session() as session:
+        if q.isdigit():
+            stmt = select(User).where(User.uid == int(q))
+        else:
+            stmt = select(User).where(User.email.ilike(f"%{q}%"))
+        users = (await session.execute(stmt.limit(limit))).scalars().all()
+        uids = [u.uid for u in users]
+        billings = {}
+        if uids:
+            rows = (await session.execute(
+                select(UserBilling).where(UserBilling.user_uid.in_(uids))
+            )).scalars()
+            billings = {r.user_uid: r for r in rows}
+        return [
+            {
+                "uid": u.uid,
+                "email": u.email,
+                "nickname": u.nickname,
+                "is_admin": u.is_admin,
+                "tier": (b.membership_tier if b else "free"),
+                "expire_at": _iso_utc(b.membership_expire_at) if b else None,
+                "quantum_gift": b.quantum_gift if b else 0,
+                "quantum_perm": b.quantum_perm if b else 0,
+                "gravity": b.gravity if b else 0,
+                "minutes_day": b.minutes_day if b else 0,
+                "minutes_week": b.minutes_week if b else 0,
+                "minutes_month": b.minutes_month if b else 0,
+                "created_at": _iso_utc(u.created_at),
+            }
+            for u in users
+            for b in [billings.get(u.uid)]
+        ]
+
+
+async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0) -> dict:
+    """余额 ± 调整（下限 0，不倒欠；量子波调活动钱包——赠送钱包每周清零留不住）。
+    流水记 feature="admin_adjust"，amount 为实际生效量（下限截断后与请求量可能不同）。"""
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        if not user:
+            raise AdminError(f"用户不存在：uid={uid}")
+        row = await _get_or_create(session, uid)
+        applied = {"quantum": 0, "gravity": 0}
+        if quantum_delta:
+            new_perm = max(0, row.quantum_perm + quantum_delta)
+            actual = new_perm - row.quantum_perm
+            row.quantum_perm = new_perm
+            if actual:
+                await _record(session, uid, "admin_adjust", "quantum", actual,
+                              row.quantum_gift + row.quantum_perm,
+                              from_gift=0, from_perm=actual)
+            applied["quantum"] = actual
+        if gravity_delta:
+            new_gravity = max(0, row.gravity + gravity_delta)
+            actual = new_gravity - row.gravity
+            row.gravity = new_gravity
+            if actual:
+                await _record(session, uid, "admin_adjust", "gravity", actual, row.gravity)
+            applied["gravity"] = actual
+        await session.commit()
+        logger.info("[Admin] 余额调整: uid=%s quantum=%+d gravity=%+d",
+                    uid, applied["quantum"], applied["gravity"])
+        return {
+            "uid": uid,
+            "applied": applied,
+            "quantum_gift": row.quantum_gift,
+            "quantum_perm": row.quantum_perm,
+            "gravity": row.gravity,
+        }
+
+
+async def revoke_membership(uid: int) -> dict:
+    """收回档位：tier 置 free，到期/赠礼时间置空（赠送的货币不追回）"""
+    async with async_session() as session:
+        row = await session.get(UserBilling, uid)
+        if not row:
+            raise AdminError("该用户无计费账户")
+        row.membership_tier = "free"
+        row.membership_expire_at = None
+        row.gravity_grant_at = None
+        await session.commit()
+    logger.info("[Admin] 收回档位: uid=%s", uid)
+    return {"uid": uid, "tier": "free", "expire_at": None}
+
+
+# ===== 兑换码 =====
+
+async def list_codes(limit: int = 200) -> list[dict]:
+    """兑换码全量（时间倒序）"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(RedeemCode).order_by(RedeemCode.created_at.desc()).limit(limit)
+        )
+        return [
+            {
+                "code": r.code,
+                "tier": r.tier,
+                "days": r.days,
+                "max_uses": r.max_uses,
+                "use_count": r.use_count,
+                "used_by": r.used_by,
+                "used_at": _iso_utc(r.used_at),
+                "expires_at": _iso_utc(r.expires_at),
+                "note": r.note,
+                "created_at": _iso_utc(r.created_at),
+            }
+            for r in result.scalars()
+        ]
+
+
+# ===== 订单 =====
+
+async def list_orders(status: str | None = None, limit: int = 200) -> list[dict]:
+    """订单列表（时间倒序；status 可筛选 processed/grant_failed/unmapped_user 等）"""
+    async with async_session() as session:
+        stmt = select(AfdianOrder)
+        if status:
+            stmt = stmt.where(AfdianOrder.status == status)
+        result = await session.execute(
+            stmt.order_by(AfdianOrder.created_at.desc()).limit(limit)
+        )
+        return [
+            {
+                "out_trade_no": r.out_trade_no,
+                "user_uid": r.user_uid,
+                "plan_id": r.plan_id,
+                "total_amount": r.total_amount,
+                "status": r.status,
+                "created_at": _iso_utc(r.created_at),
+            }
+            for r in result.scalars()
+        ]
+
+
+async def fulfill_order(out_trade_no: str, uid: int, tier: str, days: int | None) -> dict:
+    """人工补发：开通会员 + 订单状态改 processed。档位非法由 grant_membership 抛错（路由层转 400）"""
+    async with async_session() as session:
+        order = await session.get(AfdianOrder, out_trade_no)
+        if not order:
+            raise AdminError(f"订单不存在：{out_trade_no}")
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        if not user:
+            raise AdminError(f"用户不存在：uid={uid}")
+    result = await grant_membership(uid, tier, days)
+    await update_order_status(out_trade_no, "processed")
+    logger.info("[Admin] 订单补发: order=%s uid=%s tier=%s days=%s",
+                out_trade_no, uid, tier, days)
+    return result
+
+
+async def recheck_order(out_trade_no: str) -> dict:
+    """query-order 反查爱发电侧真实状态。网络失败/平台报错 → AdminError（路由层转 502，不 500）"""
+    import httpx
+    from config import AFDIAN_USER_ID, AFDIAN_API_TOKEN
+    if not AFDIAN_USER_ID or not AFDIAN_API_TOKEN:
+        raise AdminError("爱发电 API 凭证未配置（AFDIAN_USER_ID / AFDIAN_API_TOKEN）")
+    params = json.dumps({"out_trade_no": out_trade_no}, separators=(",", ":"))
+    ts = int(time.time())
+    body = {
+        "user_id": AFDIAN_USER_ID,
+        "params": params,
+        "ts": ts,
+        "sign": api_sign(params, ts),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post("https://afdian.com/api/open/query-order", json=body)
+    except httpx.HTTPError as e:
+        raise AdminError(f"爱发电 API 请求失败：{e}")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise AdminError(f"爱发电 API 返回非 JSON（HTTP {resp.status_code}）")
+    if data.get("ec") != 200:
+        raise AdminError(f"爱发电 API 错误：{data.get('em') or data}")
+    payload = data.get("data") or {}
+    return {
+        "orders": payload.get("list") or [],
+        "total_count": payload.get("total_count", 0),
+    }
+
+
+# ===== 趋势图表（按天聚合，UTC+8 04:00 界，缺天补零）=====
+
+async def get_trends(days: int = 30) -> dict:
+    """近 N 天趋势：每日消耗（分钟 / tokens=量子波×100+引力波×500，amount<0 绝对值）、
+    每日收入（processed/donation 金额）、每日新增注册。date 为本地日（created_at +4h 取日期）。"""
+    days = min(max(1, days), 90)
+    today_start = _today_start_utc()
+    start = today_start - timedelta(days=days - 1)
+    # 日期轴按 day_key 生成：today_start 是边界时刻（昨日 20:00 UTC），+4h 才是当前日
+    day0 = (today_start + timedelta(hours=4)).date()
+    ledger_day = func.date(BillingLedger.created_at, "+4 hours")
+    order_day = func.date(AfdianOrder.created_at, "+4 hours")
+    user_day = func.date(User.created_at, "+4 hours")
+    async with async_session() as session:
+        minute_rows = (await session.execute(
+            select(ledger_day, func.coalesce(func.sum(-BillingLedger.amount), 0))
+            .where(BillingLedger.currency == "minute", BillingLedger.amount < 0,
+                   BillingLedger.created_at >= start)
+            .group_by(ledger_day)
+        )).all()
+        token_rows = (await session.execute(
+            select(ledger_day, func.coalesce(func.sum(case(
+                (BillingLedger.currency == "quantum", -BillingLedger.amount * 100),
+                (BillingLedger.currency == "gravity", -BillingLedger.amount * 500),
+                else_=0,
+            )), 0))
+            .where(BillingLedger.amount < 0, BillingLedger.created_at >= start)
+            .group_by(ledger_day)
+        )).all()
+        rev_rows = (await session.execute(
+            select(order_day, AfdianOrder.total_amount)
+            .where(AfdianOrder.status.in_(("processed", "donation")),
+                   AfdianOrder.created_at >= start)
+        )).all()
+        signup_rows = (await session.execute(
+            select(user_day, func.count())
+            .where(User.created_at >= start)
+            .group_by(user_day)
+        )).all()
+    minutes = {d: v for d, v in minute_rows}
+    tokens = {d: v for d, v in token_rows}
+    revenue: dict[str, float] = {}
+    for d, amount in rev_rows:
+        revenue[d] = round(revenue.get(d, 0) + float(amount or 0), 2)
+    signups = {d: c for d, c in signup_rows}
+    items = []
+    for i in range(days):
+        day = (day0 - timedelta(days=days - 1 - i)).isoformat()
+        items.append({
+            "date": day,
+            "minutes": int(minutes.get(day, 0)),
+            "tokens": int(tokens.get(day, 0)),
+            "revenue": revenue.get(day, 0),
+            "signups": signups.get(day, 0),
+        })
+    return {"days": days, "items": items}
+
+
+# ===== 管理 PIN（敏感操作二次验证）=====
+# 失败计数放内存（重启清零，个人项目够用）：窗口内连续 5 次失败锁 10 分钟
+
+_PIN_FAIL_WINDOW = 600   # 秒（10 分钟）
+_PIN_MAX_FAILS = 5
+_pin_fails: dict[int, list[float]] = {}
+
+
+async def set_pin(uid: int, pin: str) -> None:
+    """设置/更新管理 PIN：6 位纯数字，bcrypt 哈希（复用 auth 的 sha256 prehash 模式）"""
+    if not re.fullmatch(r"\d{6}", pin or ""):
+        raise AdminError("PIN 须为 6 位纯数字")
+    hashed = await asyncio.to_thread(hash_password, pin)
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        if not user:
+            raise AdminError(f"用户不存在：uid={uid}")
+        user.admin_pin_hash = hashed
+        await session.commit()
+    _pin_fails.pop(uid, None)
+    logger.info("[Admin] 管理 PIN 已设置: uid=%s", uid)
+
+
+async def pin_status(uid: int) -> bool:
+    """是否已设置 PIN"""
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        return bool(user and user.admin_pin_hash)
+
+
+async def verify_admin_pin(uid: int, pin: str) -> None:
+    """敏感操作前校验 PIN。未设 409 / 错误 403（累计失败）/ 锁定 423（带剩余秒数）"""
+    now = time.time()
+    fails = [t for t in _pin_fails.get(uid, []) if now - t < _PIN_FAIL_WINDOW]
+    _pin_fails[uid] = fails
+    if len(fails) >= _PIN_MAX_FAILS:
+        remaining = int(_PIN_FAIL_WINDOW - (now - fails[0])) + 1
+        raise PinError(f"失败次数过多，已锁定，请 {remaining} 秒后再试", 423)
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
+        if not user or not user.admin_pin_hash:
+            raise PinError("请先设置管理 PIN", 409)
+        ok = await asyncio.to_thread(verify_password, pin or "", user.admin_pin_hash)
+    if not ok:
+        fails.append(now)
+        left = _PIN_MAX_FAILS - len(fails)
+        raise PinError("PIN 错误" + (f"，剩余 {left} 次机会" if left > 0 else "，已锁定 10 分钟"), 403)
+    _pin_fails.pop(uid, None)

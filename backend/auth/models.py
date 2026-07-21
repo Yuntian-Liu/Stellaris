@@ -22,6 +22,8 @@ class User(Base):
     # bcrypt 自带 salt，单字段足够；纯验证码注册用户可为 NULL
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 管理 PIN（敏感操作二次验证；bcrypt 哈希，未设置可 NULL；V0.9.0 新增列）
+    admin_pin_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     badge: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

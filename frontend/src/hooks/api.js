@@ -144,4 +144,24 @@ export const redeem = (code) =>
   request('/api/redeem', { method: 'POST', body: { code } })
 export const getMembershipHistory = () => request('/api/membership/history')
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi }
+/* ═══ 管理看板接口（V0.9.0，后端 get_admin_user 守卫：非 admin 403）═══ */
+
+export const adminApi = {
+  overview: () => request('/api/admin/overview'),
+  searchUsers: (query) => request(`/api/admin/users?query=${encodeURIComponent(query)}`),
+  adjustBalance: (payload) => request('/api/admin/user/adjust', { method: 'POST', body: payload }),
+  userUsage: (uid) => request(`/api/admin/user/${uid}/usage`),
+  setTier: (payload) => request('/api/admin/user/tier', { method: 'POST', body: payload }),
+  listCodes: () => request('/api/admin/codes'),
+  createCodes: (payload) => request('/api/admin/codes', { method: 'POST', body: payload }),
+  listOrders: (status) => request(`/api/admin/orders${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  fulfillOrder: (outTradeNo, payload) =>
+    request(`/api/admin/orders/${encodeURIComponent(outTradeNo)}/fulfill`, { method: 'POST', body: payload }),
+  recheckOrder: (outTradeNo) =>
+    request(`/api/admin/orders/${encodeURIComponent(outTradeNo)}/recheck`, { method: 'POST' }),
+  trends: (days = 30) => request(`/api/admin/trends?days=${days}`),
+  pinStatus: () => request('/api/admin/pin/status'),
+  setPin: (pin) => request('/api/admin/pin/set', { method: 'POST', body: { pin } }),
+}
+
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi }

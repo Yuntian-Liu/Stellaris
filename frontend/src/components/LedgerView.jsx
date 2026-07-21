@@ -18,6 +18,7 @@ const FEATURE_LABELS = {
   exchange: '货币兑换',
   signup_gift: '注册赠送',
   membership_gift: '会员赠送',
+  admin_adjust: '管理员调整',
 }
 
 const CURRENCY_TABS = [
