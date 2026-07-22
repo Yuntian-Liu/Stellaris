@@ -288,6 +288,31 @@ def _guess_mime(audio_path: Path) -> str:
     return mime_map.get(audio_path.suffix.lower(), "audio/wav")
 
 
+def probe_media_duration(path: Path) -> float:
+    """用 ffprobe 探测媒体文件时长（秒）；失败/无法识别返回 0.0。
+    音频/视频通用——upload 路由探上传视频时长做计费，_split_audio_if_needed 探音频时长做分段，
+    共用此函数。"""
+    try:
+        probe = subprocess.run(
+            [FFPROBE_PATH, "-i", str(path), "-show_entries", "format=duration", "-v", "quiet"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10,
+        )
+        # ffprobe 输出: [FORMAT]\nduration=xxx\n[/FORMAT]，提取 duration= 那一行
+        for line in probe.stdout.strip().split("\n"):
+            if "=" in line:
+                k, v = line.split("=", 1)
+                if k.strip() == "duration":
+                    try:
+                        return float(v.strip())
+                    except ValueError:
+                        return 0.0
+        return 0.0
+    except Exception as e:
+        logger.warning("[ASR] probe_media_duration 探测失败 %s: %s", path, e)
+        return 0.0
+
+
 def _split_audio_if_needed(audio_path: Path, task_id: str, chunk_sec: int = 50) -> list[Path]:
     """
     如果音频可能超出 Mimo token 限制，用 FFmpeg 切分为小段。
@@ -295,25 +320,9 @@ def _split_audio_if_needed(audio_path: Path, task_id: str, chunk_sec: int = 50) 
     简单策略：按固定时长切分，最后一段可能较短。
     返回分片文件路径列表（调用方负责清理）。
     """
-    # 用 ffprobe 获取音频时长
-    try:
-        probe = subprocess.run(
-            [FFPROBE_PATH, "-i", str(audio_path), "-show_entries", "format=duration", "-v", "quiet"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=10,
-        )
-        logger.info("[Mimo ASR] ffprobe returncode=%d, stdout=%s",
-                    probe.returncode, probe.stdout[:100])
-        # ffprobe 输出: [FORMAT]\nduration=xxx\n[/FORMAT]，需要提取 duration= 那一行
-        duration = 0.0
-        for line in probe.stdout.strip().split("\n"):
-            if "=" in line:
-                k, v = line.split("=", 1)
-                if k.strip() == "duration":
-                    duration = float(v.strip())
-                    break
-    except Exception as e:
-        logger.warning("[Mimo ASR] 无法获取音频时长: %s, 不分段", e)
+    duration = probe_media_duration(audio_path)
+    if duration <= 0:
+        logger.warning("[Mimo ASR] 无法获取音频时长，不分段")
         return [audio_path]
 
     if duration <= chunk_sec * 0.8:  # 超过 20s 就分段，留足 token 余量

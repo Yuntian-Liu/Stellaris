@@ -19,7 +19,7 @@ export default function MembershipHistoryModal({ open, onClose }) {
   }, [open])
 
   return (
-    <Modal open={open} onCancel={onClose} footer={null} width={440}
+    <Modal open={open} onCancel={onClose} footer={null} width={440} centered
       title={<span><CreditCardOutlined style={{ marginRight: 8, color: 'var(--accent)' }} />开通记录</span>}
     >
       <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>

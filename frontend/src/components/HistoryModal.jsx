@@ -53,7 +53,7 @@ export default function HistoryModal({ open, onClose, onOpenRecord }) {
   }
 
   return (
-    <Modal open={open} onCancel={onClose} footer={null} width={480}
+    <Modal open={open} onCancel={onClose} footer={null} width={480} centered
       title={<span><HistoryOutlined style={{ marginRight: 8 }} />提取历史</span>}
     >
       <div style={{ maxHeight: '55vh', overflowY: 'auto' }}>

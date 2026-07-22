@@ -61,6 +61,11 @@ class TaskResponse(BaseModel):
     charged_quantum: Optional[int] = None   # 分段实际扣量子波
     md_cost: Optional[int] = None           # MD 实际扣引力波
     summary_cost: Optional[int] = None      # 概要实际扣量子波
+    # 实际用量透明化（V0.9.3，每步 AI 调用有理有据）
+    actual_seg_tokens: Optional[int] = None  # 提取-语义分段实际 tokens
+    actual_chars: Optional[int] = None       # 提取-实际转写字数
+    summary_tokens: Optional[int] = None     # 概要实际 tokens
+    md_tokens: Optional[int] = None          # MD 实际 tokens
     error: Optional[str] = None
 
 
@@ -104,4 +109,4 @@ class ChatRequest(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"
-    version: str = "0.0.1-nebula"
+    version: str = "V0.9.3 Procyon"

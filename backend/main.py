@@ -32,7 +32,7 @@ from models import (
 )
 from pipeline.download import download_bilibili, extract_audio_from_file, probe_bilibili_info
 from pipeline.subtitle import fetch_cc_subtitle
-from pipeline.asr import transcribe_with_mimo
+from pipeline.asr import transcribe_with_mimo, probe_media_duration
 from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_with_subtitle_stream
 from chat_store import save_chat_message, get_chat_history, delete_chat_messages
 from history_store import (
@@ -63,6 +63,8 @@ from admin_store import (
     AdminError, PinError, get_overview, get_user_usage, get_trends, search_users,
     adjust_balance, revoke_membership, list_codes, list_orders, fulfill_order,
     recheck_order, set_pin, pin_status, verify_admin_pin,
+    get_codes_summary, get_feature_usage, get_recent_tasks, get_health,
+    get_anon_usage_today,
 )
 
 
@@ -150,7 +152,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.9.2-procyon",
+    version="0.9.3-procyon",
     lifespan=lifespan,
 )
 
@@ -337,11 +339,13 @@ async def submit_task(
 @app.post("/api/upload", response_model=TaskResponse)
 async def upload_file(
     background_tasks: BackgroundTasks,
+    req: Request,
     file: UploadFile = File(...),
     sessdata: str | None = None,
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    """上传视频文件提取字幕；登录用户记录任务归属（统计用）"""
+    """上传视频文件提取字幕；登录用户记录任务归属（统计/计费用）。
+    计费与 /api/submit 三段对齐：路由层 ffprobe 探时长 + 预检/预占 → 成功结算 → 失败退还。"""
     if not check_disk_space():
         raise HTTPException(status_code=503, detail="磁盘空间不足")
 
@@ -355,6 +359,25 @@ async def upload_file(
     content = await file.read()
     file_path.write_bytes(content)
 
+    # 计费前置：ffprobe 探时长（裸文件路由层才能知时长；asyncio.to_thread 避免阻塞事件循环——踩坑 1）
+    import math
+    duration = await asyncio.to_thread(probe_media_duration, file_path)
+    if duration <= 0:
+        cleanup_temp_files(task_id)
+        raise HTTPException(status_code=400, detail="无法识别视频时长，请检查文件是否损坏或格式不受支持")
+    est_minutes = max(1, math.ceil(duration / 60))
+    ip = req.client.host if req.client else "unknown"
+
+    # 预检/预占（与 submit 对齐：登录预检不扣、1.2 倍冗余；匿名预估即预占防刷）
+    try:
+        if current_user:
+            await check_minutes(current_user.uid, math.ceil(est_minutes * 1.2))
+        else:
+            await check_and_consume_anon(ip, est_minutes)
+    except InsufficientError as e:
+        cleanup_temp_files(task_id)   # 额度不足，清理已落盘文件防恶意堆积
+        raise HTTPException(status_code=403, detail=e.detail)
+
     tasks[task_id] = {
         "task_id": task_id,
         "status": TaskStatus.PENDING,
@@ -364,6 +387,8 @@ async def upload_file(
         "sessdata": sessdata,
         "source_platform": platform_label(None),
         "owner_uid": current_user.uid if current_user else None,
+        "owner_ip": ip,                # 匿名失败退还预占额度用（与 submit 一致）
+        "est_minutes": est_minutes,    # 管线结算扣费用（此前缺失 → 登录用户分钟白送）
     }
 
     background_tasks.add_task(
@@ -1036,12 +1061,13 @@ async def admin_adjust_balance(
     uid = int(body.get("uid", 0) or 0)
     quantum_delta = int(body.get("quantum_delta", 0) or 0)
     gravity_delta = int(body.get("gravity_delta", 0) or 0)
+    note = str(body.get("note", "") or "")[:64]
     if not uid:
         raise HTTPException(status_code=400, detail="缺少 uid")
     if not quantum_delta and not gravity_delta:
         raise HTTPException(status_code=400, detail="调整量不能全为 0")
     try:
-        return await adjust_balance(uid, quantum_delta, gravity_delta)
+        return await adjust_balance(uid, quantum_delta, gravity_delta, note=note)
     except AdminError as e:
         raise HTTPException(status_code=404, detail=e.detail)
 
@@ -1112,6 +1138,7 @@ async def admin_create_codes(
     count = int(body.get("count", 1) or 1)
     custom_code = (body.get("custom_code") or "").strip() or None
     note = str(body.get("note", "") or "")[:64]
+    grant_mode = str(body.get("grant_mode", "regular") or "regular").strip()
     expires_raw = (body.get("expires_at") or "").strip()
     if tier not in ("trial", "stargazer", "voyager", "odyssey", "stella"):
         raise HTTPException(status_code=400, detail=f"非法的会员档位：{tier}")
@@ -1121,6 +1148,19 @@ async def admin_create_codes(
         raise HTTPException(status_code=400, detail="数量须在 1~50 之间")
     if custom_code and count != 1:
         raise HTTPException(status_code=400, detail="自定义码一次只能生成一个")
+    if grant_mode not in ("regular", "lump"):
+        raise HTTPException(status_code=400, detail="grant_mode 须为 regular 或 lump")
+    quantum_grant = None
+    gravity_grant = None
+    if grant_mode == "lump":
+        q = body.get("quantum_grant")
+        g = body.get("gravity_grant")
+        if q is None or g is None:
+            raise HTTPException(status_code=400, detail="一次性发放模式须指定 quantum_grant 与 gravity_grant")
+        quantum_grant = int(q)
+        gravity_grant = int(g)
+        if quantum_grant < 0 or gravity_grant < 0:
+            raise HTTPException(status_code=400, detail="发放额度不可为负")
     expires_at = None
     if expires_raw:
         try:
@@ -1131,7 +1171,8 @@ async def admin_create_codes(
     try:
         for _ in range(count):
             codes.append(await create_code(tier, days, note=note, custom_code=custom_code,
-                                           expires_at=expires_at))
+                                           expires_at=expires_at, grant_mode=grant_mode,
+                                           quantum_grant=quantum_grant, gravity_grant=gravity_grant))
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     logger.info("[Admin] 生成兑换码: tier=%s days=%s count=%d operator=%s",
@@ -1182,6 +1223,56 @@ async def admin_recheck_order(
         return await recheck_order(out_trade_no)
     except AdminError as e:
         raise HTTPException(status_code=502, detail=e.detail)
+
+
+# ===== 管理后台：运营统计/工具 =====
+
+@app.get("/api/admin/codes-summary")
+async def admin_codes_summary(current_user: User = Depends(get_admin_user)):
+    """兑换码汇总：总生成/已核销/未核销/按档位"""
+    return await get_codes_summary()
+
+
+@app.get("/api/admin/feature-usage")
+async def admin_feature_usage(days: int = 7, current_user: User = Depends(get_admin_user)):
+    """最近 N 天功能使用次数（billing_ledger 消耗类 feature）"""
+    return await get_feature_usage(max(1, min(days, 90)))
+
+
+@app.get("/api/admin/recent-tasks")
+async def admin_recent_tasks(uid: int | None = None, current_user: User = Depends(get_admin_user)):
+    """最近提取任务（100 条），可按 UID 过滤"""
+    return {"items": await get_recent_tasks(uid_filter=uid)}
+
+
+@app.get("/api/admin/anon-usage")
+async def admin_anon_usage(current_user: User = Depends(get_admin_user)):
+    """匿名使用今日概况：IP 数/消耗分钟/额度上限"""
+    return await get_anon_usage_today()
+
+
+@app.get("/api/admin/health")
+async def admin_health(current_user: User = Depends(get_admin_user)):
+    """系统健康：运行任务数/DB 大小/磁盘剩余/uptime"""
+    active = sum(1 for t in tasks.values() if t.get("status") != TaskStatus.COMPLETED)
+    return await get_health(running_tasks=active)
+
+
+@app.post("/api/admin/codes/{code}/revoke")
+async def admin_revoke_code(
+    code: str,
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """作废兑换码（仅未使用）：设 expires_at=now"""
+    from redeem_store import revoke_code, RedeemError
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    try:
+        await revoke_code(code)
+        return {"ok": True}
+    except RedeemError as e:
+        raise HTTPException(status_code=409, detail=e.detail)
 
 
 # ===== 核心管线（后台执行）=====
@@ -1267,8 +1358,10 @@ def _run_pipeline_sync(
         )
 
         # ⑧ 计费结算（成功后；分钟按预估时长，分段按实际 usage）
+        seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
+        task["actual_seg_tokens"] = seg_tokens   # 实际分段 tokens（前端"有理有据"展示）
+        task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
-            seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
             _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
                                  seg_tokens, task_id)
             # 历史记录（未登录不记）
@@ -1368,8 +1461,10 @@ def _run_pipeline_from_file_sync(
         )
 
         # ⑦ 计费结算（成功后）
+        seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
+        task["actual_seg_tokens"] = seg_tokens   # 实际分段 tokens（前端"有理有据"展示）
+        task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
-            seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
             _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
                                  seg_tokens, task_id)
             # 历史记录（未登录不记）
@@ -1396,6 +1491,15 @@ def _run_pipeline_from_file_sync(
     except Exception as e:
         _update_status(task_id, TaskStatus.FAILED, error=str(e))
         cleanup_temp_files(task_id)
+        # R3：匿名任务失败退还预占的当日体验额度（与 submit 管线一致）
+        task = tasks.get(task_id) or {}
+        if not task.get("owner_uid") and task.get("est_minutes"):
+            try:
+                asyncio.run(refund_anon_minutes(
+                    task.get("owner_ip", "unknown"), task["est_minutes"],
+                ))
+            except Exception as re:
+                logger.warning("[Billing] 匿名额度退还失败(不影响主流程): %s", re)
     finally:
         running_tasks.discard(task_id)
 
@@ -1461,9 +1565,11 @@ def _generate_summary_impl(task_id: str):
         task["summary_status"] = "ready"
         task["summary_error"] = None
         task["summary_content"] = summary_content   # 直接带回前端展示
+        # 实际 tokens（前端"有理有据"展示，与扣费同源）
+        total_tokens = summary_usage["prompt_tokens"] + summary_usage["completion_tokens"]
+        task["summary_tokens"] = total_tokens
         # 计费结算（生成成功后才扣量子波）
         if task.get("owner_uid"):
-            total_tokens = summary_usage["prompt_tokens"] + summary_usage["completion_tokens"]
             try:
                 task["summary_cost"] = asyncio.run(
                     consume_quantum(task["owner_uid"], total_tokens, "summary", task_id)
@@ -1472,7 +1578,7 @@ def _generate_summary_impl(task_id: str):
                 logger.warning("[Billing] 概要结算失败(不影响功能): %s", be)
         _incr_stats_sync(
             task.get("owner_uid"),
-            tokens_used=summary_usage["prompt_tokens"] + summary_usage["completion_tokens"],
+            tokens_used=total_tokens,
         )
         logger.info("[Summary] 总结完成: %s (%d 字符)", task_id, len(summary_content))
 
@@ -1506,9 +1612,11 @@ def _generate_md_impl(task_id: str):
 
         task["md_status"] = "ready"
         task["md_error"] = None
+        # 实际 tokens（前端"有理有据"展示，与扣费同源）
+        total_tokens = md_usage["prompt_tokens"] + md_usage["completion_tokens"]
+        task["md_tokens"] = total_tokens
         # 计费结算（生成成功后才扣引力波）
         if task.get("owner_uid"):
-            total_tokens = md_usage["prompt_tokens"] + md_usage["completion_tokens"]
             try:
                 task["md_cost"] = asyncio.run(
                     consume_gravity(task["owner_uid"], total_tokens, "md", task_id)
@@ -1518,7 +1626,7 @@ def _generate_md_impl(task_id: str):
         _incr_stats_sync(
             task.get("owner_uid"),
             md_notes=1,
-            tokens_used=md_usage["prompt_tokens"] + md_usage["completion_tokens"],
+            tokens_used=total_tokens,
         )
         logger.info("[MD] 导出完成: %s (%d 字符)", task_id, len(md_content))
 

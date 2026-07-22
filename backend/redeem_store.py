@@ -33,6 +33,10 @@ class RedeemCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str] = mapped_column(String(64), default="")  # 备注（如 "Stella 邀请"）
+    # 兑换码发放模式（V0.9.3）：regular=按档位周期重置(存量兼容) / lump=一次性入永久钱包
+    grant_mode: Mapped[str] = mapped_column(String(8), default="regular")
+    quantum_grant: Mapped[int | None] = mapped_column(Integer, nullable=True)  # lump 模式发放的量子波
+    gravity_grant: Mapped[int | None] = mapped_column(Integer, nullable=True)  # lump 模式发放的引力波
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -44,8 +48,12 @@ def _gen_code() -> str:
 
 async def create_code(tier: str, days: int | None, note: str = "",
                       custom_code: str | None = None, max_uses: int = 1,
-                      expires_at: datetime | None = None) -> str:
-    """生成兑换码（CLI 用）。custom_code 传自定义内容（如 Stella 的有意义的词）"""
+                      expires_at: datetime | None = None,
+                      grant_mode: str = "regular",
+                      quantum_grant: int | None = None,
+                      gravity_grant: int | None = None) -> str:
+    """生成兑换码（CLI/管理看板用）。custom_code 传自定义内容（如 Stella 的有意义的词）。
+    grant_mode: regular=按档位周期重置(默认,存量兼容) / lump=一次性入永久钱包(quantum_grant/gravity_grant 生效)"""
     code = (custom_code or _gen_code()).upper().strip()
     async with async_session() as session:
         if await session.get(RedeemCode, code):
@@ -53,6 +61,7 @@ async def create_code(tier: str, days: int | None, note: str = "",
         session.add(RedeemCode(
             code=code, tier=tier, days=days, note=note,
             max_uses=max_uses, expires_at=expires_at,
+            grant_mode=grant_mode, quantum_grant=quantum_grant, gravity_grant=gravity_grant,
         ))
         await session.commit()
     return code
@@ -86,12 +95,32 @@ class RedeemError(Exception):
         super().__init__(detail)
 
 
+async def revoke_code(code: str) -> None:
+    """作废兑换码（管理员操作）：仅未使用的码可作废；原子设 expires_at 为 now。已使用/已过期拒绝。"""
+    code = code.upper().strip()
+    async with async_session() as session:
+        row = await session.get(RedeemCode, code)
+        if not row:
+            raise RedeemError("兑换码不存在")
+        if row.use_count > 0:
+            raise RedeemError("已核销的兑换码不可作废")
+        if row.expires_at and row.expires_at <= datetime.now(timezone.utc).replace(tzinfo=None):
+            raise RedeemError("兑换码已过期")
+        row.expires_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+
+
 async def preview_code(code: str) -> dict:
-    """兑换前预览（不核销）：返回 {tier, days, note}，无效抛 RedeemError"""
+    """兑换前预览（不核销）：返回 {tier, days, note, grant_mode, quantum_grant, gravity_grant}"""
     async with async_session() as session:
         row = await session.get(RedeemCode, code.upper().strip())
         _check(row)
-        return {"tier": row.tier, "days": row.days, "note": row.note}
+        return {
+            "tier": row.tier, "days": row.days, "note": row.note,
+            "grant_mode": row.grant_mode,
+            "quantum_grant": row.quantum_grant,
+            "gravity_grant": row.gravity_grant,
+        }
 
 
 def _check(row: RedeemCode | None) -> None:
@@ -120,10 +149,18 @@ async def redeem_code(code: str, uid: int) -> dict:
         if r.rowcount == 0:
             raise RedeemError("兑换码已被使用")
         tier, days = row.tier, row.days
+        grant_mode = row.grant_mode
+        quantum_grant = row.quantum_grant
+        gravity_grant = row.gravity_grant
         await session.commit()
     # ② 开通（独立 session）；失败回滚抢占，码恢复可用
     try:
-        result = await grant_membership(uid, tier, days)
+        if grant_mode == "lump":
+            result = await grant_membership(
+                uid, tier, days,
+                lump_quantum=quantum_grant or 0, lump_gravity=gravity_grant or 0)
+        else:  # regular（含存量码、爱发电兜底发码）
+            result = await grant_membership(uid, tier, days)
     except Exception:
         async with async_session() as session:
             await session.execute(

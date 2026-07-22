@@ -40,6 +40,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
   // MD 导出状态：从 taskData 初始值来，后续本地维护
   const [mdStatus, setMdStatus] = useState(taskData.md_status || 'idle')
   const [mdError, setMdError] = useState(taskData.md_error || null)
+  const [mdCost, setMdCost] = useState(taskData.md_cost ?? null)        // MD 实际扣引力波（生成完回填）
+  const [mdTokens, setMdTokens] = useState(taskData.md_tokens ?? null)  // MD 实际 tokens（生成完回填）
   // 数据是否已被用户清理（清理后下载区禁用）
   const [cleaned, setCleaned] = useState(taskData.cleaned || false)
   // AI 解读分栏态（展开时通知 App 扩宽容器）
@@ -100,6 +102,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
     Modal.confirm({
       title: '清理提取数据？',
       content: '请确认已下载所有需要的文件。清理后 SRT / TXT 将无法重新下载。',
+      centered: true,
       okText: '确认清理',
       okButtonProps: { danger: true },
       cancelText: '再想想',
@@ -123,6 +126,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
       content: `${featureName}属于登录用户功能。注册即享完整额度，还有 30 引力波新人礼。`,
       okText: '去登录',
       cancelText: '再看看',
+      centered: true,
       onOk: () => onNeedAuth?.(),
     })
   }
@@ -149,6 +153,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
       const s = data.md_status
       if (s === 'ready') {
         setMdStatus('ready')
+        if (data.md_cost) setMdCost(data.md_cost)
+        if (data.md_tokens) setMdTokens(data.md_tokens)
         message.success('Markdown 已生成')
         window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
         return
@@ -288,11 +294,12 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
             color: 'var(--body)',
             justifySelf: 'start',
           }}>{taskData.task_id}</code>
-          {taskData.charged_minutes > 0 && (
+          {(taskData.actual_chars > 0 || taskData.charged_minutes > 0) && (
             <>
               <span style={{ fontSize: 13, color: 'var(--mute)' }}>本次消耗</span>
               <span style={{ fontSize: 13, color: 'var(--body)', justifySelf: 'start' }}>
-                {taskData.charged_minutes} 分钟
+                {taskData.actual_chars > 0 && `${taskData.actual_chars} 字 · ${taskData.actual_seg_tokens || 0} tokens`}
+                {taskData.charged_minutes > 0 && ` · 扣 ${taskData.charged_minutes} 分钟`}
                 {taskData.charged_quantum > 0 && ` + ${taskData.charged_quantum} 量子波`}
               </span>
             </>
@@ -305,6 +312,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
           initialStatus={taskData.summary_status}
           initialContent={taskData.summary_content}
           initialError={taskData.summary_error}
+          initialCost={taskData.summary_cost}
+          initialTokens={taskData.summary_tokens}
           cleaned={cleaned}
           onNeedAuth={() => requireAuth('内容总结', () => {})}
           chars={previewText.length}
@@ -405,7 +414,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               error={mdError}
               onExport={() => requireAuth('Markdown 结构化笔记', handleExportMd)}
               onDownload={() => handleDownload('md', 'Markdown')}
-              cost={taskData.md_cost}
+              cost={mdCost}
+              tokens={mdTokens}
               est={estCost(previewText.length, 500)}
             />
 
@@ -561,7 +571,7 @@ function DownloadRow({ icon, title, desc, primary = false, onClick }) {
 }
 
 /* ── 子组件：MD 导出行（状态机） ── */
-function MdExportRow({ status, error, onExport, onDownload, cost, est }) {
+function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est }) {
   return (
     <div style={{
       display: 'flex',
@@ -591,7 +601,7 @@ function MdExportRow({ status, error, onExport, onDownload, cost, est }) {
         <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)' }}>
           {status === 'idle' && '用 LLM 转为结构化 MD，适合 Obsidian / Notion'}
           {status === 'generating' && '正在用 LLM 生成，请稍候...'}
-          {status === 'ready' && `已生成${cost ? `，消耗 ${cost} 引力波` : ''}，可下载 .md 文件`}
+          {status === 'ready' && `已生成${cost ? `，消耗 ${cost} 引力波` : ''}${tokens ? ` · ${tokens} tokens` : ''}，可下载 .md 文件`}
           {status === 'failed' && (error || '生成失败，可重试')}
         </div>
       </div>
@@ -700,12 +710,13 @@ export const MD_COMPONENTS = {
   ),
 }
 
-function SummarySection({ taskId, initialStatus, initialContent, initialError, cleaned, onNeedAuth, chars }) {
+function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars }) {
   const { user } = useAuth()
   const [status, setStatus] = useState(initialStatus || 'idle')
   const [content, setContent] = useState(initialContent || '')
   const [error, setError] = useState(initialError || null)
-  const [cost, setCost] = useState(null)
+  const [cost, setCost] = useState(initialCost ?? null)
+  const [tokens, setTokens] = useState(initialTokens ?? null)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const pollRef = useRef(null)
@@ -747,6 +758,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
         setStatus('ready')
         setContent(data.summary_content || '')
         if (data.summary_cost) setCost(data.summary_cost)
+        if (data.summary_tokens) setTokens(data.summary_tokens)
         message.success('内容概要已生成')
         window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
         return
@@ -901,7 +913,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, c
           </Tag>
           {cost > 0 && (
             <span className="font-mono" style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)', fontWeight: 400 }}>
-              消耗 {cost} 量子波
+              消耗 {cost} 量子波{tokens ? ` · ${tokens} tokens` : ''}
             </span>
           )}
         </div>

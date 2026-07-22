@@ -49,6 +49,10 @@ _EXPECTED_COLUMNS = [
     ("billing_ledger", "from_gift", "INTEGER"),
     ("billing_ledger", "from_perm", "INTEGER"),
     ("users", "admin_pin_hash", "VARCHAR"),
+    ("redeem_codes", "grant_mode", "VARCHAR"),
+    ("redeem_codes", "quantum_grant", "INTEGER"),
+    ("redeem_codes", "gravity_grant", "INTEGER"),
+    ("billing_ledger", "note", "VARCHAR"),
 ]
 
 

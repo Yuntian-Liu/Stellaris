@@ -4,12 +4,13 @@
  * 档位配色与 utils/tier.js 同源；开通跳转爱发电（/api/config 下发店铺链接）
  */
 import { useEffect, useState } from 'react'
-import { Button, message } from 'antd'
+import { Button, Modal, Checkbox, message } from 'antd'
 import {
   ClockCircleOutlined, DotChartOutlined, GlobalOutlined, HistoryOutlined,
   HeartOutlined,
 } from '@ant-design/icons'
 import { useAuth } from '../contexts/AuthContext'
+import AgreementModal from './AgreementModal'
 
 const TIERS = [
   {
@@ -77,8 +78,14 @@ export default function MembershipCards({ billing }) {
       }).catch(() => {})
   }, [])
 
+  // 会员协议有感确认（V0.9.3）：开通/赞赏前先弹"同意《会员协议》"，确认后才跳爱发电
+  const [agreeOpen, setAgreeOpen] = useState(false)
+  const [agreed, setAgreed] = useState(false)
+  const [agreementOpen, setAgreementOpen] = useState(false)
+  const [pendingTier, setPendingTier] = useState(null)
+
   // 跳爱发电付款：优先档位直链，附带 custom_order_id=UID（webhook 凭它关联发货对象）
-  const openShop = (tierKey) => {
+  const doOpen = (tierKey) => {
     let url = planUrls[tierKey] || shopUrl
     if (!url) {
       message.info('会员开通即将上线，敬请期待')
@@ -88,6 +95,19 @@ export default function MembershipCards({ billing }) {
       url += (url.includes('?') ? '&' : '?') + `custom_order_id=${user.uid}`
     }
     window.open(url, '_blank')
+  }
+
+  // 先弹协议确认，再跳支付
+  const openShop = (tierKey) => {
+    setPendingTier(tierKey ?? null)   // 赞赏不传参 → null → 走通用店铺链接
+    setAgreed(false)
+    setAgreeOpen(true)
+  }
+
+  const confirmOpen = () => {
+    setAgreeOpen(false)
+    doOpen(pendingTier)
+    setPendingTier(null)
   }
 
   const currentTier = billing?.tier
@@ -239,6 +259,23 @@ export default function MembershipCards({ billing }) {
         赞赏支持
       </Button>
     </div>
+
+    {/* 开通/赞赏前的会员协议有感确认 */}
+    <Modal open={agreeOpen} onCancel={() => setAgreeOpen(false)} width={420} centered footer={null}
+      title={<span className="font-display">开通会员</span>}>
+      <div style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.75, marginBottom: 16 }}>
+        请阅读并同意《会员协议》，了解会员权益、虚拟资产发放规则与到期说明后，再前往支付。
+      </div>
+      <Checkbox checked={agreed} onChange={(e) => setAgreed(e.target.checked)}>
+        我已阅读并同意
+        <a onClick={() => setAgreementOpen(true)} style={{ color: 'var(--accent)', marginLeft: 4 }}>《会员协议》</a>
+      </Checkbox>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+        <Button onClick={() => setAgreeOpen(false)}>取消</Button>
+        <Button type="primary" disabled={!agreed} onClick={confirmOpen}>前往支付</Button>
+      </div>
+    </Modal>
+    <AgreementModal open={agreementOpen} type="membership" onClose={() => setAgreementOpen(false)} />
   </>
   )
 }

@@ -54,3 +54,16 @@ export const RETENTION_COPY = {
   stella: '启明长明 · 你的星轨永不消散',
   admin: '开发者 · 你的星轨永不消散',
 }
+
+/**
+ * 各档位发放配置 — 与 backend/billing_store.py BILLING_TIERS 的
+ * quantum_weekly_gift / gravity_monthly_gift 保持一致（管理员生成兑换码按天数折算用）。
+ * 改后端这两项时务必同步此处。
+ */
+export const GRANT_CONFIG = {
+  stargazer: { quantum_weekly: 650, gravity_monthly: 50 },
+  voyager:   { quantum_weekly: 1700, gravity_monthly: 150 },
+  odyssey:   { quantum_weekly: 5000, gravity_monthly: 500 },
+  stella:    { quantum_weekly: 9999, gravity_monthly: 500 },
+  trial:     { quantum_weekly: 1100, gravity_monthly: 35 },
+}

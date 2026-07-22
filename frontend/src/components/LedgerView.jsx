@@ -19,6 +19,7 @@ const FEATURE_LABELS = {
   signup_gift: '注册赠送',
   membership_gift: '会员赠送',
   admin_adjust: '管理员调整',
+  redeem_gift: '兑换码会员赠送',
 }
 
 const CURRENCY_TABS = [
@@ -104,6 +105,11 @@ export default function LedgerView({ onBack, initialTab = 'minute' }) {
                 {note && (
                   <div className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', marginTop: 1 }}>
                     {note}
+                  </div>
+                )}
+                {it.note && (
+                  <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 1 }}>
+                    {it.note}
                   </div>
                 )}
               </div>

@@ -155,6 +155,7 @@ class BillingLedger(Base):
     from_gift: Mapped[int | None] = mapped_column(Integer, nullable=True)
     from_perm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 管理员备注（admin_adjust 等）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -282,9 +283,16 @@ async def get_billing(uid: int) -> tuple[UserBilling, str]:
         return row, tier_key
 
 
-async def grant_membership(uid: int, tier_key: str, days: int | None) -> dict:
-    """开通/续期会员（webhook / 兑换码共用）：同档顺延累加，不同档覆盖；
-    立即发放首期引力波。days=None 表示永久档（Stella，到期置 9999-12-31）。"""
+async def grant_membership(uid: int, tier_key: str, days: int | None,
+                           lump_quantum: int | None = None,
+                           lump_gravity: int | None = None) -> dict:
+    """开通/续期会员（webhook / 兑换码共用）：同档顺延累加，不同档覆盖。
+    days=None 表示永久档（Stella，到期置 9999-12-31）。
+    发放模式：
+    - lump_* 均为 None（默认；爱发电 webhook + regular 兑换码）：引力波月赠首期 + 量子波补赠送钱包，
+      参与周期重置/月赠循环，保留对赌锚点。
+    - lump_* 非 None（lump 兑换码，赠送渠道）：quantum_perm += lump_quantum、gravity += lump_gravity，
+      一次性入永久钱包，gravity_grant_at 设到到期使 _apply_member_gravity 不再月赠；不参与周重置。"""
     if tier_key not in BILLING_TIERS or tier_key in ("anonymous", "free", "admin"):
         raise InsufficientError(f"非法的会员档位：{tier_key}")
     async with async_session() as session:
@@ -298,29 +306,43 @@ async def grant_membership(uid: int, tier_key: str, days: int | None) -> dict:
         row.membership_tier = tier_key
         row.membership_expire_at = (datetime(9999, 12, 31) if days is None
                                     else base + timedelta(days=days))
-        row.gravity_grant_at = now
-        gift = BILLING_TIERS[tier_key].get("gravity_monthly_gift", 0)
-        if gift:
-            row.gravity += gift
-            await _record(session, uid, "membership_gift", "gravity", gift, row.gravity)
-        # 开通即补齐量子波赠送钱包到新档周赠量（否则要等下周一才按新档重发，体验断层）
-        weekly = BILLING_TIERS[tier_key].get("quantum_weekly_gift", 0)
-        if weekly > row.quantum_gift:
-            topup = weekly - row.quantum_gift
-            row.quantum_gift = weekly
-            await _record(session, uid, "membership_gift", "quantum", topup,
-                          row.quantum_gift + row.quantum_perm)
+        if lump_quantum is not None or lump_gravity is not None:
+            # lump：一次性入永久钱包，不参与周期重置/月赠
+            row.gravity_grant_at = row.membership_expire_at   # 设到到期 → _apply_member_gravity 不再月赠
+            if lump_gravity:
+                row.gravity += lump_gravity
+                await _record(session, uid, "redeem_gift", "gravity", lump_gravity, row.gravity)
+            if lump_quantum:
+                row.quantum_perm += lump_quantum
+                await _record(session, uid, "redeem_gift", "quantum", lump_quantum,
+                              row.quantum_gift + row.quantum_perm,
+                              from_gift=0, from_perm=lump_quantum)
+        else:
+            # regular：引力波月赠首期 + 量子波补赠送钱包（参与周期重置，对赌模型）
+            row.gravity_grant_at = now
+            gift = BILLING_TIERS[tier_key].get("gravity_monthly_gift", 0)
+            if gift:
+                row.gravity += gift
+                await _record(session, uid, "membership_gift", "gravity", gift, row.gravity)
+            # 开通即补齐量子波赠送钱包到新档周赠量（否则要等下周一才按新档重发，体验断层）
+            weekly = BILLING_TIERS[tier_key].get("quantum_weekly_gift", 0)
+            if weekly > row.quantum_gift:
+                topup = weekly - row.quantum_gift
+                row.quantum_gift = weekly
+                await _record(session, uid, "membership_gift", "quantum", topup,
+                              row.quantum_gift + row.quantum_perm)
         await session.commit()
         return {"tier": tier_key, "expire_at": _iso_utc(row.membership_expire_at)}
 
 
 async def _record(session, uid: int, feature: str, currency: str,
                   amount: int, balance_after: int, task_id: str | None = None,
-                  from_gift: int | None = None, from_perm: int | None = None):
+                  from_gift: int | None = None, from_perm: int | None = None,
+                  note: str | None = None):
     session.add(BillingLedger(
         user_uid=uid, feature=feature, currency=currency,
         amount=amount, balance_after=balance_after, task_id=task_id,
-        from_gift=from_gift, from_perm=from_perm,
+        from_gift=from_gift, from_perm=from_perm, note=note,
     ))
 
 
@@ -690,6 +712,7 @@ async def get_ledger(uid: int, page: int, size: int, currency: str | None = None
                 "from_gift": r.from_gift,
                 "from_perm": r.from_perm,
                 "task_id": r.task_id,
+                "note": r.note,
                 "created_at": _iso_utc(r.created_at),
             }
             for r in result.scalars()

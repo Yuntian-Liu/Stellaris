@@ -162,6 +162,12 @@ export const adminApi = {
   trends: (days = 30) => request(`/api/admin/trends?days=${days}`),
   pinStatus: () => request('/api/admin/pin/status'),
   setPin: (pin) => request('/api/admin/pin/set', { method: 'POST', body: { pin } }),
+  codesSummary: () => request('/api/admin/codes-summary'),
+  featureUsage: (days = 7) => request(`/api/admin/feature-usage?days=${days}`),
+  recentTasks: (uid) => request(`/api/admin/recent-tasks${uid ? `?uid=${uid}` : ''}`),
+  health: () => request('/api/admin/health'),
+  anonUsage: () => request('/api/admin/anon-usage'),
+  revokeCode: (code, pin) => request(`/api/admin/codes/${encodeURIComponent(code)}/revoke`, { method: 'POST', body: { pin } }),
 }
 
 export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi }

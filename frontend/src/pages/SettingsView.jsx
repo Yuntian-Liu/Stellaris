@@ -121,6 +121,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     Modal.confirm({
       title: '退出登录？',
       content: '退出后需要重新验证邮箱或输入密码才能登录。',
+      centered: true,
       okText: '退出登录',
       okButtonProps: { danger: true },
       cancelText: '再想想',
@@ -293,14 +294,17 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <SectionCard>
         <RowItem icon={<FileTextOutlined />} tint="#0ea5e9" label="当前版本" value={APP_VERSION} />
         <Divider />
+        <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
+          onClick={() => setChangelogOpen(true)} />
+        <Divider />
         <RowItem icon={<SafetyCertificateOutlined />} tint="#10b981" label="用户协议"
           onClick={() => openAgreement('agreement')} />
         <Divider />
         <RowItem icon={<SafetyCertificateOutlined />} tint="#14b8a6" label="隐私政策"
           onClick={() => openAgreement('privacy')} />
         <Divider />
-        <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
-          onClick={() => setChangelogOpen(true)} />
+        <RowItem icon={<SafetyCertificateOutlined />} tint="#b45309" label="会员协议"
+          onClick={() => openAgreement('membership')} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
           value="排查问题用"
@@ -460,7 +464,7 @@ function ChangelogModal({ open, onClose }) {
   useEffect(() => { if (open) setExpanded(0) }, [open])
 
   return (
-    <Modal open={open} onCancel={onClose} footer={null} title="版本日志" width={520}>
+    <Modal open={open} onCancel={onClose} footer={null} title="版本日志" width={520} centered>
       <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 4 }}>
         {CHANGELOG.map((v, idx) => {
           const isOpen = expanded === idx
@@ -565,7 +569,7 @@ function ChangelogModal({ open, onClose }) {
 /* ── 开源声明弹窗（项目卡 + 开发者 + MIT + 致谢）── */
 function OpenSourceModal({ open, onClose }) {
   return (
-    <Modal open={open} onCancel={onClose} footer={null} title="开源声明" width={480}>
+    <Modal open={open} onCancel={onClose} footer={null} title="开源声明" width={480} centered>
       <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: 4 }}>
 
         {/* 项目仓库卡（高亮） */}
@@ -691,7 +695,7 @@ function NicknameModal({ open, current, onClose, onSaved }) {
   }
 
   return (
-    <Modal open={open} onCancel={onClose} title="修改昵称" footer={null} width={360}>
+    <Modal open={open} onCancel={onClose} title="修改昵称" footer={null} width={360} centered>
       <Input
         value={value} onChange={e => setValue(e.target.value)}
         maxLength={24} showCount onPressEnter={save}
@@ -733,7 +737,7 @@ function AvatarModal({ open, current, onClose, onSaved }) {
   }
 
   return (
-    <Modal open={open} onCancel={onClose} title="更换头像" footer={null} width={400}>
+    <Modal open={open} onCancel={onClose} title="更换头像" footer={null} width={400} centered>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 14 }}>
         {pool.map((seed, i) => (
           <div
@@ -816,7 +820,7 @@ function PasswordModal({ open, email, onClose }) {
   }
 
   return (
-    <Modal open={open} onCancel={onClose} title="修改密码" footer={null} width={400}>
+    <Modal open={open} onCancel={onClose} title="修改密码" footer={null} width={400} centered>
       <Tabs
         activeKey={tab} onChange={setTab}
         items={[

@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
-  Empty, Tooltip, message,
+  Empty, Tooltip, message, Radio,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
@@ -20,7 +20,7 @@ import {
 import { adminApi } from '../hooks/api'
 import TierBadge from '../components/TierBadge'
 import PinModal from '../components/PinModal'
-import { tierMeta } from '../utils/tier'
+import { tierMeta, GRANT_CONFIG } from '../utils/tier'
 
 /** 千分位缩写（与 SettingsView 同口径） */
 function fmt(n) {
@@ -59,7 +59,7 @@ const copyCode = (code) => {
 const FEATURE_LABELS = {
   extract: '字幕提取', segment: '智能分段', summary: '总结概要', md: 'MD 笔记',
   chat: 'AI 解读', exchange: '货币兑换', signup_gift: '注册赠送',
-  membership_gift: '会员赠送', admin_adjust: '管理员调整',
+  membership_gift: '会员赠送', admin_adjust: '管理员调整', redeem_gift: '兑换码会员赠送',
 }
 const FEATURE_ICONS = {
   extract: ClockCircleOutlined, segment: DotChartOutlined, summary: DotChartOutlined,
@@ -144,11 +144,15 @@ const chartLabel = (iso) => {
 
 function TrendsSection() {
   const [items, setItems] = useState(null)
+  const [days, setDays] = useState(30)
+  const [open, setOpen] = useState(false)
+
   useEffect(() => {
-    adminApi.trends(30)
+    if (!open) return   // 折叠时不拉数据，展开时才拉
+    adminApi.trends(days)
       .then((r) => setItems(r.items.map((it) => ({ ...it, label: chartLabel(it.date) }))))
       .catch((e) => message.error(e.message))
-  }, [])
+  }, [days, open])
 
   const ChartCard = ({ title, children }) => (
     <div className="card" style={{ padding: '14px 16px 8px', flex: 1, minWidth: 280 }}>
@@ -160,48 +164,65 @@ function TrendsSection() {
   )
 
   return (
-    <div>
-      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', margin: '18px 0 10px' }}>
-        趋势（近 30 天）
+    <div style={{ marginTop: 12 }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          cursor: 'pointer', padding: '10px 16px', borderRadius: 'var(--r-card)',
+          background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 8,
+          userSelect: 'none', marginBottom: open ? 12 : 0,
+        }}>
+        <span style={{ fontSize: 14, transition: 'transform 0.2s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+        <span style={{ fontSize: 12, color: 'var(--mute)' }}>趋势图</span>
+        {open && (
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+            <Button size="small" type={days === 7 ? 'primary' : 'default'}
+              onClick={(e) => { e.stopPropagation(); setDays(7) }}>7 天</Button>
+            <Button size="small" type={days === 30 ? 'primary' : 'default'}
+              onClick={(e) => { e.stopPropagation(); setDays(30) }}>30 天</Button>
+          </span>
+        )}
       </div>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <ChartCard title="每日消耗（分钟 / tokens）">
-          <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
-              <CartesianGrid stroke="#f5f5f5" vertical={false} />
-              <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
-              <YAxis yAxisId="m" {...CHART_AXIS} width={46} />
-              <YAxis yAxisId="t" orientation="right" {...CHART_AXIS} width={52} />
-              <ChartTooltip />
-              <Bar yAxisId="m" dataKey="minutes" name="分钟" fill={CHART_COLORS.soft} radius={[3, 3, 0, 0]} />
-              <Line yAxisId="t" dataKey="tokens" name="tokens" stroke={CHART_COLORS.main}
-                strokeWidth={2} dot={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="每日收入（¥）">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
-              <CartesianGrid stroke="#f5f5f5" vertical={false} />
-              <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
-              <YAxis {...CHART_AXIS} width={46} />
-              <ChartTooltip />
-              <Bar dataKey="revenue" name="收入" fill={CHART_COLORS.main} radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-        <ChartCard title="每日新增注册">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
-              <CartesianGrid stroke="#f5f5f5" vertical={false} />
-              <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
-              <YAxis {...CHART_AXIS} width={46} allowDecimals={false} />
-              <ChartTooltip />
-              <Bar dataKey="signups" name="注册" fill={CHART_COLORS.pale} radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-      </div>
+      {open && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <ChartCard title="每日消耗（分钟 / tokens）">
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
+                <CartesianGrid stroke="#f5f5f5" vertical={false} />
+                <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
+                <YAxis yAxisId="m" {...CHART_AXIS} width={46} />
+                <YAxis yAxisId="t" orientation="right" {...CHART_AXIS} width={52} />
+                <ChartTooltip />
+                <Bar yAxisId="m" dataKey="minutes" name="分钟" fill={CHART_COLORS.soft} radius={[3, 3, 0, 0]} />
+                <Line yAxisId="t" dataKey="tokens" name="tokens" stroke={CHART_COLORS.main}
+                  strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </ChartCard>
+          <ChartCard title="每日收入（¥）">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
+                <CartesianGrid stroke="#f5f5f5" vertical={false} />
+                <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
+                <YAxis {...CHART_AXIS} width={46} />
+                <ChartTooltip />
+                <Bar dataKey="revenue" name="收入" fill={CHART_COLORS.main} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+          <ChartCard title="每日新增注册">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={items} margin={{ top: 4, right: 0, bottom: 0, left: -18 }}>
+                <CartesianGrid stroke="#f5f5f5" vertical={false} />
+                <XAxis dataKey="label" {...CHART_AXIS} interval={4} />
+                <YAxis {...CHART_AXIS} width={46} allowDecimals={false} />
+                <ChartTooltip />
+                <Bar dataKey="signups" name="注册" fill={CHART_COLORS.pale} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+      )}
     </div>
   )
 }
@@ -210,22 +231,41 @@ function TrendsSection() {
 
 function OverviewPanel({ onGoOrders }) {
   const [data, setData] = useState(null)
+  const [codesSum, setCodesSum] = useState(null)
+  const [featureUsage, setFeatureUsage] = useState(null)
+  const [health, setHealth] = useState(null)
+  const [showFeatures, setShowFeatures] = useState(false)
+  const [anonUsage, setAnonUsage] = useState(null)
   const load = useCallback(() => {
     adminApi.overview().then(setData).catch((e) => message.error(e.message))
+    adminApi.codesSummary().then(setCodesSum).catch(() => {})
+    adminApi.featureUsage(7).then(setFeatureUsage).catch(() => {})
+    adminApi.health().then(setHealth).catch(() => {})
+    adminApi.anonUsage().then(setAnonUsage).catch(() => {})
   }, [])
   useEffect(load, [load])
 
   const abnormal = ABNORMAL_STATUS
     .reduce((s, k) => s + (data?.order_status_counts?.[k] || 0), 0)
+  const processed = data?.order_status_counts?.processed || 0
+  const donation = data?.order_status_counts?.donation || 0
+  const ignored = data?.order_status_counts?.ignored || 0
 
-  const Metric = ({ label, value, sub, danger, onClick }) => (
+  const fmtUptime = (s) => {
+    if (!s) return '-'
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    return h > 0 ? `${h}h${m}m` : `${m}m`
+  }
+
+  const Metric = ({ label, value, sub, danger, valueColor, onClick }) => (
     <div className="card" onClick={onClick} style={{
       padding: '14px 16px', minWidth: 150, flex: 1,
       cursor: onClick ? 'pointer' : 'default',
     }}>
       <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>{label}</div>
       <div className="font-mono" style={{
-        fontSize: 22, fontWeight: 600, color: danger ? 'var(--error)' : 'var(--ink)',
+        fontSize: 22, fontWeight: 600, color: danger ? 'var(--error)' : (valueColor || 'var(--ink)'),
       }}>
         {value}
       </div>
@@ -233,12 +273,17 @@ function OverviewPanel({ onGoOrders }) {
     </div>
   )
 
+  // 状态着色辅助
+  const marginColor = data?.margin != null ? (data.margin >= 0 ? '#16a34a' : 'var(--error)') : undefined
+  const diskColor = health ? (health.disk_free_pct < 10 ? 'var(--error)' : health.disk_free_pct < 30 ? '#d97706' : '#16a34a') : undefined
+  const anonPct = anonUsage ? Math.round(anonUsage.minutes / anonUsage.limit * 100) : 0
+
   return (
     <div>
-      {/* 渐变横幅卡（复用数据统计卡风格） */}
+      {/* 渐变横幅卡 */}
       <div style={{
         position: 'relative', borderRadius: 'var(--r-card)',
-        padding: '20px 22px 16px', marginBottom: 16,
+        padding: '14px 22px 12px', marginBottom: 16,
         background: 'linear-gradient(135deg, #4f46e5 0%, #6d28d9 100%)',
         color: '#fff', overflow: 'hidden',
       }}>
@@ -246,18 +291,19 @@ function OverviewPanel({ onGoOrders }) {
           position: 'absolute', top: 16, right: 20, fontSize: 18,
           fontFamily: "'Cormorant Garamond', serif", opacity: 0.9,
         }}>✦</span>
-        <div style={{ position: 'relative' }}>
-          <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>全站概览</div>
-          <div style={{ fontSize: 15, lineHeight: 1.7 }}>
-            累计收入 <b style={{ fontSize: 22 }}>¥{data ? data.revenue.toFixed(2) : '-'}</b>
-            · 付费订单 <b style={{ fontSize: 22 }}>{data ? data.paid_orders : '-'}</b> 笔
-            · 累计 tokens <b style={{ fontSize: 22 }}>{data ? fmt(data.tokens_total) : '-'}</b>
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 12 }}>
-            「今日」以 UTC+8 凌晨 04:00 为界 · tokens 取 user_stats 累计，分钟流水无 token 字段
-          </div>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'baseline', gap: 18, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>全站概览</span>
+          <span style={{ fontSize: 15 }}>累计收入 <b style={{ fontSize: 20 }}>¥{data ? data.revenue.toFixed(2) : '-'}</b></span>
+          <span style={{ fontSize: 15 }}>付费订单 <b style={{ fontSize: 20 }}>{data ? data.paid_orders : '-'}</b> 笔</span>
+          <span style={{ fontSize: 15 }}>累计转写 <b style={{ fontSize: 20 }}>{data ? fmt(data.consumed_total?.minute) : '-'}</b> 分钟</span>
+          <span style={{ fontSize: 15 }}>累计 tokens <b style={{ fontSize: 20 }}>{data ? fmt(data.tokens_total) : '-'}</b></span>
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 8 }}>
+          「今日」以 UTC+8 凌晨 04:00 为界 · tokens 取 user_stats 累计，分钟流水无 token 字段
         </div>
       </div>
+
+      {/* 第一行：核心指标 */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <Metric label="用户数" value={data ? fmt(data.users_total) : '-'}
           sub={`今日新增 ${data?.users_today ?? '-'}`} />
@@ -269,25 +315,28 @@ function OverviewPanel({ onGoOrders }) {
           sub="点击前往订单核验" onClick={onGoOrders} />
       </div>
 
-      {/* 消耗与成本（估算口径，单价见后端注释） */}
-      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', margin: '18px 0 10px' }}>
-        消耗与成本
+      {/* 消耗与收入 */}
+      <div style={{ margin: '16px 0 6px' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309' }}>消耗</span>
+        <span style={{ fontSize: 11, color: 'var(--mute)', marginLeft: 6 }}>估算口径，单价见后端注释</span>
       </div>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <Metric label="今日消耗" value={data ? `¥${data.cost_today.toFixed(2)}` : '-'}
-          sub={consumedText(data?.consumed_today)} />
+          sub={`${consumedText(data?.consumed_today)}${data ? ` · 人均 ¥${(data.cost_total / Math.max(1, data.users_total)).toFixed(2)}` : ''}`} />
         <Metric label="累计消耗" value={data ? `¥${data.cost_total.toFixed(2)}` : '-'}
           sub={consumedText(data?.consumed_total)} />
         <Metric label="毛利（累计）" value={data ? `¥${data.margin.toFixed(2)}` : '-'}
-          sub="收入 − 估算成本" />
-        <Metric label="今日活跃" value={data?.active_users_today ?? '-'}
-          sub="今日有流水的用户" />
-        <Metric label="新增注册（本周）" value={data?.users_week ?? '-'}
-          sub={`其中今日 ${data?.users_today ?? '-'}`} />
+          sub="收入 − 估算成本" valueColor={marginColor} />
+        <Metric label="今日收入" value={data ? `¥${data.revenue_today.toFixed(2)}` : '-'}
+          sub={`本周 ¥${data?.revenue_week?.toFixed(2) ?? '-'} · 累计 ¥${data?.revenue?.toFixed(2) ?? '-'}`} valueColor="#16a34a" />
       </div>
 
-      {/* 会员分布（user_billing 原始档位计数 + 开发者单列） */}
-      <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
+      {/* 用户与增长 */}
+      <div style={{ margin: '16px 0 6px' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#4f46e5' }}>用户</span>
+      </div>
+      {/* 会员分布（用户分组首位，档位结构一览） */}
+      <div className="card" style={{ padding: '14px 16px', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 10 }}>会员分布</div>
         {(() => {
           const dist = { ...(data?.tier_distribution || {}) }
@@ -313,6 +362,81 @@ function OverviewPanel({ onGoOrders }) {
           ))
         })()}
       </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <Metric label="今日活跃" value={data?.active_users_today ?? '-'}
+          sub="今日有流水的登录用户" />
+        <Metric label="本周新注册" value={data?.users_week ?? '-'}
+          sub={`其中今日 ${data?.users_today ?? '-'}`} />
+        <Metric label="匿名使用" value={anonUsage ? anonUsage.ips : '-'}
+          sub={`${anonUsage ? anonUsage.minutes : '-'} 分钟 / ${anonUsage?.limit ?? 10} 上限${anonUsage ? `（${anonPct}%）` : ''}`} />
+      </div>
+
+      {/* 运营 */}
+      <div style={{ margin: '16px 0 6px' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>运营</span>
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <Metric label="兑换码" value={codesSum ? fmt(codesSum.total) : '-'}
+          sub={`已核销 ${codesSum?.used ?? '-'} · 未核销 ${codesSum ? codesSum.unused : '-'}${codesSum?.by_tier ? ` · ${Object.entries(codesSum.by_tier).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([t,c])=>`${t}:${c}`).join(' · ')}` : ''}`} />
+        <Metric label="系统健康" value={health ? `${health.disk_free_pct}%` : '-'}
+          valueColor={diskColor}
+          sub={health ? (
+            <span>
+              磁盘剩余 · 任务 {data?.running_tasks ?? '-'} · DB {health.db_size_mb}MB · {fmtUptime(health.uptime_sec)}
+            </span>
+          ) : '-'} />
+        <Metric label="订单" value={data ? (processed + donation + abnormal) : '-'}
+          sub={`已开通 ${processed} · 赞赏 ${donation} · 异常 ${abnormal}`} />
+      </div>
+
+      {/* 功能使用热度（可折叠） */}
+      {featureUsage && Object.keys(featureUsage.features || {}).length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div
+            onClick={() => setShowFeatures(!showFeatures)}
+            style={{
+              cursor: 'pointer', padding: '10px 16px', borderRadius: 'var(--r-card)',
+              background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 8,
+              userSelect: 'none',
+            }}>
+            <span style={{ fontSize: 14, transition: 'transform 0.2s', transform: showFeatures ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+            <span style={{ fontSize: 12, color: 'var(--mute)' }}>
+              近 {featureUsage.days} 天功能热度
+              {!showFeatures && (
+                <span style={{ marginLeft: 8, color: 'var(--ink)' }}>
+                  {Object.entries(featureUsage.features).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, c]) => {
+                    const names = { extract: '提取', segment: '分段', summary: '概要', md: 'MD', chat: '解读', exchange: '兑换' }
+                    return <span key={f} style={{ marginLeft: 8 }}>{names[f] || f}: {c}</span>
+                  })}
+                </span>
+              )}
+            </span>
+          </div>
+          {showFeatures && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '10px 16px' }}>
+              {Object.entries(featureUsage.features)
+                .sort((a, b) => b[1] - a[1])
+                .map(([f, c]) => {
+                  const names = {
+                    extract: '字幕提取', segment: '智能分段', summary: '内容概要',
+                    md: 'MD 笔记', chat: 'AI 解读', exchange: '货币兑换',
+                    admin_adjust: '管理员调整', signup_gift: '注册礼',
+                    membership_gift: '会员发放', redeem_gift: '兑换发放',
+                  }
+                  return (
+                    <div key={f} style={{
+                      padding: '6px 12px', borderRadius: 'var(--r-input)',
+                      background: 'var(--surface-2)', fontSize: 12,
+                    }}>
+                      <span style={{ color: 'var(--mute)', marginRight: 6 }}>{names[f] || f}</span>
+                      <span className="font-mono" style={{ color: 'var(--ink)', fontWeight: 600 }}>{c}</span>
+                    </div>
+                  )
+                })}
+            </div>
+          )}
+        </div>
+      )}
 
       <TrendsSection />
 
@@ -383,8 +507,8 @@ function UserDetail({ detail, loading, onRefresh }) {
                 <div style={{ fontSize: 12, color: 'var(--ink)' }}>
                   {FEATURE_LABELS[it.feature] || it.feature}
                 </div>
-                {note && (
-                  <div className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', marginTop: 1 }}>{note}</div>
+                {(note || it.note) && (
+                  <div className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', marginTop: 1 }}>{note || it.note}</div>
                 )}
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -439,16 +563,30 @@ function UserCard({ u, onChanged }) {
   const adjust = (field) => {
     const delta = field === 'quantum' ? qDelta : gDelta
     if (!delta) return message.warning('调整量不能为 0')
-    requirePin(async (pin) => {
-      setBusy(true)
-      try {
-        const payload = { uid: u.uid, pin }
-        if (field === 'quantum') payload.quantum_delta = delta
-        else payload.gravity_delta = delta
-        const r = await adminApi.adjustBalance(payload)
-        message.success(`已调整：量子波 ${r.applied.quantum >= 0 ? '+' : ''}${r.applied.quantum}，引力波 ${r.applied.gravity >= 0 ? '+' : ''}${r.applied.gravity}`)
-        afterChange()
-      } finally { setBusy(false) }
+    let noteInput = { value: '' }
+    Modal.confirm({
+      centered: true,
+      title: `${field === 'quantum' ? '量子波' : '引力波'} ${delta > 0 ? '+' : ''}${delta}`,
+      content: (
+        <Input
+          placeholder="备注（可选，64 字内）"
+          maxLength={64}
+          onChange={(e) => { noteInput.value = e.target.value }}
+        />
+      ),
+      okText: '确认调整',
+      cancelText: '取消',
+      onOk: () => requirePin(async (pin) => {
+        setBusy(true)
+        try {
+          const payload = { uid: u.uid, pin, note: noteInput.value || '' }
+          if (field === 'quantum') payload.quantum_delta = delta
+          else payload.gravity_delta = delta
+          const r = await adminApi.adjustBalance(payload)
+          message.success(`已调整：量子波 ${r.applied.quantum >= 0 ? '+' : ''}${r.applied.quantum}，引力波 ${r.applied.gravity >= 0 ? '+' : ''}${r.applied.gravity}`)
+          afterChange()
+        } finally { setBusy(false) }
+      }),
     })
   }
 
@@ -467,6 +605,7 @@ function UserCard({ u, onChanged }) {
     Modal.confirm({
       title: `收回 ${u.nickname}（UID ${u.uid}）的会员档位？`,
       content: '档位将回到免费版，已赠送的货币不追回。',
+      centered: true,
       okText: '确认收回',
       okButtonProps: { danger: true },
       cancelText: '再想想',
@@ -561,6 +700,9 @@ function CodesPanel() {
   const [customCode, setCustomCode] = useState('')
   const [note, setNote] = useState('')
   const [expiresAt, setExpiresAt] = useState(null)
+  const [grantMode, setGrantMode] = useState('regular')   // regular=周期重置 / lump=一次性入永久钱包
+  const [quantumGrant, setQuantumGrant] = useState(null)  // lump 模式发放的量子波
+  const [gravityGrant, setGravityGrant] = useState(null)  // lump 模式发放的引力波
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState([])
   const [items, setItems] = useState(null)
@@ -580,6 +722,9 @@ function CodesPanel() {
           custom_code: customCode || undefined,
           note: note || undefined,
           expires_at: expiresAt ? expiresAt.toISOString() : undefined,
+          grant_mode: grantMode,
+          quantum_grant: grantMode === 'lump' ? (quantumGrant || 0) : undefined,
+          gravity_grant: grantMode === 'lump' ? (gravityGrant || 0) : undefined,
           pin,
         })
         setCreated(r.codes)
@@ -613,14 +758,49 @@ function CodesPanel() {
             Stella 邀请码：永久有效，建议填自定义码（如有意义的词）+ 备注
           </div>
         )}
+        {/* 发放模式（V0.9.3）：regular=按档位周期重置 / lump=一次性入永久钱包 */}
+        {tier !== 'stella' && (
+          <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 'var(--r-input)' }}>
+            <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>发放模式</div>
+            <Radio.Group size="small" value={grantMode} onChange={(e) => setGrantMode(e.target.value)}>
+              <Radio value="regular">常规（额度按档位周期重置，适合整月）</Radio>
+              <Radio value="lump">一次性（进永久钱包，适合短期/活动）</Radio>
+            </Radio.Group>
+            {grantMode === 'lump' && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+                <InputNumber size="small" min={0} placeholder="量子波" value={quantumGrant}
+                  onChange={setQuantumGrant} addonAfter="量子波" style={{ width: 150 }} />
+                <InputNumber size="small" min={0} placeholder="引力波" value={gravityGrant}
+                  onChange={setGravityGrant} addonAfter="引力波" style={{ width: 150 }} />
+                <Button size="small" onClick={() => {
+                  const cfg = GRANT_CONFIG[tier]
+                  if (!cfg) return
+                  setQuantumGrant(cfg.quantum_weekly * Math.ceil(days / 7))
+                  setGravityGrant(Math.round(cfg.gravity_monthly * days / 30))
+                }}>按 {days} 天折算</Button>
+                <span style={{ fontSize: 11, color: 'var(--mute)' }}>
+                  量子波 = 周赠 × ⌈天数/7⌉；引力波 = 月赠 × 天数/30
+                </span>
+              </div>
+            )}
+          </div>
+        )}
         {created.length > 0 && (
-          <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {created.map((c) => (
-              <Tag key={c} color="geekblue" style={{ cursor: 'pointer', fontSize: 13, padding: '3px 10px' }}
-                icon={<CopyOutlined />} onClick={() => copyCode(c)}>
-                {c}
-              </Tag>
-            ))}
+          <div>
+            <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {created.map((c) => (
+                <Tag key={c} color="geekblue" style={{ cursor: 'pointer', fontSize: 13, padding: '3px 10px' }}
+                  icon={<CopyOutlined />} onClick={() => copyCode(c)}>
+                  {c}
+                </Tag>
+              ))}
+            </div>
+            {created.length > 1 && (
+              <Button size="small" style={{ marginTop: 8 }} icon={<CopyOutlined />} onClick={() => {
+                copyCode(created.join('\n'))
+                message.success(`已复制 ${created.length} 个兑换码`)
+              }}>一键复制全部</Button>
+            )}
           </div>
         )}
       </div>
@@ -641,11 +821,36 @@ function CodesPanel() {
           ) },
           { title: '档位', dataIndex: 'tier', render: (t) => <TierBadge tier={t} /> },
           { title: '天数', dataIndex: 'days', render: (d) => (d == null ? '永久' : `${d} 天`) },
+          { title: '发放', dataIndex: 'grant_mode', render: (m, r) => m === 'lump'
+            ? <span className="font-mono" style={{ fontSize: 11 }}>{r.quantum_grant}量子+{r.gravity_grant}引力<span style={{ color: 'var(--mute)' }}> ·一次性</span></span>
+            : <span style={{ fontSize: 11, color: 'var(--mute)' }}>周期重置</span> },
           { title: '已用', render: (_, r) => `${r.use_count}/${r.max_uses}` },
           { title: '使用者', dataIndex: 'used_by', render: (v) => v ?? '—' },
           { title: '备注', dataIndex: 'note', render: (v) => v || '—' },
           { title: '过期时间', dataIndex: 'expires_at', render: fmtTime },
           { title: '创建时间', dataIndex: 'created_at', render: fmtTime },
+          { title: '操作', render: (_, r) => {
+            // 仅未核销且未过期的码可作废
+            const used = r.use_count > 0
+            const expired = r.expires_at && new Date(r.expires_at) < new Date()
+            if (used || expired) return <span style={{ fontSize: 11, color: 'var(--mute)' }}>{used ? '已核销' : '已过期'}</span>
+            return <Button type="link" size="small" danger onClick={() => {
+              Modal.confirm({
+                centered: true,
+                title: `作废兑换码 ${r.code}？`,
+                content: '作废后该码无法再被核销，已生成的码失效无法恢复。',
+                okText: '确认作废', okButtonProps: { danger: true },
+                cancelText: '取消',
+                onOk: () => requirePin(async (pin) => {
+                  try {
+                    await adminApi.revokeCode(r.code, pin)
+                    message.success('已作废')
+                    load()
+                  } catch (e) { message.error(e.message) }
+                }),
+              })
+            }}>作废</Button>
+          } },
         ]}
       />
       {pinModal}
@@ -693,6 +898,7 @@ function OrdersPanel({ initialFilter }) {
     Modal.confirm({
       title: `补发订单 ${fulfillOrder.out_trade_no}？`,
       content: `将为 UID ${fUid} 开通 ${tierMeta(fTier).label}${fTier === 'stella' ? '（永久）' : ` ${fDays} 天`}，订单状态改为已开通。`,
+      centered: true,
       okText: '确认补发',
       cancelText: '再想想',
       onOk: () => requirePin(async (pin) => {
@@ -714,6 +920,7 @@ function OrdersPanel({ initialFilter }) {
       const r = await adminApi.recheckOrder(order.out_trade_no)
       const o = r.orders?.[0]
       Modal.info({
+        centered: true,
         title: '爱发电侧订单状态',
         content: o ? (
           <div className="font-mono" style={{ fontSize: 12, lineHeight: 2 }}>
@@ -771,6 +978,7 @@ function OrdersPanel({ initialFilter }) {
       />
       {/* 补发弹窗（UID + 档位 + 天数，确认时二次 Modal.confirm） */}
       <Modal
+        centered
         open={!!fulfillOrder}
         title={`补发 · ${fulfillOrder?.out_trade_no || ''}`}
         okText="补发"
@@ -802,6 +1010,47 @@ function OrdersPanel({ initialFilter }) {
   )
 }
 
+/* ───────── ⑤ 任务监控 ───────── */
+
+function TasksPanel() {
+  const [items, setItems] = useState(null)
+  const [uidFilter, setUidFilter] = useState('')
+  const load = useCallback(() => {
+    const uid = uidFilter.trim() ? parseInt(uidFilter, 10) : null
+    adminApi.recentTasks(uid || undefined).then((r) => setItems(r.items)).catch((e) => message.error(e.message))
+  }, [uidFilter])
+  useEffect(() => { adminApi.recentTasks().then((r) => setItems(r.items)).catch((e) => message.error(e.message)) }, [])
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+        <Input
+          size="small" placeholder="按 UID 过滤（可选）" value={uidFilter}
+          onChange={(e) => setUidFilter(e.target.value)}
+          style={{ width: 200 }} onPressEnter={load}
+        />
+        <Button size="small" onClick={load}>查询</Button>
+        <Button size="small" onClick={() => { setUidFilter(''); adminApi.recentTasks().then((r) => setItems(r.items)) }}>重置</Button>
+        <span style={{ fontSize: 11, color: 'var(--mute)' }}>最近 100 条提取记录</span>
+      </div>
+      <Table
+        size="small"
+        rowKey="task_id"
+        loading={items === null}
+        dataSource={items || []}
+        locale={{ emptyText: <Empty description="暂无记录" /> }}
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        columns={[
+          { title: '时间', dataIndex: 'created_at', render: fmtTime, width: 150 },
+          { title: '标题', dataIndex: 'title', ellipsis: true, render: (t) => t || '未知视频' },
+          { title: '来源', dataIndex: 'source_platform', width: 100, render: (s) => s || '—' },
+          { title: 'UID', dataIndex: 'owner_uid', width: 80, className: 'font-mono', render: (v) => v ?? '—' },
+        ]}
+      />
+    </div>
+  )
+}
+
 /* ───────── 主界面 ───────── */
 
 export default function AdminView({ onBack }) {
@@ -809,7 +1058,7 @@ export default function AdminView({ onBack }) {
   const [orderFilter, setOrderFilter] = useState('all')
 
   return (
-    <div className="subview-enter">
+    <div className="subview-enter" style={{ marginTop: -28 }}>
       {/* 顶部：返回 + 标题（贴左上，同设置二级界面） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
@@ -827,6 +1076,7 @@ export default function AdminView({ onBack }) {
           { key: 'orders', label: '订单核验', children: (
             <OrdersPanel key={orderFilter} initialFilter={orderFilter} />
           ) },
+          { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
         ]}
       />
     </div>

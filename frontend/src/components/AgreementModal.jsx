@@ -3,7 +3,7 @@
  * 内容来自 legal/agreement.js 静态 HTML(dangerouslySetInnerHTML 渲染)
  */
 import { Modal, Tabs } from 'antd'
-import { USER_AGREEMENT_HTML, PRIVACY_POLICY_HTML } from '../legal/agreement'
+import { USER_AGREEMENT_HTML, PRIVACY_POLICY_HTML, MEMBERSHIP_AGREEMENT_HTML } from '../legal/agreement'
 
 export default function AgreementModal({ open, type = 'agreement', onClose }) {
   return (
@@ -28,6 +28,11 @@ export default function AgreementModal({ open, type = 'agreement', onClose }) {
             key: 'privacy',
             label: '隐私政策',
             children: <div className="legal-doc" dangerouslySetInnerHTML={{ __html: PRIVACY_POLICY_HTML }} />,
+          },
+          {
+            key: 'membership',
+            label: '会员协议',
+            children: <div className="legal-doc" dangerouslySetInnerHTML={{ __html: MEMBERSHIP_AGREEMENT_HTML }} />,
           },
         ]}
       />

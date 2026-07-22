@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.9.2 Procyon'
+export const APP_VERSION = 'V0.9.3 Procyon'
 
-/** 协议版本（用户协议/隐私政策最后更新日期，改协议时同步递增） */
-export const AGREEMENT_VERSION = '2026-07-21'
+/** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
+export const AGREEMENT_VERSION = '2026-07-22'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -27,6 +27,16 @@ export const CHANGELOG = [
       '管理后台上线：站点数据、用户、兑换码、订单，一页尽览（仅开发者可见）',
     ],
     patches: [
+      {
+        version: 'V0.9.3', date: '2026-07-22',
+        items: [
+          '计费更透明：转写、概要、Markdown 笔记完成后，都能看到实际字数与 token 消耗',
+          '上传视频也先预估：选好文件先看预计消耗，确认再上传，与链接提取体验一致',
+          '兑换码发放更灵活：活动码可选一次性入永久钱包，整月码按周期重置，兑换前一目了然',
+          '新增《会员协议》：开通会员与兑换码核销前需确认，权益规则讲得更清楚',
+          '界面细节：各类弹窗改为屏幕居中显示',
+        ],
+      },
       {
         version: 'V0.9.2', date: '2026-07-21',
         items: ['网站加载速度大幅提升：静态资源开启压缩，二次访问近乎秒开'],

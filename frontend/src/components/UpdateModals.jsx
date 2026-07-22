@@ -93,7 +93,7 @@ export default function UpdateModals({ onOpenAgreement }) {
             协议与政策更新
           </h2>
           <p style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.8, marginBottom: 20 }}>
-            《用户协议》与《隐私政策》已于 {AGREEMENT_VERSION} 更新，
+            《用户协议》《隐私政策》与《会员协议》已于 {AGREEMENT_VERSION} 更新，
             继续使用本服务即表示你同意最新条款。
           </p>
           <div style={{ display: 'flex', gap: 10 }}>

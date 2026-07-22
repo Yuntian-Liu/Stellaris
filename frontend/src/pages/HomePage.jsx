@@ -52,6 +52,7 @@ export default function HomePage({ onSubmit }) {
   const [estimating, setEstimating] = useState(false)   // 正在拉取预估
   const [submitting, setSubmitting] = useState(false)   // 正在提交任务
   const [estimateData, setEstimateData] = useState(null) // 预估结果（非 null 即确认态）
+  const [uploadEstimate, setUploadEstimate] = useState(null) // 上传预估（选文件后填充，确认后清空）
   const [skipSegment, setSkipSegment] = useState(false)  // 降级：跳过智能分段（量子波不足时可选）
   const [error, setError] = useState(null)
   const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
@@ -100,10 +101,49 @@ export default function HomePage({ onSubmit }) {
   const handleUrlChange = (e) => {
     setUrl(e.target.value)
     if (estimateData) setEstimateData(null)
+    if (uploadEstimate) setUploadEstimate(null)
     if (skipSegment) setSkipSegment(false)
   }
 
+  // 前端用 <video>.duration 估时长，复刻后端 estimate 公式，给 upload 也做预估卡。
+  // 后端仍以 ffprobe 探到的时长为准扣费（防绕过），前端预估仅作 UX 参考。
+  const getVideoDuration = (file) => new Promise((resolve) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(video.src)
+      resolve(video.duration || 0)
+    }
+    video.onerror = () => resolve(0)
+    video.src = URL.createObjectURL(file)
+  })
+  const estimateUploadCost = (durationSec) => {
+    // 常量与 backend/config.py 对齐：SPEECH_CHARS_PER_MIN=240, CHARS_PER_TOKEN=1.5, LLM_TOKEN_ROUNDTRIP_FACTOR=2.0
+    const durationMin = durationSec / 60
+    const estChars = Math.floor(durationMin * 240)
+    const estTokens = Math.floor(estChars / 1.5 * 2.0)
+    const estMinutes = Math.max(1, Math.ceil(durationMin))
+    const estQuantum = Math.floor(estTokens / 100) + (estTokens % 100 > 40 ? 1 : 0)  // round_tokens 四成让利
+    return { durationSec, estChars, estTokens, estMinutes, estQuantum }
+  }
+
+  // 第一步：选文件后估时长、展示预估卡（不立即上传，等用户确认）
   const handleUpload = async (file) => {
+    setError(null)
+    const durationSec = await getVideoDuration(file)
+    if (!durationSec || durationSec <= 0) {
+      setError('无法识别视频时长，请检查文件是否损坏或格式不受支持')
+      return false
+    }
+    setEstimateData(null)   // 互斥：拖文件后只走上传预估态
+    setUploadEstimate({ file, ...estimateUploadCost(durationSec) })
+    return false   // 阻止 antd 自动上传
+  }
+
+  // 第二步：确认后才真正上传
+  const handleConfirmUpload = async () => {
+    const file = uploadEstimate?.file
+    if (!file) return
     setSubmitting(true)
     setError(null)
     try {
@@ -111,12 +151,12 @@ export default function HomePage({ onSubmit }) {
       formData.append('file', file)
       if (sessdata.trim()) formData.append('sessdata', sessdata.trim())
       const res = await api.upload(formData)
+      setUploadEstimate(null)
       onSubmit(res)
     } catch (e) {
       setError(e.message || '上传失败，请重试')
       setSubmitting(false)
     }
-    return false
   }
 
   const busy = estimating || submitting
@@ -303,6 +343,37 @@ export default function HomePage({ onSubmit }) {
             </div>
           </Upload.Dragger>
 
+          {/* ── 上传成本预估确认卡（选文件后滑入，与链接预估卡同款样式）── */}
+          {uploadEstimate && (
+            <div className="estimate-enter" style={{
+              background: 'var(--surface-2)',
+              border: '1px solid var(--hairline)',
+              borderRadius: 'var(--r-card)',
+              padding: '16px 18px 14px',
+            }}>
+              <div style={{
+                fontSize: 14, fontWeight: 500, color: 'var(--ink)',
+                lineHeight: 1.5, marginBottom: 12,
+                overflow: 'hidden', display: '-webkit-box',
+                WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+              }}>
+                {uploadEstimate.file.name}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <EstimateRow icon={<ClockCircleOutlined />} label="视频时长" value={formatDuration(uploadEstimate.durationSec)} />
+                <EstimateRow icon={<FileTextOutlined />} label="预计转写字数" value={`约 ${formatNumber(uploadEstimate.estChars)} 字`} />
+                <EstimateRow icon={<ThunderboltOutlined />} label="智能整理预计消耗" value={`约 ${formatNumber(uploadEstimate.estTokens)} tokens`} tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量" />
+                <EstimateRow icon={<ClockCircleOutlined />} label="本次消耗" value={`${uploadEstimate.estMinutes} 分钟 + ${uploadEstimate.estQuantum} 量子波`} tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单" />
+              </div>
+              <div className="font-caption" style={{
+                marginTop: 10, paddingTop: 10,
+                borderTop: '1px dashed var(--hairline-strong)', fontSize: 12,
+              }}>
+                以上为预估，实际消耗以转写结果为准
+              </div>
+            </div>
+          )}
+
           {/* 可选 SESSDATA */}
           <Collapse
             ghost
@@ -410,6 +481,27 @@ export default function HomePage({ onSubmit }) {
                 </div>
               )
             })()
+          ) : uploadEstimate ? (
+            <div style={{ display: 'flex', gap: 12 }}>
+              <Button
+                size="large"
+                onClick={() => { setUploadEstimate(null); setError(null) }}
+                disabled={submitting}
+                style={{ flex: '0 0 112px', borderRadius: 'var(--r-btn)', height: 44 }}
+              >
+                取消
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                icon={<RocketOutlined />}
+                loading={submitting}
+                onClick={handleConfirmUpload}
+                block
+              >
+                确认并开始提取
+              </Button>
+            </div>
           ) : (
             <Button
               type="primary"

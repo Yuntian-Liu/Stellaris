@@ -57,7 +57,7 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
   }
 
   return (
-    <Modal open={open} onCancel={onClose} title="忘记密码" footer={null} width={400}>
+    <Modal open={open} onCancel={onClose} title="忘记密码" footer={null} width={400} centered>
       <p style={{ fontSize: 13, color: 'var(--mute)', marginTop: 0 }}>
         输入注册时使用的邮箱，我们会把验证码发给你
       </p>

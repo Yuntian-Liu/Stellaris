@@ -9,9 +9,12 @@
 import asyncio
 import json
 import logging
+import os
 import re
+import shutil
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import case, func, select
 
@@ -19,13 +22,17 @@ from database import async_session
 from auth.models import User
 from auth.utils import hash_password, verify_password
 from billing_store import (
-    UserBilling, BillingLedger, _get_or_create, _record, _iso_utc,
+    UserBilling, BillingLedger, AnonUsage, _get_or_create, _record, _iso_utc,
     _period_keys, _TZ_CN, grant_membership,
 )
+from config import DATA_DIR
 from redeem_store import RedeemCode
 from afdian_store import AfdianOrder, api_sign, update_order_status
 from stats_store import UserStats, get_stats
 from history_store import TaskRecord
+
+# 进程启动时间（uptime 用）
+_START_TIME = time.time()
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +131,20 @@ async def get_overview(active_tasks: int = 0) -> dict:
             select(UserBilling.membership_tier, func.count())
             .group_by(UserBilling.membership_tier)
         )).all()
-        # 收入：total_amount 是字符串，转 float 求和
-        rows = (await session.execute(
-            select(AfdianOrder.status, AfdianOrder.total_amount)
+        # 收入：total_amount 是字符串，转 float 求和；today/week 也一起算
+        all_rows = (await session.execute(
+            select(AfdianOrder.status, AfdianOrder.total_amount, AfdianOrder.created_at)
         )).all()
-    revenue = round(sum(float(amount or 0) for status, amount in rows
-                        if status in ("processed", "donation")), 2)
-    paid_orders = sum(1 for status, _ in rows if status in ("processed", "donation"))
+    def _sum_paid(rows):
+        return round(sum(float(amount or 0) for s, amount, _ in rows
+                         if s in ("processed", "donation")), 2)
+    revenue = _sum_paid(all_rows)
+    revenue_today = _sum_paid([r for r in all_rows if r[2] and r[2] >= today_start])
+    revenue_week = _sum_paid([r for r in all_rows if r[2] and r[2] >= week_start])
+    paid_orders = sum(1 for s, _, _ in all_rows if s in ("processed", "donation"))
     status_counts: dict[str, int] = {}
-    for status, _ in rows:
-        status_counts[status] = status_counts.get(status, 0) + 1
+    for s, _, _ in all_rows:
+        status_counts[s] = status_counts.get(s, 0) + 1
     cost_today = _est_cost(consumed_today["minute"], consumed_today["quantum"],
                            consumed_today["gravity"])
     cost_total = _est_cost(consumed_total["minute"], consumed_total["quantum"],
@@ -145,6 +156,7 @@ async def get_overview(active_tasks: int = 0) -> dict:
         "admin_users": admin_users,
         "tasks_today": tasks_today + active_tasks,
         "tasks_total": tasks_total + active_tasks,
+        "running_tasks": active_tasks,
         "ledger_today": ledger_today,
         "ledger_total": ledger_total,
         "tokens_total": tokens_total,
@@ -156,6 +168,8 @@ async def get_overview(active_tasks: int = 0) -> dict:
         "margin": round(revenue - cost_total, 2),   # 毛利 = 收入 - 估算成本（累计，估算口径）
         "tier_distribution": {tier: c for tier, c in tier_rows},
         "revenue": revenue,
+        "revenue_today": revenue_today,
+        "revenue_week": revenue_week,
         "paid_orders": paid_orders,
         "order_status_counts": status_counts,
     }
@@ -254,15 +268,16 @@ async def search_users(q: str, limit: int = 20) -> list[dict]:
         ]
 
 
-async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0) -> dict:
+async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0, note: str = "") -> dict:
     """余额 ± 调整（下限 0，不倒欠；量子波调活动钱包——赠送钱包每周清零留不住）。
-    流水记 feature="admin_adjust"，amount 为实际生效量（下限截断后与请求量可能不同）。"""
+    流水记 feature="admin_adjust"，amount 为实际生效量（下限截断后与请求量可能不同），note 备注。"""
     async with async_session() as session:
         user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
         if not user:
             raise AdminError(f"用户不存在：uid={uid}")
         row = await _get_or_create(session, uid)
         applied = {"quantum": 0, "gravity": 0}
+        note_trunc = (note or "")[:64]
         if quantum_delta:
             new_perm = max(0, row.quantum_perm + quantum_delta)
             actual = new_perm - row.quantum_perm
@@ -270,18 +285,19 @@ async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 
             if actual:
                 await _record(session, uid, "admin_adjust", "quantum", actual,
                               row.quantum_gift + row.quantum_perm,
-                              from_gift=0, from_perm=actual)
+                              from_gift=0, from_perm=actual, note=note_trunc)
             applied["quantum"] = actual
         if gravity_delta:
             new_gravity = max(0, row.gravity + gravity_delta)
             actual = new_gravity - row.gravity
             row.gravity = new_gravity
             if actual:
-                await _record(session, uid, "admin_adjust", "gravity", actual, row.gravity)
+                await _record(session, uid, "admin_adjust", "gravity", actual, row.gravity,
+                              note=note_trunc)
             applied["gravity"] = actual
         await session.commit()
-        logger.info("[Admin] 余额调整: uid=%s quantum=%+d gravity=%+d",
-                    uid, applied["quantum"], applied["gravity"])
+        logger.info("[Admin] 余额调整: uid=%s quantum=%+d gravity=%+d note=%s",
+                    uid, applied["quantum"], applied["gravity"], note_trunc)
         return {
             "uid": uid,
             "applied": applied,
@@ -318,6 +334,9 @@ async def list_codes(limit: int = 200) -> list[dict]:
                 "code": r.code,
                 "tier": r.tier,
                 "days": r.days,
+                "grant_mode": r.grant_mode,
+                "quantum_grant": r.quantum_grant,
+                "gravity_grant": r.gravity_grant,
                 "max_uses": r.max_uses,
                 "use_count": r.use_count,
                 "used_by": r.used_by,
@@ -508,3 +527,85 @@ async def verify_admin_pin(uid: int, pin: str) -> None:
         left = _PIN_MAX_FAILS - len(fails)
         raise PinError("PIN 错误" + (f"，剩余 {left} 次机会" if left > 0 else "，已锁定 10 分钟"), 403)
     _pin_fails.pop(uid, None)
+
+
+# ===== 运营统计（V0.9.3 新增）=====
+
+async def get_codes_summary() -> dict:
+    """兑换码汇总：总生成/已核销/未核销/按档位分布"""
+    async with async_session() as session:
+        total = (await session.execute(select(func.count(RedeemCode.code)))).scalar_one()
+        used = (await session.execute(
+            select(func.count(RedeemCode.code)).where(RedeemCode.use_count > 0)
+        )).scalar_one()
+        tier_rows = (await session.execute(
+            select(RedeemCode.tier, func.count()).group_by(RedeemCode.tier)
+        )).all()
+    return {
+        "total": total,
+        "used": used,
+        "unused": total - used,
+        "by_tier": {t: c for t, c in tier_rows},
+    }
+
+
+async def get_feature_usage(days: int = 7) -> dict:
+    """最近 N 天功能使用次数（billing_ledger 中消耗类 feature，amount<0）"""
+    since = datetime.now(_TZ_CN).replace(tzinfo=None) - timedelta(days=days)
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(BillingLedger.feature, func.count())
+            .where(BillingLedger.created_at >= since, BillingLedger.amount < 0)
+            .group_by(BillingLedger.feature)
+        )).all()
+    return {"days": days, "features": {f: c for f, c in rows}}
+
+
+async def get_recent_tasks(limit: int = 100, uid_filter: int | None = None) -> list[dict]:
+    """最近提取任务列表（task_records），可按 UID 过滤"""
+    async with async_session() as session:
+        stmt = select(TaskRecord).order_by(TaskRecord.created_at.desc()).limit(limit)
+        if uid_filter:
+            stmt = stmt.where(TaskRecord.owner_uid == uid_filter)
+        result = await session.execute(stmt)
+    return [
+        {
+            "task_id": r.task_id,
+            "owner_uid": r.owner_uid,
+            "title": r.title,
+            "source_platform": r.source_platform,
+            "created_at": _iso_utc(r.created_at),
+        }
+        for r in result.scalars()
+    ]
+
+
+async def get_health(running_tasks: int = 0) -> dict:
+    """系统健康：运行任务数、DB 大小、磁盘剩余、进程 uptime"""
+    db_path = DATA_DIR / "stellaris.db"
+    db_size_mb = round(db_path.stat().st_size / (1024 * 1024), 1) if db_path.exists() else 0
+    disk = shutil.disk_usage(DATA_DIR)
+    disk_free_pct = round(disk.free / disk.total * 100, 1)
+    return {
+        "running_tasks": running_tasks,
+        "db_size_mb": db_size_mb,
+        "disk_free_pct": disk_free_pct,
+        "uptime_sec": int(time.time() - _START_TIME),
+    }
+
+
+async def get_anon_usage_today() -> dict:
+    """匿名使用今日概况：IP 数、总消耗分钟、额度上限"""
+    from billing_store import BILLING_TIERS
+    day_key, _, _ = _period_keys()
+    limit = BILLING_TIERS["anonymous"]["minutes_day"]
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(func.count(AnonUsage.ip), func.coalesce(func.sum(AnonUsage.minutes_day), 0))
+            .where(AnonUsage.day_key == day_key)
+        )).one()
+    return {
+        "ips": rows[0] or 0,
+        "minutes": rows[1] or 0,
+        "limit": limit,
+    }

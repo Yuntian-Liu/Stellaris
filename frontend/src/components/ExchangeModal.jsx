@@ -48,7 +48,7 @@ export default function ExchangeModal({ open, defaultTab = 'q2g', billing, onClo
   }
 
   return (
-    <Modal open={open} onCancel={onClose} footer={null} title="货币兑换" width={400}>
+    <Modal open={open} onCancel={onClose} footer={null} title="货币兑换" width={400} centered>
       <Tabs
         activeKey={tab}
         onChange={(k) => { setTab(k); setCount(1) }}
