@@ -80,6 +80,11 @@ export default function TicketListModal({ open, onClose, refreshKey, onTicketRea
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <Tag color={CATEGORY_TAG[detail.category]?.color}>{CATEGORY_TAG[detail.category]?.text}</Tag>
             <TicketStatusStamp status={detail.status} />
+            {detail.ticket_no && (
+              <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)' }}>
+                {detail.ticket_no}
+              </span>
+            )}
             <span style={{ fontSize: 11, color: 'var(--mute)', marginLeft: 'auto' }}>
               {fmtTime(detail.created_at)}
             </span>

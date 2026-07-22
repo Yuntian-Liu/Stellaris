@@ -109,7 +109,7 @@ class ChatRequest(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"
-    version: str = "V0.10.0 Arcturus"
+    version: str = "V0.10.1 Arcturus"
 
 
 # ===== 反馈工单（V0.9.4）=====
@@ -122,6 +122,7 @@ class CreateTicketRequest(BaseModel):
     repro_steps: Optional[str] = Field(None, description="Bug: 复现次数")
     contact: Optional[str] = Field(None, max_length=128, description="选填联系方式")
     attach_log: bool = Field(False, description="建议类时可选手动勾选附日志；bug 类后端强制抓")
+    client_events: Optional[list] = Field(None, description="前端操作日志（V0.10.1，排查交互问题用）")
 
 
 class AdminTicketReplyRequest(BaseModel):

@@ -9,6 +9,7 @@ import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react'
 import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal, Spin } from 'antd'
 import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined, DashboardOutlined } from '@ant-design/icons'
 import api from './hooks/api'
+import { clientLog } from './utils/clientLog'
 import HomePage from './pages/HomePage'
 import ProgressPage from './pages/ProgressPage'
 import ResultPage from './pages/ResultPage'
@@ -31,6 +32,14 @@ const { Content } = Layout
 
 export default function App() {
   const [page, setPage] = useState('home')
+  const prevPage = useRef('home')
+  // 导航埋点（V0.10.1）：监听 page 变化自动记录，覆盖所有 setPage 调用点
+  useEffect(() => {
+    if (page !== prevPage.current) {
+      clientLog.add('nav', `${prevPage.current} → ${page}`)
+      prevPage.current = page
+    }
+  }, [page])
   const [taskId, setTaskId] = useState(null)
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）

@@ -23,6 +23,7 @@ import RedeemModal from '../components/RedeemModal'
 import MembershipHistoryModal from '../components/MembershipHistoryModal'
 import FeedbackView from '../components/FeedbackView'
 import TierBadge from '../components/TierBadge'
+import { clientLog } from '../utils/clientLog'
 import LedgerView from '../components/LedgerView'
 import { tierMeta } from '../utils/tier'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
@@ -80,6 +81,8 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   // 标题栏余额区「消耗记录 →」入口联动（App 下钻，带货币页签）
   useEffect(() => {
     if (initLedger) {
+      setFeedbackOpen(false)   // 关掉反馈页，防止 overlay 遮住消耗记录
+      setMemberView(false)
       setLedgerTab(initLedger)
       setLedgerView(true)
       onConsumeInit?.()
@@ -108,14 +111,16 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     ? `${billing.tier_name} · ${expireDate.getMonth() + 1} 月 ${expireDate.getDate()} 日到期`
     : isStella ? 'Stella · 永久' : (billing?.tier_name || '免费版')
 
-  // 导出诊断日志（带 token 的 fetch 下载，脱敏 JSON）
+  // 导出诊断日志（带 token 的 fetch 下载，脱敏 JSON；V0.10.1 注入前端操作日志）
   const downloadDiagnostics = async () => {
     try {
       const res = await fetch('/api/diagnostics/export', {
         headers: { Authorization: `Bearer ${getToken()}` },
       })
       if (!res.ok) throw new Error(`导出失败 (${res.status})`)
-      const blob = await res.blob()
+      const data = await res.json()
+      data.client_events = clientLog.dump()   // 注入前端操作日志
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
       a.download = `stellaris-diagnostics-${Date.now()}.json`
@@ -160,6 +165,12 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     }, 320)
   }
   const [feedbackClosing, setFeedbackClosing] = useState(false)
+  const openFeedback = () => {
+    setMemberView(false)     // overlay 互斥：关掉其他二级界面
+    setLedgerView(false)
+    setFeedbackOpen(true)
+    setTicketUnread(false)
+  }
   const closeFeedback = () => {
     setFeedbackClosing(true)
     setTimeout(() => {
@@ -199,7 +210,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
 
         {/* 工单未读通知条（顶端可见，无需下滑） */}
         {ticketUnread && (
-          <div onClick={() => { setFeedbackOpen(true); setTicketUnread(false) }}
+          <div onClick={() => { openFeedback() }}
             style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '10px 14px', marginBottom: 16,
@@ -298,7 +309,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <SectionCard>
         <RowItem icon={<CrownOutlined />} tint="#f59e0b" label="会员权益"
           value={memberShort}
-          onClick={() => setMemberView(true)} />
+          onClick={() => { setFeedbackOpen(false); setLedgerView(false); setMemberView(true) }} />
         <Divider />
         <RowItem icon={<DotChartOutlined />} tint="#6366f1" label="货币兑换"
           value={billing
@@ -310,7 +321,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <Divider />
         <RowItem icon={<HistoryOutlined />} tint="#0ea5e9" label="消耗记录"
           value="分钟 / 量子波 / 引力波流水"
-          onClick={() => setLedgerView(true)} />
+          onClick={() => { setFeedbackOpen(false); setMemberView(false); setLedgerView(true) }} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#10b981" label="提取历史"
           value="回到任意一次结果页"
@@ -354,7 +365,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
               }} />
             )}
           </span>}
-          onClick={() => { setFeedbackOpen(true); setTicketUnread(false) }} />
+          onClick={() => { openFeedback() }} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
           value="排查问题用"

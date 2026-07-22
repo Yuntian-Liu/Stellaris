@@ -10,6 +10,7 @@ import { Modal, Input, Select, Checkbox, Button, Radio, DatePicker, message } fr
 import { CheckCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { ticketApi } from '../hooks/api'
+import { clientLog } from '../utils/clientLog'
 
 const { TextArea } = Input
 
@@ -69,6 +70,7 @@ export default function TicketSubmitModal({ open, onClose, onSubmitted }) {
         repro_steps: isBugLike ? repro : null,
         contact: contact.trim() || null,
         attach_log: !isBugLike ? attachLog : false,   // bug 类后端强制抓，不传 attach_log
+        client_events: clientLog.dump(),   // V0.10.1：附带前端操作日志
       })
       setSuccess(true)
     } catch (e) {

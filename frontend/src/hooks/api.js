@@ -2,6 +2,7 @@
  * API 调用封装
  * 统一 fetch:自动注入 JWT token、401 拦截、错误处理
  */
+import { clientLog } from '../utils/clientLog'
 
 const TOKEN_KEY = 'stellaris_token'
 
@@ -21,11 +22,20 @@ async function request(path, { method = 'GET', body, headers, isForm = false } =
   if (token) finalHeaders.Authorization = `Bearer ${token}`
   if (body && !isForm) finalHeaders['Content-Type'] = 'application/json'
 
-  const res = await fetch(path, {
-    method,
-    headers: finalHeaders,
-    body: body && !isForm ? JSON.stringify(body) : body,
-  })
+  let res
+  try {
+    res = await fetch(path, {
+      method,
+      headers: finalHeaders,
+      body: body && !isForm ? JSON.stringify(body) : body,
+    })
+  } catch (e) {
+    clientLog.add('api', `${method} ${path} 网络错误: ${e.message}`)
+    throw e
+  }
+
+  // 前端操作日志埋点（V0.10.1）：记录每次 API 调用结果，排查交互问题用
+  clientLog.add('api', `${method} ${path} ${res.status}`)
 
   if (res.status === 401) {
     clearToken()
@@ -96,7 +106,13 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
       try { evt = JSON.parse(raw.slice(5)) } catch { continue }
       if (evt.type === 'delta') onDelta?.(evt.text)
       else if (evt.type === 'done') onDone?.(evt.usage, evt.charged)
-      else if (evt.type === 'error') throw new Error(evt.message || 'AI 解读失败')
+      else if (evt.type === 'error') {
+        // evt.message 可能是对象（后端 str(e) 把 SDK 异常体序列化进来），强制转可读字符串
+        const msg = typeof evt.message === 'string'
+          ? evt.message
+          : (evt.message?.message || evt.message?.detail || JSON.stringify(evt.message))
+        throw new Error(msg || 'AI 解读失败')
+      }
     }
   }
 }

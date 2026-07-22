@@ -76,6 +76,7 @@ def _ticket_to_dict(t: SupportTicket, *, unread: bool | None = None) -> dict:
     """ORM → dict；unread 仅列表场景计算传入"""
     return {
         "id": t.id,
+        "ticket_no": f"S0700110{t.id:04d}X",   # 工单编号（id 派生，对外不可解读）
         "user_uid": t.user_uid,
         "title": t.title,
         "category": t.category,

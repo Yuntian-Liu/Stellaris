@@ -153,7 +153,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.10.0-arcturus",
+    version="0.10.1-arcturus",
     lifespan=lifespan,
 )
 
@@ -699,7 +699,12 @@ async def chat_about_video(
                             queue.put_nowait, (kind, (payload, "".join(pieces)))
                         )
             except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+                # OpenAI SDK 异常 str(e) 可能是字典字符串，提取人类可读 message
+                msg = getattr(e, "message", None) or str(e)
+                if not isinstance(msg, str):
+                    msg = json.dumps(msg, ensure_ascii=False)
+                logger.exception("[Chat] AI 解读流式失败 (task=%s): %s", task_id, msg)
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", msg))
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -1340,6 +1345,8 @@ async def submit_ticket(
     if need_log:
         try:
             diag = await build_diagnostics(current_user.uid, app.version, tasks)
+            if req.client_events:
+                diag["client_events"] = req.client_events   # V0.10.1：前端操作日志
             log_path = write_log_file(ticket["id"], diag)
             await update_ticket_log_path(ticket["id"], log_path)
             ticket["has_log"] = True

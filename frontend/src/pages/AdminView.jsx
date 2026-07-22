@@ -1144,6 +1144,7 @@ function TicketsPanel() {
         locale={{ emptyText: <Empty description="暂无工单" /> }}
         pagination={{ pageSize: 20, showSizeChanger: false }}
         columns={[
+          { title: '编号', dataIndex: 'ticket_no', width: 140, className: 'font-mono', render: (v) => v || '—' },
           { title: '标题', dataIndex: 'title', ellipsis: true },
           { title: '分类', dataIndex: 'category', width: 90, render: (c) => TICKET_CATEGORY[c] || c },
           { title: 'UID', dataIndex: 'user_uid', width: 80, className: 'font-mono' },
@@ -1159,7 +1160,7 @@ function TicketsPanel() {
       <Modal open={!!detail} onCancel={() => setDetail(null)} width={620} centered
         footer={null} destroyOnClose
         styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
-        title={<span className="font-display">工单 #{detail?.id}</span>}
+        title={<span className="font-display">工单 {detail?.ticket_no}</span>}
       >
         {detail && (
           <div style={{ padding: '4px 0' }}>
@@ -1201,7 +1202,14 @@ function TicketsPanel() {
                     诊断日志
                   </span>
                   <span style={{ flex: 1 }} />
-                  <Button size="small" type="text" onClick={() => {
+                  <Button size="small" type="text" title="复制日志"
+                    icon={<CopyOutlined />}
+                    onClick={() => {
+                      navigator.clipboard.writeText(detail.log_content)
+                        .then(() => message.success('日志已复制'))
+                        .catch(() => message.error('复制失败'))
+                    }} />
+                  <Button size="small" type="text" title="下载日志" onClick={() => {
                     const blob = new Blob([detail.log_content], { type: 'application/json' })
                     const a = document.createElement('a')
                     a.href = URL.createObjectURL(blob)
