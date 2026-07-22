@@ -144,6 +144,14 @@ export const redeem = (code) =>
   request('/api/redeem', { method: 'POST', body: { code } })
 export const getMembershipHistory = () => request('/api/membership/history')
 
+/* ═══ 反馈工单（V0.9.4，需登录）═══ */
+
+export const ticketApi = {
+  create: (payload) => request('/api/tickets', { method: 'POST', body: payload }),
+  listMine: () => request('/api/tickets'),
+  getDetail: (tid) => request(`/api/tickets/${tid}`),
+}
+
 /* ═══ 管理看板接口（V0.9.0，后端 get_admin_user 守卫：非 admin 403）═══ */
 
 export const adminApi = {
@@ -168,6 +176,9 @@ export const adminApi = {
   health: () => request('/api/admin/health'),
   anonUsage: () => request('/api/admin/anon-usage'),
   revokeCode: (code, pin) => request(`/api/admin/codes/${encodeURIComponent(code)}/revoke`, { method: 'POST', body: { pin } }),
+  listTickets: (status) => request(`/api/admin/tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  getTicket: (tid) => request(`/api/admin/tickets/${tid}`),
+  replyTicket: (tid, payload) => request(`/api/admin/tickets/${tid}/reply`, { method: 'POST', body: payload }),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi }

@@ -109,4 +109,23 @@ class ChatRequest(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"
-    version: str = "V0.9.3 Procyon"
+    version: str = "V0.10.0 Arcturus"
+
+
+# ===== 反馈工单（V0.9.4）=====
+class CreateTicketRequest(BaseModel):
+    """提交工单请求体"""
+    title: str = Field(..., min_length=1, max_length=200, description="标题")
+    category: str = Field(..., description="bug / suggestion / other")
+    description: str = Field(..., min_length=1, max_length=4000, description="详细描述")
+    occur_at: Optional[str] = Field(None, description="Bug: 问题发生时间（用户填写）")
+    repro_steps: Optional[str] = Field(None, description="Bug: 复现次数")
+    contact: Optional[str] = Field(None, max_length=128, description="选填联系方式")
+    attach_log: bool = Field(False, description="建议类时可选手动勾选附日志；bug 类后端强制抓")
+
+
+class AdminTicketReplyRequest(BaseModel):
+    """管理员回复/操作工单请求体"""
+    reply: Optional[str] = Field(None, max_length=2000, description="回复内容（reply/reply_close 必填）")
+    action: str = Field(..., description="start / reply / reply_close / close / reopen")
+    pin: str = Field(..., description="6 位管理 PIN")

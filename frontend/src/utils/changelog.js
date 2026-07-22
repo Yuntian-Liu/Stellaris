@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.9.3 Procyon'
+export const APP_VERSION = 'V0.10.0 Arcturus'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-22'
@@ -21,6 +21,15 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V0.10.0', codename: 'Arcturus', date: '2026-07-22',
+    items: [
+      '反馈工单上线：在设置页提交 Bug 反馈或功能建议，附诊断日志协助排查，支持在线追踪处理进度与开发者回复',
+      '支持上传纯音频文件：MP3、M4A、WAV 等格式可直接提取字幕，跳过抽音轨步骤',
+      '修改密码入口移至个人资料区，界面更紧凑',
+    ],
+    patches: [],
+  },
   {
     version: 'V0.9.0', codename: 'Procyon', date: '2026-07-21',
     items: [

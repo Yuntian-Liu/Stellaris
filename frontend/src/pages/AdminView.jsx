@@ -6,12 +6,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
-  Empty, Tooltip, message, Radio,
+  Empty, Tooltip, message, Radio, Collapse,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
   DownOutlined, UpOutlined, ClockCircleOutlined, DotChartOutlined,
-  GlobalOutlined, SwapOutlined, GiftOutlined, ToolOutlined,
+  GlobalOutlined, SwapOutlined, GiftOutlined, ToolOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line,
@@ -20,6 +20,7 @@ import {
 import { adminApi } from '../hooks/api'
 import TierBadge from '../components/TierBadge'
 import PinModal from '../components/PinModal'
+import TicketStatusStamp from '../components/TicketStatusStamp'
 import { tierMeta, GRANT_CONFIG } from '../utils/tier'
 
 /** 千分位缩写（与 SettingsView 同口径） */
@@ -1051,6 +1052,221 @@ function TasksPanel() {
   )
 }
 
+/* ───────── 工单处理面板（V0.9.4）───────── */
+
+const TICKET_CATEGORY = {
+  bug: 'Bug 反馈', suggestion: '功能建议', other: '其他',
+}
+const TICKET_STATUS_TABS = [
+  { key: 'pending', label: '待处理' },
+  { key: 'processing', label: '处理中' },
+  { key: 'replied', label: '已回复' },
+  { key: 'closed', label: '已关闭' },
+]
+
+function TicketsPanel() {
+  const [items, setItems] = useState(null)
+  const [counts, setCounts] = useState({})
+  const [filter, setFilter] = useState('pending')
+  const [detail, setDetail] = useState(null)    // 详情弹窗
+  const [replyText, setReplyText] = useState('')
+  const [acting, setActing] = useState(false)
+  const { requirePin, pinModal } = usePinFlow()
+
+  const load = useCallback(async () => {
+    try {
+      const [cur, all] = await Promise.all([
+        adminApi.listTickets(filter),
+        adminApi.listTickets(),
+      ])
+      setItems(cur.items || [])
+      const c = {}
+      ;(all.items || []).forEach((t) => { c[t.status] = (c[t.status] || 0) + 1 })
+      setCounts(c)
+    } catch (e) {
+      message.error(e.message)
+    }
+  }, [filter])
+
+  useEffect(() => { load() }, [load])
+
+  const openDetail = async (tid) => {
+    try {
+      const t = await adminApi.getTicket(tid)
+      setDetail(t); setReplyText(t.admin_reply || '')
+    } catch (e) { message.error(e.message) }
+  }
+
+  // 执行操作（PIN 二次验证后调 API）
+  const doAction = async (action, pin, reply) => {
+    setActing(true)
+    try {
+      await adminApi.replyTicket(detail.id, { action, reply, pin })
+      message.success('操作成功')
+      const t = await adminApi.getTicket(detail.id)
+      setDetail(t); setReplyText(t.admin_reply || '')
+      load()
+      return true
+    } catch (e) {
+      message.error(e.message)
+      return false
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const onAction = (action) => {
+    if (action !== 'start' && action !== 'close' && action !== 'reopen') {
+      // reply / reply_close 需要回复内容
+      if (!replyText.trim()) { message.warning('请输入回复内容'); return }
+    }
+    requirePin(async (pin) => doAction(action, pin, action === 'close' || action === 'start' || action === 'reopen' ? null : replyText.trim()))
+  }
+
+  return (
+    <div>
+      {/* 状态筛选条 */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {TICKET_STATUS_TABS.map((s) => (
+          <Button key={s.key} size="small"
+            type={filter === s.key ? 'primary' : 'default'}
+            onClick={() => setFilter(s.key)}>
+            {s.label}{counts[s.key] ? ` (${counts[s.key]})` : ''}
+          </Button>
+        ))}
+      </div>
+
+      <Table
+        size="small"
+        rowKey="id"
+        loading={items === null}
+        dataSource={items || []}
+        locale={{ emptyText: <Empty description="暂无工单" /> }}
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        columns={[
+          { title: '标题', dataIndex: 'title', ellipsis: true },
+          { title: '分类', dataIndex: 'category', width: 90, render: (c) => TICKET_CATEGORY[c] || c },
+          { title: 'UID', dataIndex: 'user_uid', width: 80, className: 'font-mono' },
+          { title: '状态', dataIndex: 'status', width: 80, render: (s) => <TicketStatusStamp status={s} /> },
+          { title: '时间', dataIndex: 'created_at', width: 140, render: fmtTime },
+          { title: '', width: 70, render: (_, r) => (
+            <Button size="small" type="link" onClick={() => openDetail(r.id)}>查看</Button>
+          ) },
+        ]}
+      />
+
+      {/* 详情弹窗 */}
+      <Modal open={!!detail} onCancel={() => setDetail(null)} width={620} centered
+        footer={null} destroyOnClose
+        styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
+        title={<span className="font-display">工单 #{detail?.id}</span>}
+      >
+        {detail && (
+          <div style={{ padding: '4px 0' }}>
+            <div className="font-display font-display-xs" style={{ marginBottom: 8 }}>{detail.title}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 11, color: 'var(--mute)' }}>
+                {TICKET_CATEGORY[detail.category]} · UID {detail.user_uid}
+              </span>
+              <TicketStatusStamp status={detail.status} />
+              <span style={{ fontSize: 11, color: 'var(--mute)', marginLeft: 'auto' }}>
+                {fmtTime(detail.created_at)}
+              </span>
+            </div>
+
+            {detail.contact && (
+              <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 8 }}>
+                联系方式：{detail.contact}
+              </div>
+            )}
+            {(detail.occur_at || detail.repro_steps) && (
+              <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 8 }}>
+                {detail.occur_at && <span>发生时间：{detail.occur_at}　</span>}
+                {detail.repro_steps && <span>复现：{detail.repro_steps}</span>}
+              </div>
+            )}
+
+            <div style={{
+              fontSize: 13, color: 'var(--body)', lineHeight: 1.8, marginBottom: 12,
+              whiteSpace: 'pre-wrap', background: 'var(--surface-2)',
+              padding: '10px 12px', borderRadius: 'var(--r-input)',
+            }}>
+              {detail.description}
+            </div>
+
+            {detail.log_content && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ink)' }}>
+                    诊断日志
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <Button size="small" type="text" onClick={() => {
+                    const blob = new Blob([detail.log_content], { type: 'application/json' })
+                    const a = document.createElement('a')
+                    a.href = URL.createObjectURL(blob)
+                    a.download = `stellaris-ticket-${detail.id}-diagnostic.json`
+                    a.click()
+                    URL.revokeObjectURL(a.href)
+                  }} icon={<DownloadOutlined />} />
+                </div>
+                <pre className="font-mono" style={{
+                  maxHeight: 200, overflow: 'auto', fontSize: 11,
+                  background: 'var(--surface-2)', padding: 8, borderRadius: 4,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                }}>{detail.log_content}</pre>
+              </div>
+            )}
+
+            {/* 历史回复（如有） */}
+            {detail.admin_reply && (
+              <div style={{
+                background: 'var(--accent-light)', borderRadius: 'var(--r-input)',
+                padding: '10px 12px', marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, marginBottom: 4 }}>
+                  上次回复
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                  {detail.admin_reply}
+                </div>
+              </div>
+            )}
+
+            {/* pending 态：不显示回复框，只显示【开始处理】 */}
+            {detail.status === 'pending' && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button loading={acting} type="primary" onClick={() => onAction('start')}>开始处理</Button>
+              </div>
+            )}
+
+            {/* 非 pending 态：显示回复框 + 对应操作按钮 */}
+            {(detail.status === 'processing' || detail.status === 'replied') && (
+              <>
+                <Input.TextArea rows={3} value={replyText} maxLength={2000}
+                  placeholder="输入回复内容"
+                  onChange={(e) => setReplyText(e.target.value)}
+                  style={{ marginBottom: 12 }} />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <Button loading={acting} onClick={() => onAction('reply')}>回复</Button>
+                  <Button loading={acting} danger onClick={() => onAction('reply_close')}>回复并关闭</Button>
+                </div>
+              </>
+            )}
+
+            {detail.status === 'closed' && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button loading={acting} onClick={() => onAction('reopen')}>重新打开</Button>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+      {pinModal}
+    </div>
+  )
+}
+
 /* ───────── 主界面 ───────── */
 
 export default function AdminView({ onBack }) {
@@ -1077,6 +1293,7 @@ export default function AdminView({ onBack }) {
             <OrdersPanel key={orderFilter} initialFilter={orderFilter} />
           ) },
           { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
+          { key: 'tickets', label: '工单处理', children: <TicketsPanel /> },
         ]}
       />
     </div>

@@ -105,17 +105,27 @@ export default function HomePage({ onSubmit }) {
     if (skipSegment) setSkipSegment(false)
   }
 
-  // 前端用 <video>.duration 估时长，复刻后端 estimate 公式，给 upload 也做预估卡。
+  // 前端用 <video>/<audio>.duration 估时长，复刻后端 estimate 公式，给 upload 也做预估卡。
   // 后端仍以 ffprobe 探到的时长为准扣费（防绕过），前端预估仅作 UX 参考。
-  const getVideoDuration = (file) => new Promise((resolve) => {
-    const video = document.createElement('video')
-    video.preload = 'metadata'
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(video.src)
-      resolve(video.duration || 0)
+  const getMediaDuration = (file) => new Promise((resolve) => {
+    const el = document.createElement('video')
+    el.preload = 'metadata'
+    el.onloadedmetadata = () => {
+      URL.revokeObjectURL(el.src)
+      resolve(el.duration || 0)
     }
-    video.onerror = () => resolve(0)
-    video.src = URL.createObjectURL(file)
+    el.onerror = () => {
+      // <video> 对纯音频可能不触发 loadedmetadata，fallback 到 <audio>
+      const audio = document.createElement('audio')
+      audio.preload = 'metadata'
+      audio.onloadedmetadata = () => {
+        URL.revokeObjectURL(audio.src)
+        resolve(audio.duration || 0)
+      }
+      audio.onerror = () => resolve(0)
+      audio.src = URL.createObjectURL(file)
+    }
+    el.src = URL.createObjectURL(file)
   })
   const estimateUploadCost = (durationSec) => {
     // 常量与 backend/config.py 对齐：SPEECH_CHARS_PER_MIN=240, CHARS_PER_TOKEN=1.5, LLM_TOKEN_ROUNDTRIP_FACTOR=2.0
@@ -130,9 +140,9 @@ export default function HomePage({ onSubmit }) {
   // 第一步：选文件后估时长、展示预估卡（不立即上传，等用户确认）
   const handleUpload = async (file) => {
     setError(null)
-    const durationSec = await getVideoDuration(file)
+    const durationSec = await getMediaDuration(file)
     if (!durationSec || durationSec <= 0) {
-      setError('无法识别视频时长，请检查文件是否损坏或格式不受支持')
+      setError('无法识别媒体时长，请检查文件是否损坏或格式不受支持')
       return false
     }
     setEstimateData(null)   // 互斥：拖文件后只走上传预估态
@@ -331,15 +341,15 @@ export default function HomePage({ onSubmit }) {
           <Upload.Dragger
             beforeUpload={handleUpload}
             showUploadList={false}
-            accept="video/*,.mp4,.mkv,.avi,.mov,.flv"
+            accept="video/*,audio/*,.mp4,.mkv,.avi,.mov,.flv,.mp3,.m4a,.wav,.ogg,.flac,.aac"
             multiple={false}
             disabled={busy}
             style={{ padding: '22px 0' }}
           >
             <div style={{ color: 'var(--mute)' }}>
               <UploadOutlined style={{ fontSize: 24, color: 'var(--hairline-strong)', marginBottom: 8, display: 'block' }} />
-              <p className="font-body" style={{ fontSize: 14, marginBottom: 4 }}>点击或拖拽视频文件到此处</p>
-              <p className="font-caption" style={{ marginBottom: 0 }}>MP4 / MKV / AVI / MOV / FLV · 按实际时长计量</p>
+              <p className="font-body" style={{ fontSize: 14, marginBottom: 4 }}>点击或拖拽视频 / 音频文件到此处</p>
+              <p className="font-caption" style={{ marginBottom: 0 }}>MP4 / MKV / AVI / MOV / FLV / MP3 / M4A / WAV · 按实际时长计量</p>
             </div>
           </Upload.Dragger>
 
@@ -360,7 +370,7 @@ export default function HomePage({ onSubmit }) {
                 {uploadEstimate.file.name}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <EstimateRow icon={<ClockCircleOutlined />} label="视频时长" value={formatDuration(uploadEstimate.durationSec)} />
+                <EstimateRow icon={<ClockCircleOutlined />} label="时长" value={formatDuration(uploadEstimate.durationSec)} />
                 <EstimateRow icon={<FileTextOutlined />} label="预计转写字数" value={`约 ${formatNumber(uploadEstimate.estChars)} 字`} />
                 <EstimateRow icon={<ThunderboltOutlined />} label="智能整理预计消耗" value={`约 ${formatNumber(uploadEstimate.estTokens)} tokens`} tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量" />
                 <EstimateRow icon={<ClockCircleOutlined />} label="本次消耗" value={`${uploadEstimate.estMinutes} 分钟 + ${uploadEstimate.estQuantum} 量子波`} tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单" />

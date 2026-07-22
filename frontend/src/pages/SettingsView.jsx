@@ -11,9 +11,9 @@ import {
   IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
-  GiftOutlined, CreditCardOutlined,
+  GiftOutlined, CreditCardOutlined, MessageOutlined,
 } from '@ant-design/icons'
-import api, { authApi, getToken } from '../hooks/api'
+import api, { authApi, getToken, ticketApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
 import TurnstileField from '../components/auth/TurnstileField'
@@ -21,6 +21,7 @@ import ExchangeModal from '../components/ExchangeModal'
 import MembershipCards from '../components/MembershipCards'
 import RedeemModal from '../components/RedeemModal'
 import MembershipHistoryModal from '../components/MembershipHistoryModal'
+import FeedbackView from '../components/FeedbackView'
 import TierBadge from '../components/TierBadge'
 import LedgerView from '../components/LedgerView'
 import { tierMeta } from '../utils/tier'
@@ -66,6 +67,15 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const [memHistoryOpen, setMemHistoryOpen] = useState(false) // 开通记录弹窗
   const [ledgerView, setLedgerView] = useState(false)   // 消耗记录二级界面
   const [ledgerTab, setLedgerTab] = useState('minute')  // 消耗记录初始页签
+  const [feedbackOpen, setFeedbackOpen] = useState(false)   // 反馈与建议二级界面
+  const [ticketUnread, setTicketUnread] = useState(false)   // 工单未读红点
+
+  // 检查工单未读（反馈入口红点）
+  useEffect(() => {
+    ticketApi.listMine().then((r) =>
+      setTicketUnread((r.items || []).some((t) => t.unread))
+    ).catch(() => {})
+  }, [])
 
   // 标题栏余额区「消耗记录 →」入口联动（App 下钻，带货币页签）
   useEffect(() => {
@@ -149,6 +159,19 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       window.scrollTo(0, savedScroll.current)
     }, 320)
   }
+  const [feedbackClosing, setFeedbackClosing] = useState(false)
+  const closeFeedback = () => {
+    setFeedbackClosing(true)
+    setTimeout(() => {
+      setFeedbackOpen(false)
+      setFeedbackClosing(false)
+      window.scrollTo(0, savedScroll.current)   // 回到设置页原滚动位置
+      // 返回后刷新红点（用户可能在反馈页读了工单）
+      ticketApi.listMine().then((r) =>
+        setTicketUnread((r.items || []).some((t) => t.unread))
+      ).catch(() => {})
+    }, 320)
+  }
   const overlayStyle = {
     // top -14 抵消主内容的负边距，bottom 0 拉满到容器底，确保把主界面完全盖住
     position: 'absolute', top: -14, bottom: 0, left: 0, right: 0,
@@ -158,11 +181,12 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   // 二级界面进出时的滚动位置管理：进入滚到顶，返回恢复原位置（iOS 转场惯例）
   const savedScroll = useRef(0)
   useEffect(() => {
-    if (memberView || ledgerView) {
+    if (memberView || ledgerView || feedbackOpen) {
       savedScroll.current = window.scrollY
-      window.scrollTo(0, 0)
+      // 延迟一帧：让 overlay 先盖住再置顶，避免看到主界面滚动闪烁
+      requestAnimationFrame(() => window.scrollTo(0, 0))
     }
-  }, [memberView, ledgerView])
+  }, [memberView, ledgerView, feedbackOpen])
 
   return (
     <div style={{ position: 'relative' }}>
@@ -172,6 +196,22 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />
           <h1 className="font-display font-display-sm" style={{ margin: 0 }}>设置</h1>
         </div>
+
+        {/* 工单未读通知条（顶端可见，无需下滑） */}
+        {ticketUnread && (
+          <div onClick={() => { setFeedbackOpen(true); setTicketUnread(false) }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '10px 14px', marginBottom: 16,
+              background: 'var(--accent-light)',
+              borderRadius: 'var(--r-input)',
+              cursor: 'pointer', fontSize: 13, color: 'var(--accent)', fontWeight: 500,
+            }}>
+            <MessageOutlined style={{ fontSize: 14 }} />
+            您的工单有新回复
+            <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>查看</span>
+          </div>
+        )}
 
       {/* ── 用户信息行 ── */}
       <div className="card" style={{
@@ -248,6 +288,9 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <Divider />
         <RowItem icon={<IdcardOutlined />} tint="#8b5cf6" label="UID"
           value={<span className="font-mono">{user.uid}</span>} />
+        <Divider />
+        <RowItem icon={<LockOutlined />} tint="#6366f1" label="修改密码"
+          value="旧密码 / 验证码" onClick={() => setPasswordOpen(true)} />
       </SectionCard>
 
       {/* ── 会员权益（入口 → 二级界面会员卡）── */}
@@ -282,12 +325,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
           onClick={() => setMemHistoryOpen(true)} />
       </SectionCard>
 
-      {/* ── 账号安全 ── */}
-      <SectionTitle>账号安全</SectionTitle>
-      <SectionCard>
-        <RowItem icon={<LockOutlined />} tint="#6366f1" label="修改密码"
-          value="旧密码 / 验证码" onClick={() => setPasswordOpen(true)} />
-      </SectionCard>
+      {/* ── 账号安全 已并入「个人资料」── */}
 
       {/* ── 关于 ── */}
       <SectionTitle>关于</SectionTitle>
@@ -305,6 +343,18 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <Divider />
         <RowItem icon={<SafetyCertificateOutlined />} tint="#b45309" label="会员协议"
           onClick={() => openAgreement('membership')} />
+        <Divider />
+        <RowItem icon={<MessageOutlined />} tint="#4f46e5" label="反馈与建议"
+          value={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            提交工单 · 追踪进度
+            {ticketUnread && (
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: 'var(--accent)', flexShrink: 0,
+              }} />
+            )}
+          </span>}
+          onClick={() => { setFeedbackOpen(true); setTicketUnread(false) }} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
           value="排查问题用"
@@ -396,6 +446,13 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       {(ledgerView || ledgerClosing) && (
         <div className={ledgerClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
           <LedgerView onBack={closeLedger} initialTab={ledgerTab} />
+        </div>
+      )}
+
+      {/* ── 反馈与建议二级界面（覆盖式滑入，与会员/消耗记录同款 overlay）── */}
+      {(feedbackOpen || feedbackClosing) && (
+        <div className={feedbackClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
+          <FeedbackView onBack={closeFeedback} />
         </div>
       )}
     </div>

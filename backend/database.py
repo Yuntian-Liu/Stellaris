@@ -36,6 +36,7 @@ async def init_db():
     import history_store  # noqa: F401
     import afdian_store  # noqa: F401
     import redeem_store  # noqa: F401
+    import ticket_store  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_columns()

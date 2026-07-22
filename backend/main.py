@@ -29,6 +29,7 @@ from models import (
     HealthResponse, TaskSource,
     EstimateRequest, EstimateResponse,
     ChatRequest,
+    CreateTicketRequest, AdminTicketReplyRequest,
 )
 from pipeline.download import download_bilibili, extract_audio_from_file, probe_bilibili_info
 from pipeline.subtitle import fetch_cc_subtitle
@@ -152,7 +153,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.9.3-procyon",
+    version="0.10.0-arcturus",
     lifespan=lifespan,
 )
 
@@ -364,7 +365,7 @@ async def upload_file(
     duration = await asyncio.to_thread(probe_media_duration, file_path)
     if duration <= 0:
         cleanup_temp_files(task_id)
-        raise HTTPException(status_code=400, detail="无法识别视频时长，请检查文件是否损坏或格式不受支持")
+        raise HTTPException(status_code=400, detail="无法识别媒体时长，请检查文件是否损坏或格式不受支持")
     est_minutes = max(1, math.ceil(duration / 60))
     ip = req.client.host if req.client else "unknown"
 
@@ -1275,6 +1276,101 @@ async def admin_revoke_code(
         raise HTTPException(status_code=409, detail=e.detail)
 
 
+# ===== 反馈工单（V0.9.4）=====
+
+@app.get("/api/admin/tickets")
+async def admin_list_tickets(
+    status: str | None = None,
+    current_user: User = Depends(get_admin_user),
+):
+    """管理员：全部工单列表（可选状态筛选）"""
+    from ticket_store import list_all_tickets
+    return {"items": await list_all_tickets(status)}
+
+
+@app.get("/api/admin/tickets/{tid}")
+async def admin_get_ticket(
+    tid: int,
+    current_user: User = Depends(get_admin_user),
+):
+    """管理员：单条工单详情（含日志内容）"""
+    from ticket_store import get_ticket_admin, read_log_content
+    t = await get_ticket_admin(tid)
+    if not t:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    t["log_content"] = read_log_content(t.get("log_path"))
+    return t
+
+
+@app.post("/api/admin/tickets/{tid}/reply")
+async def admin_reply_ticket(
+    tid: int,
+    req: AdminTicketReplyRequest,
+    current_user: User = Depends(get_admin_user),
+):
+    """管理员：回复/关闭/重新打开工单（PIN 二次验证）"""
+    from ticket_store import reply_ticket, TicketError
+    await _check_admin_pin(current_user, {"pin": req.pin})
+    try:
+        result = await reply_ticket(tid, req.action, req.reply)
+        return {"ok": True, "ticket": result}
+    except TicketError as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+
+
+# ===== 用户工单（V0.9.4，需登录）=====
+
+@app.post("/api/tickets")
+async def submit_ticket(
+    req: CreateTicketRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """用户提交工单。bug 类后端强制抓诊断日志；suggestion 类看 attach_log。
+    顺序：提交瞬间抓日志（反映当前 tasks 状态）→ 建工单拿 id → 写日志文件 → 回填 log_path。"""
+    from ticket_store import create_ticket, update_ticket_log_path, write_log_file
+
+    need_log = (req.category == "bug") or (req.category == "suggestion" and req.attach_log)
+    # ① 先建工单拿 id（log_path 留空）
+    ticket = await create_ticket(
+        current_user.uid, title=req.title, category=req.category,
+        description=req.description, occur_at=req.occur_at,
+        repro_steps=req.repro_steps, contact=req.contact,
+    )
+    # ② 提交瞬间抓日志 → 落文件 → 回填
+    if need_log:
+        try:
+            diag = await build_diagnostics(current_user.uid, app.version, tasks)
+            log_path = write_log_file(ticket["id"], diag)
+            await update_ticket_log_path(ticket["id"], log_path)
+            ticket["has_log"] = True
+        except Exception as e:
+            logger.warning("[Ticket] 抓诊断日志失败 tid=%s: %s", ticket["id"], e)
+            # 日志失败不阻断工单提交（工单本身已落库）
+    return {"ok": True, "ticket": ticket}
+
+
+@app.get("/api/tickets")
+async def list_my_tickets(current_user: User = Depends(get_current_user)):
+    """我的工单列表（含未读标记）"""
+    from ticket_store import list_user_tickets
+    return {"items": await list_user_tickets(current_user.uid)}
+
+
+@app.get("/api/tickets/{tid}")
+async def get_my_ticket(
+    tid: int,
+    current_user: User = Depends(get_current_user),
+):
+    """查看我的工单详情（owner 校验；点开即标记已读消红点）"""
+    from ticket_store import get_ticket_for_user, mark_user_read
+    t = await get_ticket_for_user(tid, current_user.uid)
+    if not t:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    await mark_user_read(tid, current_user.uid)
+    t["unread"] = False
+    return t
+
+
 # ===== 核心管线（后台执行）=====
 
 async def run_pipeline(
@@ -1418,14 +1514,32 @@ def _run_pipeline_from_file_sync(
     file_path: Path,
     sessdata: str | None,
 ):
-    """文件上传管线同步实现（放线程池跑，不阻塞事件循环）"""
+    """文件上传管线同步实现（放线程池跑，不阻塞事件循环）。
+    纯音频文件跳过抽音轨直接送 ASR；视频文件先 FFmpeg 抽音轨。"""
+    import subprocess as _sp
+    def _has_video_stream(p: Path) -> bool:
+        """ffprobe 检测文件是否包含视频流；失败兜底返回 True（当视频处理）。"""
+        try:
+            probe = _sp.run(
+                [FFPROBE_PATH, "-i", str(p), "-show_streams", "-v", "quiet"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            return "codec_type=video" in probe.stdout
+        except Exception:
+            return True   # 探测失败，走安全路径（当视频抽音轨）
+
     try:
         _update_status(task_id, TaskStatus.EXTRACTING_AUDIO, 20)
 
-        # ① 抽音轨
-        result = extract_audio_from_file(file_path, task_id)
-        audio_path = result["audio_path"]
-        video_title = result["video_title"]
+        # ① 音频获取：纯音频直接用，视频抽音轨
+        if _has_video_stream(file_path):
+            result = extract_audio_from_file(file_path, task_id)
+            audio_path = result["audio_path"]
+            video_title = result["video_title"]
+        else:
+            audio_path = file_path
+            video_title = file_path.stem
         Path(file_path).unlink(missing_ok=True)   # 原始上传文件用完即删
 
         # ② ASR
