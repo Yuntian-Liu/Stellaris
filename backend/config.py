@@ -101,6 +101,16 @@ TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
 # 运行环境（true=真实发邮件+强制Turnstile；false=验证码打印日志+Turnstile bypass）
 IS_PROD = os.getenv("IS_PROD", "false").lower() == "true"
 
+# ===== 数据库自动备份（腾讯云 COS）=====
+# 留空（COS_SECRET_ID/KEY 或 BUCKET 任一为空）则自动禁用备份，本地开发零负担
+# 子用户密钥（仅 QcloudCOSFullAccess 权限，隔离风险）；Bucket 新加坡地域（免备案、与服务器同城）
+COS_SECRET_ID = os.getenv("COS_SECRET_ID", "")
+COS_SECRET_KEY = os.getenv("COS_SECRET_KEY", "")
+COS_BUCKET = os.getenv("COS_BUCKET", "")            # 如 stellaris-backup-1309360987
+COS_REGION = os.getenv("COS_REGION", "ap-singapore")
+COS_BACKUP_RETAIN_DAYS = int(os.getenv("COS_BACKUP_RETAIN_DAYS", "7"))  # 保留天数
+
+
 # ===== 爱发电（会员开通）=====
 # 店铺主页（会员卡"开通"按钮跳转；方案建好后换具体方案链接）
 AFDIAN_SHOP_URL = os.getenv("AFDIAN_SHOP_URL", "")

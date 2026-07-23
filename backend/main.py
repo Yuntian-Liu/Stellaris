@@ -96,11 +96,15 @@ async def lifespan(app: FastAPI):
             await delete_task_record(tid)
     # 起后台定时清理任务（每 10 分钟扫一次）
     cleanup_task = asyncio.create_task(_periodic_cleanup())
+    # 起后台定时备份任务（每天 04:00，UTC+8；COS 未配置则自动跳过）
+    from backup_store import _periodic_backup
+    backup_task = asyncio.create_task(_periodic_backup())
     yield
     # 关闭：只取消定时任务。任务文件【不】在关闭时删除——交给分档清理按各档位
     # 保留时长处理；否则每次重启/部署都会清空会员的长保留数据（碳碳实测踩坑：
     # admin 永久保留的任务在重启后目录消失）
     cleanup_task.cancel()
+    backup_task.cancel()
     print("[Stellaris] shut down.")
 
 
@@ -1027,6 +1031,25 @@ async def admin_set_pin(
 async def admin_pin_status(current_user: User = Depends(get_admin_user)):
     """PIN 是否已设置（前端决定弹「设置」还是「验证」）"""
     return {"pin_set": await pin_status(current_user.uid)}
+
+
+@app.post("/api/admin/backup")
+async def admin_backup_now(req: Request, current_user: User = Depends(get_admin_user)):
+    """手动触发一次数据库备份。敏感操作：body 须带 pin（PIN 二次验证）。"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from backup_store import do_backup, _cos_enabled
+    result = await do_backup(manual=True)
+    return {"enabled": _cos_enabled(), **result}
+
+
+@app.get("/api/admin/backup-status")
+async def admin_backup_status(current_user: User = Depends(get_admin_user)):
+    """备份状态：COS 配置、上次备份结果、保留策略、DB 大小"""
+    from backup_store import get_backup_status
+    status = get_backup_status()
+    health = await get_health()
+    return {**status, "db_size_mb": health["db_size_mb"]}
 
 
 @app.get("/api/admin/trends")

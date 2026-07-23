@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.11.3 Regulus'
+export const APP_VERSION = 'V0.11.4 Regulus'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
-export const AGREEMENT_VERSION = '2026-07-22'
+export const AGREEMENT_VERSION = '2026-07-24'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -29,6 +29,14 @@ export const CHANGELOG = [
       '这个版本我们首次做了手机适配，鉴于开发者水平有限，难免还带着些毛边。如果哪个角落不太对劲，还请您在设置-反馈与建议-提交工单告诉我们，开发者将尽快修复',
     ],
     patches: [
+      {
+        version: 'V0.11.4', date: '2026-07-24',
+        items: [
+          '数据库每日自动备份至腾讯云 COS（新加坡），保留最近 7 天，过期自动清理',
+          '管理后台新增「数据管理」面板：数据库大小、COS 状态、备份历史记录、手动备份一键触发',
+          '用户协议与隐私政策同步更新，新增腾讯云 COS 作为第三方存储服务商',
+        ],
+      },
       {
         version: 'V0.11.3', date: '2026-07-24',
         items: [

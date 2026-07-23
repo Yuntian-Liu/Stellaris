@@ -192,6 +192,8 @@ export const adminApi = {
   health: () => request('/api/admin/health'),
   anonUsage: () => request('/api/admin/anon-usage'),
   revokeCode: (code, pin) => request(`/api/admin/codes/${encodeURIComponent(code)}/revoke`, { method: 'POST', body: { pin } }),
+  backupStatus: () => request('/api/admin/backup-status'),
+  backupNow: (pin) => request('/api/admin/backup', { method: 'POST', body: { pin } }),
   listTickets: (status) => request(`/api/admin/tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   getTicket: (tid) => request(`/api/admin/tickets/${tid}`),
   replyTicket: (tid, payload) => request(`/api/admin/tickets/${tid}/reply`, { method: 'POST', body: payload }),

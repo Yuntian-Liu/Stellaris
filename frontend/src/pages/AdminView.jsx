@@ -12,6 +12,7 @@ import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
   DownOutlined, UpOutlined, ClockCircleOutlined, DotChartOutlined,
   GlobalOutlined, SwapOutlined, GiftOutlined, ToolOutlined, DownloadOutlined,
+  CloudUploadOutlined,
 } from '@ant-design/icons'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line,
@@ -1275,6 +1276,136 @@ function TicketsPanel() {
   )
 }
 
+/* ───────── ⑦ 数据管理 ───────── */
+
+function DataPanel() {
+  const [health, setHealth] = useState(null)
+  const [status, setStatus] = useState(null)
+  const [backing, setBacking] = useState(false)
+  const { requirePin, pinModal } = usePinFlow()
+
+  const load = useCallback(() => {
+    adminApi.health().then(setHealth).catch(() => {})
+    adminApi.backupStatus().then(setStatus).catch(() => {})
+  }, [])
+  useEffect(load, [load])
+
+  const doBackup = () => {
+    requirePin(async (pin) => {
+      setBacking(true)
+      try {
+        const r = await adminApi.backupNow(pin)
+        message.success(r.ok ? (r.uploaded ? `备份成功：${r.key}` : '快照已生成（COS 未配置，本地未留存）') : `备份失败：${r.msg}`)
+        const s = await adminApi.backupStatus()
+        setStatus(s)
+      } catch (e) {
+        message.error('备份请求失败：' + e.message)
+      } finally {
+        setBacking(false)
+      }
+    })
+  }
+
+  const last = status?.last_backup
+  const cosOk = status?.cos_enabled
+  const history = status?.history || []
+  // 上次备份优先从 COS 历史取（不丢），内存 _last_backup 兜底（进程重启后丢失）
+  const lastFromCos = history.length > 0 ? history[0] : null
+  const lastDisplay = lastFromCos || last
+  const lastOk = lastFromCos ? true : (last?.ok ?? null)
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>数据库</div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div className="card" style={{ padding: '14px 16px', flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>DB 文件大小</div>
+          <div className="font-mono" style={{ fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>
+            {health ? `${health.db_size_mb} MB` : '-'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>
+            磁盘剩余 {health?.disk_free_pct ?? '-'}% · {health ? (() => { const s = health.uptime_sec; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return h > 0 ? `运行 ${h}h${m}m` : `运行 ${m}m` })() : '-'}
+          </div>
+        </div>
+        <div className="card" style={{ padding: '14px 16px', flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>COS 异地备份</div>
+          <div className="font-mono" style={{ fontSize: 22, fontWeight: 600, color: cosOk ? '#16a34a' : 'var(--mute)' }}>
+            {cosOk ? '已配置' : '未配置'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4, lineHeight: 1.7 }}>
+            <span style={{ color: '#0ea5e9' }}>腾讯云 COS</span>
+            {' · '}
+            <span style={{ color: '#0891b2' }}>新加坡（亚太）</span>
+            {cosOk && (
+              <span style={{ marginLeft: 8 }}>
+                {lastDisplay ? (
+                  lastDisplay.time_iso && new Date(lastDisplay.time_iso).getTime() > Date.now() - 3600000
+                    ? <span style={{ color: '#16a34a' }}>刚刚手动备份</span>
+                    : <span style={{ color: '#7c3aed' }}>自动（每日 04:00）</span>
+                ) : <span style={{ color: '#7c3aed' }}>自动（每日 04:00）</span>}
+              </span>
+            )}
+            <br />
+            {cosOk ? `保留最近 ${status?.retention_days ?? 7} 天，过期自动清理` : 'COS 环境变量未设，自动备份不可用'}
+          </div>
+        </div>
+        <div className="card" style={{ padding: '14px 16px', flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>上次备份</div>
+          <div className="font-mono" style={{ fontSize: 22, fontWeight: 600, color: lastDisplay ? (lastOk ? '#16a34a' : 'var(--error)') : 'var(--mute)' }}>
+            {lastDisplay ? (lastOk ? '成功' : '失败') : '—'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>
+            {lastDisplay
+              ? `${lastDisplay.time_iso?.slice(0, 16) || lastDisplay.time || '未知时间'} · ${lastDisplay.key || ''}`
+              : (cosOk ? '等待首次备份' : '暂无备份记录')}
+          </div>
+        </div>
+      </div>
+
+      {/* 手动备份 */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>操作</div>
+        <Button type="primary" icon={<CloudUploadOutlined />} loading={backing} onClick={doBackup}>
+          立即备份
+        </Button>
+        <span style={{ fontSize: 11, color: 'var(--mute)', marginLeft: 12 }}>
+          生成一致性快照{cosOk ? '并上传至 COS（需 PIN 验证）' : '（COS 未配置，仅生成快照不存留）'}
+        </span>
+      </div>
+
+      {/* 备份历史 */}
+      {history.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', margin: '20px 0 10px' }}>备份历史</div>
+          <Table
+            size="small"
+            rowKey="key"
+            dataSource={history}
+            pagination={false}
+            columns={[
+              { title: '日期时间', dataIndex: 'time', width: 130, align: 'center', render: (v) => v || '—' },
+              { title: '方式', dataIndex: 'mode', width: 60, align: 'center', render: (m) => (
+                <span style={{ color: m === '手动' ? '#16a34a' : '#7c3aed', fontWeight: 500, fontSize: 12 }}>{m}</span>
+              ) },
+              { title: '文件', dataIndex: 'key', ellipsis: true },
+              { title: '大小', dataIndex: 'size_bytes', width: 90, render: (v) => v ? `${(v / 1024 / 1024).toFixed(1)} MB` : '—' },
+              { title: '剩余', dataIndex: 'days_until_cleanup', width: 65, align: 'center', render: (d) => (
+                <span style={{ color: d <= 1 ? 'var(--error)' : d <= 3 ? '#d97706' : 'var(--mute)' }}>{d} 天</span>
+              ) },
+            ]}
+          />
+        </>
+      )}
+
+      {/* 日志提示 */}
+      <div style={{ marginTop: 20, padding: '10px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-input)', fontSize: 11, color: 'var(--mute)', lineHeight: 1.7 }}>
+        自动备份每天北京时间 04:00 执行一次（与计费重置时刻对齐）。备份采用 SQLite 在线快照（.backup 命令），运行时安全不锁库。COS 保留最近 {status?.retention_days ?? 7} 天快照，过期自动清理。
+      </div>
+      {pinModal}
+    </div>
+  )
+}
+
 /* ───────── 主界面 ───────── */
 
 export default function AdminView({ onBack }) {
@@ -1302,6 +1433,7 @@ export default function AdminView({ onBack }) {
           ) },
           { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
           { key: 'tickets', label: '工单处理', children: <TicketsPanel /> },
+          { key: 'data', label: '数据管理', children: <DataPanel /> },
         ]}
       />
     </div>
