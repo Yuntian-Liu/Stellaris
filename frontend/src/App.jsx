@@ -857,6 +857,23 @@ export default function App() {
           }
           /* 元信息标签列缩窄 */
           .result-meta-grid { grid-template-columns: 56px 1fr !important; }
+          /* 首页 hero 光晕裁切（480px 绝对定位光晕超出窄屏视口 → 撑宽容器的元凶） */
+          .hero-glow-container { overflow: hidden; }
+          /* 首页副标题换行：PC 端一行，移动端拆两行更均衡 */
+          .hero-subtitle-line2 { display: block; }
+          /* 结果页按钮组窄屏折行 */
+          .result-actions .ant-space { display: flex !important; flex-wrap: wrap; justify-content: center; }
+          /* 进度条 4 步骤改成 2×2 拼图卡片，每块撑满 50%，宽度 = 下方百分比条 */
+          .progress-steps { display: grid !important; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .progress-steps > div {
+            flex: 1 !important;
+            max-width: 100% !important;
+            background: var(--surface-2);
+            border-radius: var(--r-input);
+            padding: 12px 6px;
+            justify-content: center !important;
+          }
+          .progress-connector { display: none !important; }
         }
         /* ═══ END MOBILE ONLY ═══ */
 

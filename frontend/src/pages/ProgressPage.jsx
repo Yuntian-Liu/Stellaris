@@ -109,7 +109,7 @@ export default function ProgressPage({ taskId, onComplete, onBack }) {
       <div className="card card--elevated" style={{ padding: '36px 28px 28px' }}>
 
         {/* ── 动态步骤轨 ── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 36 }}>
+        <div className="progress-steps" style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 36 }}>
           {DISPLAY_STEPS.map((step, i) => {
             const done = i < current
             const active = i === current && !error
@@ -126,7 +126,7 @@ export default function ProgressPage({ taskId, onComplete, onBack }) {
                 />
                 {/* 连接线（最后一个节点后不画） */}
                 {i < DISPLAY_STEPS.length - 1 && (
-                  <div style={{
+                  <div className="progress-connector" style={{
                     flex: 1,
                     height: 2,
                     margin: '0 10px',

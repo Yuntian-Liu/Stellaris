@@ -423,13 +423,13 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
         </div>
 
         {/* 操作区 */}
-        <div style={{
+        <div className="result-actions" style={{
           marginTop: 22,
           paddingTop: 18,
           borderTop: '1px solid var(--hairline)',
           textAlign: 'center',
         }}>
-          <Space>
+          <Space wrap>
             <Button
               icon={<ArrowLeftOutlined />}
               onClick={onBack}

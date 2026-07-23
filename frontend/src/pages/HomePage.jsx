@@ -174,7 +174,7 @@ export default function HomePage({ onSubmit }) {
   return (
     <div className="page-enter">
       {/* ── Hero 区域（微光星点氛围）── */}
-      <div style={{ textAlign: 'center', marginBottom: 44, position: 'relative' }}>
+      <div className="hero-glow-container" style={{ textAlign: 'center', marginBottom: 44, position: 'relative' }}>
         {/* 星点：极克制的闪烁（藏星主题） */}
         <span className="star-dot" style={{ top: -18, left: '12%', fontSize: 13, animationDelay: '0s' }}>✦</span>
         <span className="star-dot" style={{ top: 8, right: '15%', fontSize: 10, animationDelay: '0.9s' }}>✦</span>
@@ -216,7 +216,7 @@ export default function HomePage({ onSubmit }) {
           听见，然后读懂。
         </h1>
         <Text className="font-body" style={{ fontSize: 16, color: 'var(--mute)' }}>
-          贴上视频链接，把视频里说的话变成可以阅读的文字
+          贴上视频链接，<span className="hero-subtitle-line2">把视频里说的话变成可以阅读的文字</span>
         </Text>
       </div>
 
