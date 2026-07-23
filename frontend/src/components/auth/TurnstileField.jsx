@@ -5,6 +5,10 @@
  */
 import { useState, useEffect, useRef } from 'react'
 
+// 复用 EmailStep 的脚本就绪通知机制(index.html 内联壳 + api.js?onload=__turnstileReady)
+// 组件只读 __turnstileLoaded、只写 __turnstileOnLoad,不碰 __turnstileReady 壳
+window.__turnstileLoaded = window.__turnstileLoaded || false
+
 export default function TurnstileField({ onToken }) {
   const [pubConfig, setPubConfig] = useState(null)
   const containerRef = useRef(null)
@@ -23,20 +27,21 @@ export default function TurnstileField({ onToken }) {
   useEffect(() => {
     if (!pubConfig?.is_prod || !pubConfig.turnstile_site_key) return
     let cancelled = false
-    const tryRender = () => {
-      if (cancelled) return
-      if (window.turnstile && containerRef.current && widgetId.current === null) {
-        widgetId.current = window.turnstile.render(containerRef.current, {
-          sitekey: pubConfig.turnstile_site_key,
-          callback: (t) => onToken(t),
-          'expired-callback': () => onToken(null),
-          'error-callback': () => onToken(null),
-        })
-      } else if (!window.turnstile) {
-        setTimeout(tryRender, 200)
-      }
+    const doRender = () => {
+      if (cancelled || !window.turnstile || !containerRef.current || widgetId.current !== null) return
+      widgetId.current = window.turnstile.render(containerRef.current, {
+        sitekey: pubConfig.turnstile_site_key,
+        appearance: 'always',   // 立即显示,不智能延迟
+        callback: (t) => onToken(t),
+        'expired-callback': () => onToken(null),
+        'error-callback': () => onToken(null),
+      })
     }
-    tryRender()
+    if (window.__turnstileLoaded) {
+      doRender()
+    } else {
+      window.__turnstileOnLoad = doRender
+    }
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pubConfig])

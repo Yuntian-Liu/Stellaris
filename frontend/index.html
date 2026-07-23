@@ -13,8 +13,18 @@
       href="https://fonts.loli.net/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap"
       rel="stylesheet"
     />
-    <!-- Cloudflare Turnstile 人机验证(异步加载,不阻塞渲染) -->
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <!-- Cloudflare Turnstile 人机验证(显式渲染:onload 回调通知就绪,避免轮询;preload 并行下载提速) -->
+    <link rel="preload" as="script" href="https://challenges.cloudflare.com/turnstile/v0/api.js" />
+    <script>
+      // api.js 加载完后调用 window.__turnstileReady();此处先定义壳:
+      // 标记脚本已就绪,并触发组件挂载时注册的 render 回调(兼容脚本先就绪 vs 组件先挂载两种时序)
+      window.__turnstileLoaded = false
+      window.__turnstileReady = function () {
+        window.__turnstileLoaded = true
+        if (typeof window.__turnstileOnLoad === 'function') window.__turnstileOnLoad()
+      }
+    </script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=__turnstileReady&render=explicit" async defer></script>
   </head>
   <body>
     <div id="root"></div>

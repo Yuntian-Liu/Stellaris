@@ -9,6 +9,12 @@ import { authApi } from '../../hooks/api'
 import AgreementModal from '../AgreementModal'
 import ForgotPasswordModal from './ForgotPasswordModal'
 
+// Turnstile 脚本就绪通知机制(由 index.html 内联壳 + api.js?onload=__turnstileReady 驱动)
+// 组件只读 window.__turnstileLoaded(脚本是否就绪)、只写 window.__turnstileOnLoad(注册自己的 render 回调)
+// __turnstileReady 壳函数由 index.html 定义,组件不动它,避免覆盖
+window.__turnstileLoaded = window.__turnstileLoaded || false
+
+
 export default function EmailStep({ onSuccess }) {
   const [email, setEmail] = useState('')
   const [mode, setMode] = useState('code')  // 'code' | 'password'
@@ -33,26 +39,28 @@ export default function EmailStep({ onSuccess }) {
     }).catch(() => setTurnstileToken('dev-bypass'))
   }, [])
 
-  // 生产期渲染 Turnstile widget(轮询 window.turnstile 直到脚本就绪)
+  // 生产期渲染 Turnstile widget(脚本就绪即 render,不再 200ms 轮询)
   useEffect(() => {
     if (!pubConfig?.is_prod) return
     const siteKey = pubConfig.turnstile_site_key
     if (!siteKey) return
     let cancelled = false
-    const tryRender = () => {
-      if (cancelled) return
-      if (window.turnstile && turnstileRef.current && widgetId.current === null) {
-        widgetId.current = window.turnstile.render(turnstileRef.current, {
-          sitekey: siteKey,
-          callback: (t) => setTurnstileToken(t),
-          'expired-callback': () => setTurnstileToken(null),
-          'error-callback': () => setTurnstileToken(null),
-        })
-      } else if (!window.turnstile) {
-        setTimeout(tryRender, 200)
-      }
+    const doRender = () => {
+      if (cancelled || !window.turnstile || !turnstileRef.current || widgetId.current !== null) return
+      widgetId.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: siteKey,
+        appearance: 'always',   // 立即显示,不智能延迟
+        callback: (t) => setTurnstileToken(t),
+        'expired-callback': () => setTurnstileToken(null),
+        'error-callback': () => setTurnstileToken(null),
+      })
     }
-    tryRender()
+    // 脚本已就绪 → 直接 render;否则注册回调,等 api.js 的 onload 触发
+    if (window.__turnstileLoaded) {
+      doRender()
+    } else {
+      window.__turnstileOnLoad = doRender
+    }
     return () => { cancelled = true }
   }, [pubConfig])
 

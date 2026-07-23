@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.11.1 Regulus'
+export const APP_VERSION = 'V0.11.2 Regulus'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-22'
@@ -29,6 +29,12 @@ export const CHANGELOG = [
       '这个版本我们首次做了手机适配，鉴于开发者水平有限，难免还带着些毛边。如果哪个角落不太对劲，还请您在设置-反馈与建议-提交工单告诉我们，开发者将尽快修复',
     ],
     patches: [
+      {
+        version: 'V0.11.2', date: '2026-07-23',
+        items: [
+          '登录页人机验证加载提速：打开页面即显示验证框，不再需要干等',
+        ],
+      },
       {
         version: 'V0.11.1', date: '2026-07-23',
         items: [
