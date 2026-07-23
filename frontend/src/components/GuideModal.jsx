@@ -2,7 +2,7 @@
  * 计费引导 — 分页沉浸式介绍（导航栏问号触发）
  * 四页：分钟 / 量子波 / 引力波 / 兑换与让利
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Modal, Button } from 'antd'
 import {
   ClockCircleOutlined, GlobalOutlined, DotChartOutlined,
@@ -58,6 +58,8 @@ const PAGES = [
 
 export default function GuideModal({ open, onClose }) {
   const [page, setPage] = useState(0)
+  // 每次打开回到第一页（组件常驻挂载，useState 不会随 open 自动重置）
+  useEffect(() => { if (open) setPage(0) }, [open])
 
   return (
     <Modal open={open} onCancel={onClose} footer={null} width={440} centered>

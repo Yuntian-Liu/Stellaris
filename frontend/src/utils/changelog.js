@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.10.1 Arcturus'
+export const APP_VERSION = 'V0.11.0 Regulus'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-22'
@@ -21,6 +21,15 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V0.11.0', codename: 'Regulus', date: '2026-07-23',
+    items: [
+      '新版本我们让这颗星学会了在掌心走路 — 掏出手机试试，导航栏不再挤作一团',
+      '余额藏进了头像里，屏幕小了但信息没少；弹窗也收放自如，不会撑着边框',
+      '这个版本我们首次做了手机适配，鉴于开发者水平有限，难免还带着些毛边。如果哪个角落不太对劲，还请您在设置-反馈与建议-提交工单告诉我们，开发者将尽快修复',
+    ],
+    patches: [],
+  },
   {
     version: 'V0.10.0', codename: 'Arcturus', date: '2026-07-22',
     items: [

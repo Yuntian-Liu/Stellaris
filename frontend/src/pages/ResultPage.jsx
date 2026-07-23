@@ -258,13 +258,13 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
       } : undefined}>
 
       {/* ── 结果卡片 ── */}
-      <div className="card card--elevated" style={{
+      <div className="card card--elevated result-card-chat" style={{
         padding: '24px 24px 20px',
         ...(chatOpen ? { width: 760, flexShrink: 0, maxWidth: '100%' } : {}),
       }}>
 
         {/* 元信息（标签列 + 内容列，内容左边缘对齐） */}
-        <div style={{
+        <div className="result-meta-grid" style={{
           display: 'grid',
           gridTemplateColumns: '64px 1fr',
           rowGap: 10,

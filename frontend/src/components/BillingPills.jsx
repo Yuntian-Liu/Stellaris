@@ -39,6 +39,14 @@ export default function BillingPills({ onOpenLedger }) {
     return () => window.removeEventListener('stellaris:billing-changed', handler)
   }, [])
 
+  // 移动端：头像下拉的兑换按钮 dispatch stellaris:open-exchange → 打开 ExchangeModal
+  //（三胶囊 CSS 隐藏后的替代触发路径；PC 不 dispatch 此事件，监听静默无副作用）
+  useEffect(() => {
+    const h = (e) => { setExchangeTab(e.detail || 'q2g'); setExchangeOpen(true) }
+    window.addEventListener('stellaris:open-exchange', h)
+    return () => window.removeEventListener('stellaris:open-exchange', h)
+  }, [])
+
   if (!data) return null
 
   const { minutes, quantum_gift, quantum_perm, gravity, unlimited } = data
@@ -98,7 +106,7 @@ export default function BillingPills({ onOpenLedger }) {
           </div>
         }
       >
-        <div style={pillStyle}>
+        <div className="billing-pill" style={pillStyle}>
           <ClockCircleOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
           <span style={{ color: 'var(--mute)' }}>分钟</span>
           <span className="font-mono" style={{ color: 'var(--ink)', fontWeight: 600 }}>{dayLeft}</span>
@@ -120,7 +128,7 @@ export default function BillingPills({ onOpenLedger }) {
           </div>
         }
       >
-        <div style={{ ...pillStyle, cursor: 'pointer' }}>
+        <div className="billing-pill" style={{ ...pillStyle, cursor: 'pointer' }}>
           <GlobalOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
           <span style={{ color: 'var(--mute)' }}>引力波</span>
           <span className="font-mono" style={{ color: 'var(--ink)', fontWeight: 600 }}>{gravity}</span>
@@ -165,7 +173,7 @@ export default function BillingPills({ onOpenLedger }) {
           </div>
         }
       >
-        <div style={pillStyle}>
+        <div className="billing-pill" style={pillStyle}>
           <DotChartOutlined style={{ color: 'var(--accent)', fontSize: 12 }} />
           <span style={{ color: 'var(--mute)' }}>量子波</span>
           <span className="font-mono" style={{ color: 'var(--ink)', fontWeight: 600 }}>{quantumTotal}</span>

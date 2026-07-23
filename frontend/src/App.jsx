@@ -6,7 +6,7 @@
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
 import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react'
-import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal, Spin } from 'antd'
+import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal, Spin, Progress } from 'antd'
 import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined, DashboardOutlined } from '@ant-design/icons'
 import api from './hooks/api'
 import { clientLog } from './utils/clientLog'
@@ -29,6 +29,20 @@ import { tierMeta } from './utils/tier'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
+
+// 移动端判定（V0.11 适配）：matchMedia 768px，与全局 @media (max-width:768px) 同阈值
+// PC 视口 >768 永远 false → 所有依赖它的分支走原路径，PC 视觉零影响
+function useMobile() {
+  const [m, setM] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const h = (e) => setM(e.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  return m
+}
 
 export default function App() {
   const [page, setPage] = useState('home')
@@ -55,6 +69,7 @@ export default function App() {
   const [celebrateTier, setCelebrateTier] = useState(null) // 会员开通欢迎弹窗（档位跃迁检测）
   const clickRef = useRef({ count: 0, timer: null })
   const { user, loading, logout } = useAuth()
+  const isMobile = useMobile()
 
   // 双货币余额（下拉面板显示；兑换/扣费后广播同步）
   useEffect(() => {
@@ -147,7 +162,7 @@ export default function App() {
         WebkitBackdropFilter: 'blur(12px)',
         borderBottom: '1px solid var(--hairline)',
       }}>
-      <div style={{
+      <div className="app-shell-nav" style={{
         maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
@@ -203,6 +218,7 @@ export default function App() {
                 dropdownRender={() => (
                   <div style={{
                     width: 240,
+                    maxWidth: 'calc(100vw - 32px)',
                     background: 'var(--surface-1)',
                     borderRadius: 'var(--r-card)',
                     border: '1px solid var(--hairline)',
@@ -253,6 +269,36 @@ export default function App() {
                         </span>
                       </span>
                     </div>
+                    {/* 移动端：三胶囊 CSS 隐藏后，余额详情（分钟进度 + 兑换入口）并入头像下拉。
+                        兑换按钮 dispatch stellaris:open-exchange 事件 → BillingPills 内的 ExchangeModal 弹出 */}
+                    {isMobile && balances && (
+                      <div style={{ margin: '0 12px 10px', padding: '4px 0 8px' }}>
+                        {[['日', balances.minutes?.day], ['周', balances.minutes?.week], ['月', balances.minutes?.month]].map(([label, m]) => {
+                          if (!m) return null
+                          const noCap = m.limit == null
+                          return (
+                            <div key={label} style={{ marginBottom: 8 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginBottom: 3 }}>
+                                <span style={{ color: 'var(--mute)' }}>{label}分钟</span>
+                                <span className="font-mono" style={{ color: 'var(--body)' }}>
+                                  {noCap ? `${m.used} / ∞` : `${m.used} / ${m.limit}`}
+                                </span>
+                              </div>
+                              <Progress
+                                percent={noCap ? 100 : Math.round(m.used / m.limit * 100)}
+                                showInfo={false} size="small"
+                                strokeColor={noCap ? { '0%': '#c7d2fe', '100%': '#a5b4fc' } : (m.used / m.limit > 0.8 ? '#f59e0b' : 'var(--accent)')}
+                              />
+                            </div>
+                          )
+                        })}
+                        <div style={{ marginTop: 4 }}>
+                          <Button size="small" block onClick={() => { setDropOpen(false); window.dispatchEvent(new CustomEvent('stellaris:open-exchange', { detail: 'q2g' })) }}>
+                            货币兑换
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     <div style={{ borderTop: '1px solid var(--hairline)' }}>
                       {user.is_admin && (
                         <div
@@ -301,7 +347,7 @@ export default function App() {
       </div>
       </div>
 
-      <Content style={{
+      <Content className="app-shell-content" style={{
         maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
@@ -786,6 +832,33 @@ export default function App() {
         @media (max-width: 1100px) {
           .chat-panel-enter { height: 70vh !important; min-width: 0 !important; }
         }
+
+        /* ═══ MOBILE ONLY — 所有规则必须包在此 @media 内，拆出会污染 PC（PC 视口>768 不命中）═══ */
+        @media (max-width: 768px) {
+          /* 三胶囊隐藏（内联 pillStyle 有 display:inline-flex，需 !important 压制）；余额并入头像下拉 */
+          .billing-pill { display: none !important; }
+          /* 容器两侧 padding 收紧 */
+          .app-shell-nav { padding: 12px 14px 10px !important; }
+          .app-shell-content { padding: 36px 14px 80px !important; }
+          /* Modal 兜底：不强制宽度（尊重各弹窗设计宽度），只约束不超出视口；
+             两边各留 24px 边距让弹窗浮于中央，避免贴边臃肿；长内容纵向滚动 */
+          .ant-modal {
+            max-width: calc(100vw - 64px) !important;
+            margin: 16px auto !important;
+          }
+          .ant-modal-body { max-height: calc(100vh - 160px); overflow-y: auto; }
+          /* 结果页分栏栈式：左卡固定宽失效，AI 解读面板下沉全宽 */
+          .result-card-chat { width: 100% !important; flex: 1 1 100% !important; }
+          .chat-panel-enter {
+            flex: 1 1 100% !important;
+            min-width: 0 !important;
+            height: auto !important;
+            min-height: 60vh !important;
+          }
+          /* 元信息标签列缩窄 */
+          .result-meta-grid { grid-template-columns: 56px 1fr !important; }
+        }
+        /* ═══ END MOBILE ONLY ═══ */
 
         /* ── 全局质感细节 ── */
         /* 细滚动条：透明轨道 + 弱色滑块，hover 稍深 */
