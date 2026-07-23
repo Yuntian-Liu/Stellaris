@@ -107,11 +107,17 @@ export default function App() {
     if (!tier) return
     const prev = localStorage.getItem('stellaris_tier')
     localStorage.setItem('stellaris_tier', tier)
+    // UID 100001（专属礼）跃迁到 Stella 时强制弹窗 —— 绕过「首次访问 prev 为空」的常规门槛
+    const isChenXing = user?.uid === 100001
+    if (isChenXing && tier === 'stella' && prev !== 'stella') {
+      setCelebrateTier(tier)
+      return
+    }
     if (prev && prev !== tier
         && ['trial', 'stargazer', 'voyager', 'odyssey', 'stella'].includes(tier)) {
       setCelebrateTier(tier)
     }
-  }, [balances?.tier])
+  }, [balances?.tier, user?.uid])
 
   // 彩蛋：3 秒内连点 logo ✦ 7 次 → 流星雨
   const handleBrandClick = () => {
@@ -429,24 +435,55 @@ export default function App() {
         centered
         width={360}
       >
-        {celebrateTier && (
-          <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
-            <div className="font-display" style={{ fontSize: 30, color: 'var(--accent)', lineHeight: 1 }}>✦</div>
-            <h2 className="font-display font-display-sm" style={{ margin: '10px 0 6px' }}>
-              欢迎登船，{tierMeta(celebrateTier).label}
-            </h2>
-            <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
-              {tierMeta(celebrateTier).cn && <>{tierMeta(celebrateTier).cn} · </>}会员权益已生效<br />
-              愿星轨常伴你左右
+        {celebrateTier && (() => {
+          const isChenXing = user?.uid === 100001 && celebrateTier === 'stella'
+          if (isChenXing) {
+            // UID 100001 专属寄语（仅首位逐星者兑换 Stella 时呈现）
+            return (
+              <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
+                <div className="font-display" style={{ fontSize: 30, color: 'var(--accent)', lineHeight: 1 }}>✦</div>
+                <h2 className="font-display font-display-sm" style={{ margin: '10px 0 6px' }}>
+                  欢迎登船，{user?.nickname || 'Stella'}
+                </h2>
+                <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9, marginBottom: 14 }}>
+                  Stella · 启明 会员权益已生效
+                </div>
+                <div className="font-display" style={{
+                  fontSize: 16, color: 'var(--ink)', lineHeight: 1.8,
+                  padding: '12px 16px', marginBottom: 8,
+                  background: 'var(--surface-2)', borderRadius: 'var(--r-input)',
+                  fontFamily: "'Cormorant Garamond', serif", fontStyle: 'normal',
+                }}>
+                  「星！希望你喜欢，有问题随时可以和我反馈~」
+                </div>
+                <Button
+                  type="primary" style={{ marginTop: 14, borderRadius: 'var(--r-btn)' }}
+                  onClick={() => setCelebrateTier(null)}
+                >
+                  开始远航
+                </Button>
+              </div>
+            )
+          }
+          return (
+            <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
+              <div className="font-display" style={{ fontSize: 30, color: 'var(--accent)', lineHeight: 1 }}>✦</div>
+              <h2 className="font-display font-display-sm" style={{ margin: '10px 0 6px' }}>
+                欢迎登船，{tierMeta(celebrateTier).label}
+              </h2>
+              <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9 }}>
+                {tierMeta(celebrateTier).cn && <>{tierMeta(celebrateTier).cn} · </>}会员权益已生效<br />
+                愿星轨常伴你左右
+              </div>
+              <Button
+                type="primary" style={{ marginTop: 18, borderRadius: 'var(--r-btn)' }}
+                onClick={() => setCelebrateTier(null)}
+              >
+                开始远航
+              </Button>
             </div>
-            <Button
-              type="primary" style={{ marginTop: 18, borderRadius: 'var(--r-btn)' }}
-              onClick={() => setCelebrateTier(null)}
-            >
-              开始远航
-            </Button>
-          </div>
-        )}
+          )
+        })()}
       </Modal>
 
       {/* 流星雨彩蛋（连点 logo 7 次） */}
