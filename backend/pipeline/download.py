@@ -4,10 +4,12 @@
 B站链接走 pipeline.bilibili_api 纯 API 直连（绕开 yt-dlp 网页抓取被
 412 风控的问题，数据中心 IP 可用）；其他站点走 yt-dlp。
 """
+import ipaddress
 import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from config import FFMPEG_PATH, BILIBILI_FORMAT, DOWNLOAD_TIMEOUT_SEC
 from pipeline.bilibili_api import (
@@ -18,6 +20,57 @@ from utils import get_task_dir
 
 # yt-dlp 对部分站点（如小红书）只给 "XiaoHongShu video #id" 这类通用标题
 _GENERIC_TITLE_RE = re.compile(r" video #[0-9a-f]+\s*$", re.I)
+
+# P0-3 SSRF 防护：私有/内网网段黑名单（169.254.x 含云元数据 169.254.169.254）
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+# 安全面板动态计数 + 事件记录（进程内存，重启清零）
+import time as _dt
+from collections import deque as _dq
+
+_ssrf_blocked_count: int = 0
+_ssrf_events: _dq = _dq(maxlen=50)
+
+
+def get_ssrf_blocked_count() -> int:
+    return _ssrf_blocked_count
+
+
+def get_ssrf_events() -> list:
+    return list(reversed(_ssrf_events))
+
+
+def _is_safe_url(url: str) -> bool:
+    """SSRF 防护：URL 的 host 不能指向内网/私有地址（挡字面 IP，如 http://169.254.169.254/）"""
+    global _ssrf_blocked_count
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：无法解析 host"})
+            return False
+        if host.lower() == "localhost":
+            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：localhost → {url[:80]}"})
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return True
+        if any(ip in net for net in _PRIVATE_NETWORKS):
+            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：{host} → {url[:80]}"})
+            return False
+        return True
+    except Exception:
+        _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：解析异常 {url[:80]}"})
+        return False
 
 
 def _fetch_page_title(url: str) -> str | None:
@@ -50,6 +103,8 @@ def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> di
     下载视频音频。B站走 API 直连，其他站点走 yt-dlp。
     返回: {"audio_path": Path, "video_title": str}
     """
+    if not _is_safe_url(url):
+        raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):
         return _download_bilibili_via_api(url, task_id, sessdata)
     return _download_via_ytdlp(url, task_id, sessdata)
@@ -148,11 +203,12 @@ def _download_via_ytdlp(
 
 
 def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
-    """
-    只拉取视频元数据（不下载），用于提取前的成本预估。
+    """预估用：探测视频标题与时长（不下载音频）。
     B站走 API 直连，其他站点走 yt-dlp。
     返回: {"title": str, "duration_sec": float}
     """
+    if not _is_safe_url(url):
+        raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):
         info = fetch_video_info(resolve_bvid(url, sessdata), sessdata)
         return {"title": info["title"], "duration_sec": info["duration_sec"]}

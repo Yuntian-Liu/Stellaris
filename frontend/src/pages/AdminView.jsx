@@ -1406,6 +1406,144 @@ function DataPanel() {
   )
 }
 
+/* ───────── ⑧ 安全面板 ───────── */
+
+function SecurityPanel() {
+  const [data, setData] = useState(null)
+  const [showBaseline, setShowBaseline] = useState(false)
+  useEffect(() => {
+    adminApi.securityStatus().then(setData).catch(() => {})
+  }, [])
+
+  if (!data) return <div style={{ textAlign: 'center', padding: 40, color: 'var(--mute)', fontSize: 13 }}>加载中…</div>
+
+  const { live, auth, network, keys, p1_gaps } = data
+
+  const Metric = ({ label, value, color, sub }) => (
+    <div className="card" style={{ padding: '14px 16px', flex: 1, minWidth: 150 }}>
+      <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 6 }}>{label}</div>
+      <div className="font-mono" style={{ fontSize: 28, fontWeight: 700, color: color || 'var(--ink)' }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 4 }}>{sub}</div>}
+    </div>
+  )
+
+  const Row = ({ label, value, ok }) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--hairline)' }}>
+      <span style={{ fontSize: 13, color: 'var(--ink)' }}>{label}</span>
+      <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 500,
+        color: ok === false ? 'var(--error)' : 'var(--mute)' }}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div>
+      {/* 实时拦截（动态数据，主位） */}
+      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>实时拦截（本次进程运行以来）</div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <Metric label="登录限流触发" value={live.login_blocked} color={live.login_blocked > 0 ? 'var(--error)' : '#16a34a'}
+          sub="密码登录被限流拒绝的次数" />
+        <Metric label="SSRF 拦截" value={live.ssrf_blocked} color={live.ssrf_blocked > 0 ? 'var(--error)' : '#16a34a'}
+          sub="内网/云元数据 URL 被拒绝" />
+        <Metric label="超大文件驳回" value={live.upload_rejected} color={live.upload_rejected > 0 ? '#d97706' : '#16a34a'}
+          sub={`上限 ${(network.max_upload_mb / 1024).toFixed(0)} GB`} />
+      </div>
+
+      {/* 待修复缺口 */}
+      {p1_gaps?.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--error)', marginBottom: 10 }}>待修复（{p1_gaps.length} 项 P1）</div>
+          <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+            {p1_gaps.map((g) => (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--hairline)' }}>
+                <Tag color="error" style={{ fontSize: 10, marginTop: 2 }}>{g.level}</Tag>
+                <span style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>{g.title}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* 安全事件时间线 */}
+      {data.events?.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>安全事件（最近 {data.events.length} 条）</div>
+          <div className="card" style={{ padding: '10px 16px', marginBottom: 16, maxHeight: 420, overflowY: 'auto', border: 0 }}>
+            {data.events.map((e, i) => {
+              const colors = { login_blocked: 'var(--error)', ssrf_blocked: '#d97706', upload_rejected: '#d97706' }
+              const labels = { login_blocked: '登录限流', ssrf_blocked: 'SSRF', upload_rejected: '上传驳回' }
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--hairline)', fontSize: 12 }}>
+                  <span className="font-mono" style={{ color: 'var(--mute)', flexShrink: 0, width: 90 }}>{e.time}</span>
+                  <Tag color={e.type === 'login_blocked' ? 'error' : 'warning'} style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>
+                    {labels[e.type] || e.type}
+                  </Tag>
+                  <span style={{ color: colors[e.type] || 'var(--ink)', lineHeight: 1.5, wordBreak: 'break-all' }}>{e.detail}</span>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* 密钥状态（动态：√/✕） */}
+      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>密钥与凭证</div>
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+        {Object.entries(keys).map(([k, v]) => {
+          const labels = {
+            jwt_secret_set: 'JWT 密钥', mimo_key_set: 'Mimo ASR', llm_key_set: 'LLM (DeepSeek)',
+            cos_configured: 'COS 备份', turnstile_secret_set: 'Turnstile', afdian_token_set: '爱发电 Token',
+            resend_key_set: 'Resend 邮件',
+          }
+          return <Row key={k} label={labels[k] || k} value={v ? '✅ 已设' : '❌ 未设'} ok={v} />
+        })}
+      </div>
+
+      {/* 静态基线（折叠参考） */}
+      <div
+        onClick={() => setShowBaseline(!showBaseline)}
+        style={{
+          cursor: 'pointer', padding: '10px 16px', borderRadius: 'var(--r-card)',
+          background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 8,
+          userSelect: 'none', marginBottom: showBaseline ? 12 : 0,
+        }}>
+        <span style={{ fontSize: 14, transition: 'transform 0.2s', transform: showBaseline ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+        <span style={{ fontSize: 12, color: 'var(--mute)' }}>安全基线（静态配置，仅供参考）</span>
+      </div>
+      {showBaseline && (
+        <>
+          <div style={{ marginBottom: 6, marginTop: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#4f46e5' }}>认证安全</span>
+          </div>
+          <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+            <Row label="JWT 过期天数" value={`${auth.jwt_expire_days} 天`} ok />
+            <Row label="bcrypt 加密轮数" value={`rounds=${auth.bcrypt_rounds}`} ok />
+            <Row label="密码强度" value={auth.password_complexity?.join('+')} ok />
+            <Row label="登录限流阈值" value={auth.login_rate_limit} ok />
+            <Row label="验证码限流阈值" value={auth.code_rate_limit} ok />
+            <Row label="Turnstile（发验证码）" value={auth.turnstile_on_send_code ? '已覆盖' : '未覆盖'} ok={auth.turnstile_on_send_code} />
+            <Row label="Turnstile（密码登录）" value={auth.turnstile_on_login ? '已覆盖' : '未覆盖'} ok={false} />
+          </div>
+          <div style={{ marginBottom: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309' }}>网络防御</span>
+          </div>
+          <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+            <Row label="CORS 白名单" value={network.cors_origins?.join(', ') || '未设置'} ok />
+            <Row label="SSRF 防护" value="已启用" ok />
+            <Row label="上传大小上限" value={`${(network.max_upload_mb / 1024).toFixed(0)} GB`} ok />
+            <Row label="HTTP 安全头" value={network.security_headers ? '已设置' : '未设置'} ok={false} />
+          </div>
+        </>
+      )}
+
+      <div style={{ fontSize: 11, color: 'var(--mute)', lineHeight: 1.7, padding: '10px 0' }}>
+        动态数据为进程内存计数（重启清零）· 密钥仅显示是否已设不返回实际值 · 审查报告见 <code>tmp/security-audit-1.0.0.md</code>
+      </div>
+    </div>
+  )
+}
+
 /* ───────── 主界面 ───────── */
 
 export default function AdminView({ onBack }) {
@@ -1434,6 +1572,7 @@ export default function AdminView({ onBack }) {
           { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
           { key: 'tickets', label: '工单处理', children: <TicketsPanel /> },
           { key: 'data', label: '数据管理', children: <DataPanel /> },
+          { key: 'security', label: '安全', children: <SecurityPanel /> },
         ]}
       />
     </div>

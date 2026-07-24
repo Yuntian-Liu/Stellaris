@@ -107,3 +107,43 @@ def check_send_code_rate(ip: str) -> bool:
     arr.append(now)
     _send_code_rate[ip] = arr
     return True
+
+
+# ===== login rate limit（密码登录 IP 每分钟 10 次，P0-4 防暴力撞密码）=====
+_login_rate: dict[str, list[float]] = {}
+LOGIN_RATE_WINDOW_SEC = 60
+LOGIN_RATE_MAX = 10
+
+
+# 安全面板动态计数 + 事件记录（进程内存，重启清零；仅用于管理后台展示）
+import time as _time
+from collections import deque as _deque
+
+_login_blocked_count: int = 0
+_login_blocked_events: _deque = _deque(maxlen=50)  # 环形缓冲，最近 50 条
+
+
+def check_login_rate(ip: str) -> bool:
+    """密码登录 IP 限流：返回 True 允许，False 超限。"""
+    global _login_blocked_count
+    now = _time.time()
+    arr = [t for t in _login_rate.get(ip, []) if now - t < LOGIN_RATE_WINDOW_SEC]
+    if len(arr) >= LOGIN_RATE_MAX:
+        _login_rate[ip] = arr
+        _login_blocked_count += 1
+        _login_blocked_events.append({
+            "time": _time.strftime("%m-%d %H:%M:%S"), "ip": ip, "type": "login_blocked",
+            "detail": f"IP {ip} 密码登录 {LOGIN_RATE_MAX}次/{LOGIN_RATE_WINDOW_SEC}秒 超限被拒",
+        })
+        return False
+    arr.append(now)
+    _login_rate[ip] = arr
+    return True
+
+
+def get_login_blocked_count() -> int:
+    return _login_blocked_count
+
+
+def get_login_blocked_events() -> list:
+    return list(reversed(_login_blocked_events))
