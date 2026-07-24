@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V0.12.1 Spica'
+export const APP_VERSION = 'V0.12.2 Spica'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-25'
@@ -29,6 +29,12 @@ export const CHANGELOG = [
       'AI 解读安全加固：防止通过话术诱导脱离角色边界，你说什么它都只聊视频',
     ],
     patches: [
+      {
+        version: 'V0.12.2', date: '2026-07-24',
+        items: [
+          '任务内容（字幕/MD笔记/SRT/概要）迁移至数据库存储，COS 备份覆盖全站完整数据',
+        ],
+      },
       {
         version: 'V0.12.1', date: '2026-07-24',
         items: [

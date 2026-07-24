@@ -38,6 +38,8 @@ from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_wi
 from chat_store import save_chat_message, get_chat_history, delete_chat_messages
 from history_store import (
     save_task_record, list_task_records, delete_task_record,
+    save_task_content, get_task_content, nullify_task_content,
+    migrate_files_to_db,
     get_task_owner_map, get_task_record,
 )
 from diagnostics import attach_log_buffer, build_diagnostics
@@ -89,13 +91,17 @@ async def lifespan(app: FastAPI):
     # 初始化数据库（建表）——分档清理依赖 task_records/user_billing，须先建表
     await init_db()
     print("[Stellaris] 数据库已就绪")
-    # 启动时清理上次进程留下的过期任务文件（联动删对话记录/历史记录）
+    # V0.12.2: 一次性迁移 TMP_DIR 存量文件到 DB（幂等，在清理之前执行）
+    migrated = await migrate_files_to_db()
+    if migrated:
+        print(f"[Stellaris] 内容迁移：{migrated} 个任务从文件写入数据库")
+    # 启动时清理上次进程留下的过期任务文件（联动删对话记录，DB 内容列置 NULL 保留元数据）
     removed = await _cleanup_expired_tasks()
     if removed:
-        print(f"[Stellaris] 启动清理：删除 {len(removed)} 个过期任务目录")
+        print(f"[Stellaris] 启动清理：{len(removed)} 个过期任务")
         for tid in removed:
             await delete_chat_messages(tid)
-            await delete_task_record(tid)
+            await nullify_task_content(tid)
     # 起后台定时清理任务（每 10 分钟扫一次）
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     # 起后台定时备份任务（每天 04:00，UTC+8；COS 未配置则自动跳过）
@@ -151,7 +157,7 @@ async def _periodic_cleanup():
                 logger.info("[Cleanup] 定时清理：删除 %d 个过期任务", len(removed))
                 for tid in removed:
                     await delete_chat_messages(tid)
-                    await delete_task_record(tid)
+                    await nullify_task_content(tid)
         except Exception as e:
             logger.error("[Cleanup] 定时清理失败: %s", e)
 
@@ -159,7 +165,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.12.1-spica",
+    version="0.12.2-spica",
     lifespan=lifespan,
 )
 
@@ -490,31 +496,41 @@ async def get_task_status(
 
 
 async def _rehydrate_task(task_id: str) -> dict | None:
-    """冷启动重建：服务器重启后内存态丢失，从任务目录文件 + task_records 重建结果页状态。
-    没有它，Voyager 7 天 / Odyssey 30 天 / Stella·admin 永久保留重启即'已失效'（P0）。
-    重建内容：output.txt → 预览文本 + MD/概要/解读的输入文本；output.srt → 下载；
-    output.md 存在则 MD 标记 ready；标题/来源平台取 task_records。"""
-    task_dir = TMP_DIR / task_id
-    txt_path = task_dir / "output.txt"
-    if not txt_path.exists():
-        return None
-    try:
-        text = txt_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    srt_path = task_dir / "output.srt"
+    """冷启动重建：DB 优先，文件兜底（V0.12.2 双写过渡期）。
+    DB 有内容 → 直接取；DB 无内容 → 读 TMP_DIR 文件（存量任务/写 DB 失败的兜底）。"""
     record = await get_task_record(task_id)
-    # Y4：概要文件名以 _generate_summary_background 实际写入为准（output_summary.md）。
-    # 重建时一并恢复 ready 状态 + 内容，避免重启后被当成"未生成"重复扣量子波。
-    summary_path = task_dir / "output_summary.md"
-    summary_status = "idle"
-    summary_content = None
-    if summary_path.exists():
+    content = await get_task_content(task_id)
+    db_text = content.get("raw_text") if content else None
+    has_db_content = bool(db_text)
+
+    task_dir = TMP_DIR / task_id
+
+    if has_db_content:
+        text = db_text
+        srt_available = bool(content.get("subtitle_srt"))
+        md_ready = bool(content.get("md_content"))
+        summary_ready = bool(content.get("summary_content"))
+        summary_content = content.get("summary_content") or None
+    else:
+        # 文件兜底：存量任务或 DB 写失败
+        txt_path = task_dir / "output.txt"
+        if not txt_path.exists():
+            return None
         try:
-            summary_content = summary_path.read_text(encoding="utf-8")
-            summary_status = "ready"
+            text = txt_path.read_text(encoding="utf-8")
         except OSError:
-            pass
+            return None
+        srt_available = (task_dir / "output.srt").exists()
+        md_ready = (task_dir / "output.md").exists()
+        summary_content = None
+        summary_path = task_dir / "output_summary.md"
+        if summary_path.exists():
+            try:
+                summary_content = summary_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        summary_ready = bool(summary_content)
+
     task = {
         "task_id": task_id,
         "status": TaskStatus.COMPLETED,
@@ -522,19 +538,17 @@ async def _rehydrate_task(task_id: str) -> dict | None:
         "progress": 100,
         "video_title": (record or {}).get("title"),
         "source_platform": (record or {}).get("source_platform"),
-        # Y3：重建任务也要带归属，否则 R1 owner 鉴权永远过不了、chat 统计归属丢失。
         "owner_uid": (record or {}).get("owner_uid"),
-        "subtitle_srt": str(srt_path) if srt_path.exists() else None,
+        "subtitle_srt": "available" if srt_available else None,
         "subtitle_txt": text,
-        # 分段后文本（与原文同词，仅段落整理）作为 MD/概要/解读的输入
         "raw_text": text,
         "subtitle_source": None,
-        "md_status": "ready" if (task_dir / "output.md").exists() else "idle",
-        "summary_status": summary_status,
+        "md_status": "ready" if md_ready else "idle",
+        "summary_status": "ready" if summary_ready else "idle",
         "summary_content": summary_content,
         "rehydrated": True,
     }
-    tasks[task_id] = task   # 重建后回种内存，后续请求直接命中
+    tasks[task_id] = task
     return task
 
 
@@ -582,11 +596,23 @@ async def download_result(
         raise HTTPException(status_code=404, detail="文件不存在（任务可能尚未完成或已清理）")
     _authorize_task(task, current_user)
 
-    from utils import get_task_dir
-    task_dir = get_task_dir(task_id)
-    file_path = task_dir / f"output.{format}"
+    # V0.12.2: DB 优先，文件兜底
+    col_map = {"txt": "raw_text", "srt": "subtitle_srt", "md": "md_content"}
+    content = await get_task_content(task_id)
+    text = content.get(col_map[format]) if content else None
 
-    if not file_path.exists():
+    if not text:
+        # 文件兜底
+        from utils import get_task_dir
+        task_dir = get_task_dir(task_id)
+        file_path = task_dir / f"output.{format}"
+        if file_path.exists():
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+
+    if not text:
         raise HTTPException(status_code=404, detail="文件不存在（任务可能尚未完成或该格式未生成）")
 
     media_type_map = {
@@ -594,9 +620,10 @@ async def download_result(
         "srt": "application/x-subrip",
         "md": "text/markdown",
     }
-    return FileResponse(
-        path=str(file_path),
-        filename=f"stellaris-{task_id}.{format}",
+    from fastapi.responses import Response as FastAPIResponse
+    return FastAPIResponse(
+        content=text,
+        headers={"Content-Disposition": f'attachment; filename="stellaris-{task_id}.{format}"'},
         media_type=media_type_map[format],
     )
 
@@ -1603,10 +1630,18 @@ def _run_pipeline_sync(
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
 
+            # V0.12.2: 写入 DB 内容列（COS 备份全覆盖）
+            try:
+                asyncio.run(save_task_content(
+                    task_id, raw_text=raw_text, subtitle_srt=srt_content,
+                ))
+            except Exception as ce:
+                logger.warning("[DB] 保存任务内容失败(文件已落盘): %s", ce)
+
         # ✅ 完成
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
             "video_title": video_title,
-            "subtitle_srt": str(export_paths["srt_path"]),
+            "subtitle_srt": "available",
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
             "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
             "subtitle_source": subtitle_source,
@@ -1724,9 +1759,17 @@ def _run_pipeline_from_file_sync(
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
 
+            # V0.12.2: 写入 DB 内容列（COS 备份全覆盖）
+            try:
+                asyncio.run(save_task_content(
+                    task_id, raw_text=raw_text, subtitle_srt=srt_content,
+                ))
+            except Exception as ce:
+                logger.warning("[DB] 保存任务内容失败(文件已落盘): %s", ce)
+
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
             "video_title": video_title,
-            "subtitle_srt": "output.srt",
+            "subtitle_srt": "available",
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
             "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
             "subtitle_source": "asr_mimo",
@@ -1810,6 +1853,12 @@ def _generate_summary_impl(task_id: str):
         summary_path = task_dir / "output_summary.md"
         summary_path.write_text(summary_content, encoding="utf-8")
 
+        # V0.12.2: 写入 DB（COS 备份全覆盖）
+        try:
+            asyncio.run(save_task_content(task_id, summary_content=summary_content))
+        except Exception as e:
+            logger.warning("[DB] 保存概要内容失败(文件已落盘): %s", e)
+
         task["summary_status"] = "ready"
         task["summary_error"] = None
         task["summary_content"] = summary_content   # 直接带回前端展示
@@ -1857,6 +1906,12 @@ def _generate_md_impl(task_id: str):
         task_dir = get_task_dir(task_id)
         md_path = task_dir / "output.md"
         md_path.write_text(md_content, encoding="utf-8")
+
+        # V0.12.2: 写入 DB（COS 备份全覆盖）
+        try:
+            asyncio.run(save_task_content(task_id, md_content=md_content))
+        except Exception as e:
+            logger.warning("[DB] 保存MD内容失败(文件已落盘): %s", e)
 
         task["md_status"] = "ready"
         task["md_error"] = None
