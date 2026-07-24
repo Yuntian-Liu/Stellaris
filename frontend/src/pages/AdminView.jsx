@@ -1433,7 +1433,7 @@ function SecurityPanel() {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--hairline)' }}>
       <span style={{ fontSize: 13, color: 'var(--ink)' }}>{label}</span>
       <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 500,
-        color: ok === false ? 'var(--error)' : 'var(--mute)' }}>{value}</span>
+        color: ok === false ? 'var(--error)' : ok === true ? '#16a34a' : 'var(--mute)' }}>{value}</span>
     </div>
   )
 
@@ -1523,16 +1523,16 @@ function SecurityPanel() {
             <Row label="登录限流阈值" value={auth.login_rate_limit} ok />
             <Row label="验证码限流阈值" value={auth.code_rate_limit} ok />
             <Row label="Turnstile（发验证码）" value={auth.turnstile_on_send_code ? '已覆盖' : '未覆盖'} ok={auth.turnstile_on_send_code} />
-            <Row label="Turnstile（密码登录）" value={auth.turnstile_on_login ? '已覆盖' : '未覆盖'} ok={false} />
+            <Row label="Turnstile（密码登录）" value={auth.turnstile_on_login ? '已覆盖' : '未覆盖'} ok={auth.turnstile_on_login} />
           </div>
           <div style={{ marginBottom: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309' }}>网络防御</span>
           </div>
           <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
             <Row label="CORS 白名单" value={network.cors_origins?.join(', ') || '未设置'} ok />
-            <Row label="SSRF 防护" value="已启用" ok />
+            <Row label="SSRF 防护" value="已启用" />
             <Row label="上传大小上限" value={`${(network.max_upload_mb / 1024).toFixed(0)} GB`} ok />
-            <Row label="HTTP 安全头" value={network.security_headers ? '已设置' : '未设置'} ok={false} />
+            <Row label="HTTP 安全头" value={network.security_headers ? '已设置' : '未设置'} ok={network.security_headers} />
           </div>
         </>
       )}

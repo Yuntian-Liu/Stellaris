@@ -87,6 +87,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR.as_posi
 
 # JWT（对标 Datelife：HS256，30 天有效期）
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+if JWT_SECRET == "dev-secret-change-me":
+    print("[SECURITY] 警告：JWT_SECRET 未设置，使用默认值！生产环境务必通过环境变量覆盖！")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30
 

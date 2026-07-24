@@ -97,6 +97,14 @@ RATE_LIMIT_WINDOW_SEC = 60
 RATE_LIMIT_MAX = 3
 
 
+def get_client_ip(request) -> str:
+    """P1-12 安全：从 X-Forwarded-For 取真实客户端 IP（Zeabur 代理后兼容），fallback request.client.host"""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def check_send_code_rate(ip: str) -> bool:
     """返回 True 允许发送,False 超限。进程重启清空(个人项目够用)。"""
     now = time.time()

@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import (FastAPI, UploadFile, File, HTTPException, BackgroundTasks,
                      Depends, Request, Query, Header)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,7 +50,7 @@ from database import init_db, get_db
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, get_current_user_optional, get_admin_user
 from auth.models import User
-from auth.utils import decode_access_token   # R1：下载路由 ?token= 解析复用
+from auth.utils import decode_access_token, get_client_ip   # get_client_ip: P1-12 X-Forwarded-For 拿真实 IP
 from stats_store import incr_stats, get_stats
 from billing_store import (
     BILLING_TIERS, TIER_DISPLAY, QUANTUM_PER_TOKEN_UNIT, round_tokens,
@@ -190,6 +190,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# P2-15 安全头中间件：X-Content-Type-Options + Referrer-Policy
+@app.middleware("http")
+async def _security_headers_middleware(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+# P1-9 全局异常处理器：未捕获异常统一脱敏，详情只写日志
+@app.exception_handler(Exception)
+async def _global_exception_handler(request, exc):
+    logger.exception("未捕获异常: %s %s", request.method, request.url)
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
+
+
 # ===== Auth 子模块路由 =====
 app.include_router(auth_router)
 
@@ -234,7 +249,8 @@ async def estimate_cost(
     try:
         info = await asyncio.to_thread(probe_bilibili_info, request.url, request.sessdata)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("estimate 探测失败: %s", str(e)[:200])
+        raise HTTPException(status_code=400, detail="无法解析链接信息，请检查链接是否正确")
 
     duration_min = info["duration_sec"] / 60
     est_chars = int(duration_min * SPEECH_CHARS_PER_MIN)
@@ -306,7 +322,7 @@ async def submit_task(
         # 匿名：按 IP 走每日体验额度（预估即预占，防刷）
         try:
             await check_and_consume_anon(
-                req.client.host if req.client else "unknown", max(1, est_minutes),
+                get_client_ip(req), max(1, est_minutes),  # P1-12
             )
         except InsufficientError as e:
             raise HTTPException(status_code=403, detail=e.detail)
@@ -323,7 +339,7 @@ async def submit_task(
         "sessdata": request.sessdata,
         "source_platform": platform_label(request.url),
         "owner_uid": current_user.uid if current_user else None,
-        "owner_ip": req.client.host if req.client else "unknown",  # R3：匿名失败退还预占额度用
+        "owner_ip": get_client_ip(req),  # P1-12 R3：匿名失败退还预占额度用
         "est_minutes": est_minutes,
         "skip_segment": request.skip_segment,
     }
@@ -389,7 +405,7 @@ async def upload_file(
         cleanup_temp_files(task_id)
         raise HTTPException(status_code=400, detail="无法识别媒体时长，请检查文件是否损坏或格式不受支持")
     est_minutes = max(1, math.ceil(duration / 60))
-    ip = req.client.host if req.client else "unknown"
+    ip = get_client_ip(req)  # P1-12
 
     # 预检/预占（与 submit 对齐：登录预检不扣、1.2 倍冗余；匿名预估即预占防刷）
     try:

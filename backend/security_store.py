@@ -40,13 +40,13 @@ def get_security_status() -> dict:
             "login_rate_limit": f"{LOGIN_RATE_MAX}次/{LOGIN_RATE_WINDOW_SEC}秒",
             "code_rate_limit": f"{RATE_LIMIT_MAX}次/{RATE_LIMIT_WINDOW_SEC}秒",
             "turnstile_on_send_code": bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY),
-            "turnstile_on_login": False,
+            "turnstile_on_login": bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY),
         },
         "network": {
             "cors_origins": ALLOWED_ORIGINS,
             "ssrf_protection": True,
             "max_upload_mb": MAX_VIDEO_SIZE_MB,
-            "security_headers": False,
+            "security_headers": True,
         },
         "keys": {
             "jwt_secret_set": True,
@@ -58,9 +58,6 @@ def get_security_status() -> dict:
             "resend_key_set": bool(RESEND_API_KEY),
         },
         "p1_gaps": [
-            {"id": "no_global_handler", "title": "缺少全局异常处理器（未捕获异常可能泄露堆栈）", "level": "P1"},
-            {"id": "error_leak", "title": "部分接口异常信息泄露（detail=str(e)）", "level": "P1"},
             {"id": "sse_backrun", "title": "SSE chat 断连白嫖（断线不扣 AI 费用）", "level": "P1"},
-            {"id": "proxy_ip", "title": "IP 限流在 Zeabur 代理后全体用户共享同一 IP", "level": "P1"},
         ],
     }

@@ -4,9 +4,12 @@ Auth 路由 — /api/auth/*
 步骤3:register / login-password / me / profile
 """
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +24,7 @@ from auth.schemas import (
     ChangePasswordRequest, ResetPasswordRequest,
 )
 from auth.utils import (
-    generate_code, check_send_code_rate, check_login_rate, create_access_token,
+    generate_code, check_send_code_rate, check_login_rate, get_client_ip, create_access_token,
     hash_password, verify_password, validate_password_strength, get_next_uid,
 )
 from auth.email import send_verification_code
@@ -68,7 +71,7 @@ async def send_code(
     cf_turnstile_response: str | None = Header(default=None, alias="cf-turnstile-response"),
 ):
     """发送验证码:Turnstile → rate limit → 生码 → upsert → 发邮件"""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)  # P1-12: X-Forwarded-For 拿真实 IP
 
     if not await verify_turnstile(cf_turnstile_response, client_ip):
         raise HTTPException(status_code=403, detail="人机验证失败,请重试")
@@ -92,7 +95,8 @@ async def send_code(
     try:
         await send_verification_code(req.email, code)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"验证码发送失败: {e}")
+        logger.error("验证码发送失败: %s", str(e)[:200])
+        raise HTTPException(status_code=500, detail="验证码发送失败，请稍后重试")
 
     return SendCodeResponse()
 
@@ -172,10 +176,18 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login-password", response_model=LoginCodeResponse)
-async def login_password(req: LoginPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login_password(
+    req: LoginPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    cf_turnstile_response: str | None = Header(default=None, alias="cf-turnstile-response"),
+):
     """密码登录:支持邮箱或 UID(纯数字按 UID 查)"""
+    # P1-10 安全：Turnstile 人机验证（复用 send-code 的 verify_turnstile）
+    if not await verify_turnstile(cf_turnstile_response, request.client.host or "unknown"):
+        raise HTTPException(status_code=403, detail="人机验证失败，请重试")
     # P0-4 安全：IP 级限流防暴力撞密码（10 次/分钟）
-    ip = request.client.host if request.client else "unknown"
+    ip = get_client_ip(request)  # P1-12: X-Forwarded-For 拿真实 IP
     if not check_login_rate(ip):
         raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     if req.email_or_uid.isdigit():
@@ -184,10 +196,8 @@ async def login_password(req: LoginPasswordRequest, request: Request, db: AsyncS
         result = await db.execute(select(User).where(User.email == req.email_or_uid))
     user = result.scalar_one_or_none()
 
-    if not user:
-        raise HTTPException(status_code=401, detail="账号不存在,请先注册")
-    if not user.password_hash:
-        raise HTTPException(status_code=401, detail="该账号未设置密码,请用验证码登录")
+    if not user or not user.password_hash:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
 
     # verify 放线程池(CPU 密集)
     ok = await asyncio.to_thread(verify_password, req.password, user.password_hash)
