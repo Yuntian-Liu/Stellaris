@@ -109,7 +109,7 @@ class ChatRequest(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"
-    version: str = "V0.11.7 Regulus"
+    version: str = "V0.11.8 Regulus"
 
 
 # ===== 反馈工单（V0.9.4）=====

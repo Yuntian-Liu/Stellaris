@@ -4,7 +4,7 @@
 动态数据（实时拦截计数 + 事件记录）+ 静态基线（配置/常量）。
 """
 from config import (
-    ALLOWED_ORIGINS, MAX_VIDEO_SIZE_MB, JWT_EXPIRE_DAYS,
+    ALLOWED_ORIGINS, MAX_VIDEO_SIZE_MB, JWT_EXPIRE_DAYS, JWT_SECRET,
     COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET,
     MIMO_API_KEY, LLM_API_KEY,
     TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
@@ -49,7 +49,7 @@ def get_security_status() -> dict:
             "security_headers": True,
         },
         "keys": {
-            "jwt_secret_set": True,
+            "jwt_secret_set": JWT_SECRET != "dev-secret-change-me",
             "mimo_key_set": bool(MIMO_API_KEY),
             "llm_key_set": bool(LLM_API_KEY),
             "cos_configured": bool(COS_SECRET_ID and COS_SECRET_KEY and COS_BUCKET),

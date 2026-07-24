@@ -32,6 +32,15 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),
 ]
 
+# 从用户粘贴的文本中提取纯 URL（B站转发格式常带【标题】等前后缀）
+_URL_EXTRACT_RE = re.compile(r'https?://[^\s<>"\'【-】　-〿]+')
+
+
+def _extract_url(text: str) -> str:
+    """从可能含前后缀文字的粘贴文本中提取第一条纯 URL，找不到返回原文本"""
+    m = _URL_EXTRACT_RE.search(text or "")
+    return m.group(0).rstrip(".,;:!?)】》〉") if m else (text or "")
+
 
 # 安全面板动态计数 + 事件记录（进程内存，重启清零）
 import time as _dt
@@ -103,6 +112,7 @@ def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> di
     下载视频音频。B站走 API 直连，其他站点走 yt-dlp。
     返回: {"audio_path": Path, "video_title": str}
     """
+    url = _extract_url(url)
     if not _is_safe_url(url):
         raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):
@@ -207,6 +217,7 @@ def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
     B站走 API 直连，其他站点走 yt-dlp。
     返回: {"title": str, "duration_sec": float}
     """
+    url = _extract_url(url)
     if not _is_safe_url(url):
         raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):

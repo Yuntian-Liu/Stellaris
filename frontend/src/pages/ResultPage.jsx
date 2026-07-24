@@ -180,7 +180,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
   const previewText = taskData.subtitle_txt || '（无文本内容）'
 
   return (
-    <div className="page-enter">
+    <div className="page-enter" style={{ marginTop: -36 }}>
       {/* 首次提星礼（本设备第一次完成提取，撒花 4s） */}
       {firstStar && <Confetti />}
       {/* 顶部返回（历史回看/流程结束均有显性出口） */}
