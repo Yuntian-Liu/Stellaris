@@ -667,6 +667,19 @@ function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est })
 /* ── 子组件：内容概要区块（状态机 + 折叠展示） ── */
 const SUMMARY_COLLAPSE_HEIGHT = 120   // 折叠态最大高度（px）
 
+/**
+ * LaTeX 分隔符归一化：将 LaTeX 标准 \(...\) / \[...\] 转为 remark-math
+ * 识别的 $...$ / $$...$$。LLM 训练数据以 LaTeX 标准为主，经常输出前者。
+ */
+export function normalizeLatex(text) {
+  if (!text) return text
+  return text
+    .replace(/\\\[/g, '$$')
+    .replace(/\\\]/g, '$$')
+    .replace(/\\\(/g, '$')
+    .replace(/\\\)/g, '$')
+}
+
 // Markdown 渲染样式映射（Starlight 风格，ChatPanel 复用）
 export const MD_COMPONENTS = {
   h3: ({node, ...props}) => (
@@ -959,7 +972,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
           WebkitMaskImage: expanded ? 'none' : 'linear-gradient(to bottom, black 80px, transparent 120px)',
         }}
       >
-        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{content}</ReactMarkdown>
+        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(content)}</ReactMarkdown>
       </div>
 
       {/* 折叠态下若溢出，底部显示"展开"提示 */}

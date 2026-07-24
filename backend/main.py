@@ -159,7 +159,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.12.0-spica",
+    version="0.12.1-spica",
     lifespan=lifespan,
 )
 

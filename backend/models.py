@@ -109,7 +109,7 @@ class ChatRequest(BaseModel):
 class HealthResponse(BaseModel):
     """健康检查响应"""
     status: str = "ok"
-    version: str = "V0.12.0 Spica"
+    version: str = "V0.12.1 Spica"
 
 
 # ===== 反馈工单（V0.9.4）=====

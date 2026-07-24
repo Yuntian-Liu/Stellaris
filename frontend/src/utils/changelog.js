@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V0.12.0 Spica'
+export const APP_VERSION = 'V0.12.1 Spica'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
 export const AGREEMENT_VERSION = '2026-07-25'
@@ -28,7 +28,14 @@ export const CHANGELOG = [
       'Markdown 结构化笔记遇到公式自动转为 LaTeX 格式，导入 Obsidian 或 Notion 即开即渲染',
       'AI 解读安全加固：防止通过话术诱导脱离角色边界，你说什么它都只聊视频',
     ],
-    patches: [],
+    patches: [
+      {
+        version: 'V0.12.1', date: '2026-07-24',
+        items: [
+          '修复 LaTeX 公式在部分场景下无法渲染的问题：AI 输出 `\\[...\\]` 格式时自动兼容',
+        ],
+      },
+    ],
   },
   {
     version: 'V0.11.0', codename: 'Regulus', date: '2026-07-23',

@@ -19,7 +19,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import api from '../hooks/api'
-import { MD_COMPONENTS } from '../pages/ResultPage'
+import { MD_COMPONENTS, normalizeLatex } from '../pages/ResultPage'
 
 const SUGGESTIONS = [
   '这个视频讲了什么？',
@@ -253,7 +253,7 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                 : (
                   <>
                     {m.content
-                      ? <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{m.content}</ReactMarkdown>
+                      ? <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(m.content)}</ReactMarkdown>
                       : (
                         <span style={{ display: 'inline-block', padding: '2px 4px' }}>
                           <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
