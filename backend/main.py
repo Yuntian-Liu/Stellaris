@@ -72,6 +72,8 @@ from admin_store import (
 # ===== 内存中的任务存储（生产环境应换 Redis）=====
 tasks: dict[str, dict] = {}
 running_tasks: set = set()  # 正在运行的任务 ID 集合
+_upload_rejected_count: int = 0  # 安全面板：超大文件驳回计数
+_upload_rejected_events: list = []  # 安全面板：超大文件驳回事件（环形缓冲，最多 50）
 # R2 串行信号量：兑现 MAX_CONCURRENT_TASKS 的承诺，管线 / MD / 概要后台任务排队执行，
 # 既防 4GB 内存被打爆，也消除扣费 TOCTOU。chat SSE 流不包（轻量即时，扣费已原子化）。
 _pipeline_sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
@@ -178,10 +180,11 @@ async def static_cache_headers(request, call_next):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
-# CORS（前端开发时需要）
+# CORS（P0-5 安全：白名单收敛，不再 allow_origins=["*"]）
+from config import ALLOWED_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制为实际域名
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -358,10 +361,25 @@ async def upload_file(
 
     # 保存上传的文件
     from utils import get_task_dir
+    from config import MAX_VIDEO_SIZE_MB
     task_dir = get_task_dir(task_id)
-    file_path = task_dir / f"upload_{file.filename}"
+    # P0-1 安全：filename 取 basename 防路径穿越（恶意客户端可构造 ../../etc/passwd）
+    safe_name = Path(file.filename).name if file.filename else "upload"
+    file_path = task_dir / f"upload_{safe_name}"
 
     content = await file.read()
+    # P0-2 安全：校验文件大小，防耗尽内存/磁盘
+    if len(content) > MAX_VIDEO_SIZE_MB * 1024 * 1024:
+        global _upload_rejected_count
+        _upload_rejected_count += 1
+        import time as _ut
+        _upload_rejected_events.append({
+            "time": _ut.strftime("%m-%d %H:%M:%S"), "type": "upload_rejected",
+            "detail": f"超大文件驳回：{safe_name} ({len(content) / 1024 / 1024:.0f}MB > {MAX_VIDEO_SIZE_MB}MB)",
+        })
+        if len(_upload_rejected_events) > 50: _upload_rejected_events.pop(0)
+        cleanup_temp_files(task_id)
+        raise HTTPException(status_code=413, detail=f"文件过大，上限 {MAX_VIDEO_SIZE_MB}MB")
     file_path.write_bytes(content)
 
     # 计费前置：ffprobe 探时长（裸文件路由层才能知时长；asyncio.to_thread 避免阻塞事件循环——踩坑 1）
@@ -1050,6 +1068,13 @@ async def admin_backup_status(current_user: User = Depends(get_admin_user)):
     status = get_backup_status()
     health = await get_health()
     return {**status, "db_size_mb": health["db_size_mb"]}
+
+
+@app.get("/api/admin/security-status")
+async def admin_security_status(current_user: User = Depends(get_admin_user)):
+    """安全面板：认证/网络/密钥/待修复缺口一览（纯配置读取，零数据库负载）"""
+    from security_store import get_security_status
+    return get_security_status()
 
 
 @app.get("/api/admin/trends")

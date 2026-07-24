@@ -21,7 +21,7 @@ from auth.schemas import (
     ChangePasswordRequest, ResetPasswordRequest,
 )
 from auth.utils import (
-    generate_code, check_send_code_rate, create_access_token,
+    generate_code, check_send_code_rate, check_login_rate, create_access_token,
     hash_password, verify_password, validate_password_strength, get_next_uid,
 )
 from auth.email import send_verification_code
@@ -172,8 +172,12 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login-password", response_model=LoginCodeResponse)
-async def login_password(req: LoginPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def login_password(req: LoginPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """密码登录:支持邮箱或 UID(纯数字按 UID 查)"""
+    # P0-4 安全：IP 级限流防暴力撞密码（10 次/分钟）
+    ip = request.client.host if request.client else "unknown"
+    if not check_login_rate(ip):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     if req.email_or_uid.isdigit():
         result = await db.execute(select(User).where(User.uid == int(req.email_or_uid)))
     else:

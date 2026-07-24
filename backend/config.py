@@ -101,6 +101,12 @@ TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
 # 运行环境（true=真实发邮件+强制Turnstile；false=验证码打印日志+Turnstile bypass）
 IS_PROD = os.getenv("IS_PROD", "false").lower() == "true"
 
+# CORS 白名单（逗号分隔）。dev 默认 localhost；生产同源无需 CORS，分离部署时通过 env 设实际域名
+# P0-5 安全：从 allow_origins=["*"] 收敛为白名单
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
+    "ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000"
+).split(",") if o.strip()]
+
 # ===== 数据库自动备份（腾讯云 COS）=====
 # 留空（COS_SECRET_ID/KEY 或 BUCKET 任一为空）则自动禁用备份，本地开发零负担
 # 子用户密钥（仅 QcloudCOSFullAccess 权限，隔离风险）；Bucket 新加坡地域（免备案、与服务器同城）
