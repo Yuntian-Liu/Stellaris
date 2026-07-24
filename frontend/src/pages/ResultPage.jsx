@@ -30,6 +30,8 @@ import {
 import api from '../hooks/api'
 import { RETENTION_TEXT } from '../utils/tier'
 import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
 import { useAuth } from '../contexts/AuthContext'
@@ -715,6 +717,14 @@ export const MD_COMPONENTS = {
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
     }} {...props} />
   ),
+  pre: ({node, ...props}) => (
+    <pre style={{
+      background: 'var(--surface-1)', padding: '10px 14px',
+      borderRadius: 8, fontSize: 13, lineHeight: 1.7,
+      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      overflowX: 'auto', margin: '0 0 10px',
+    }} {...props} />
+  ),
 }
 
 function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars }) {
@@ -949,7 +959,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
           WebkitMaskImage: expanded ? 'none' : 'linear-gradient(to bottom, black 80px, transparent 120px)',
         }}
       >
-        <ReactMarkdown components={MD_COMPONENTS}>{content}</ReactMarkdown>
+        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{content}</ReactMarkdown>
       </div>
 
       {/* 折叠态下若溢出，底部显示"展开"提示 */}

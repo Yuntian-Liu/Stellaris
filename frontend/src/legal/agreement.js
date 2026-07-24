@@ -3,7 +3,7 @@
  * 主体架构对标 Datelife(15 章协议 + 12 章隐私),AI/第三方条款借鉴 MyScore。
  * ⚠️ 安全铁律:本文件是项目内静态字符串,严禁改成从 API/URL 远程加载
  *    (否则须用 DOMPurify 清洗,防 XSS)。
- * ⚠️ 公开文件:不得出现 gift/陈星 等隐私词。
+ * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）。
  */
 
 export const USER_AGREEMENT_HTML = `

@@ -159,7 +159,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.11.3-regulus",
+    version="0.12.0-spica",
     lifespan=lifespan,
 )
 
@@ -710,10 +710,17 @@ async def chat_about_video(
     except InsufficientError as e:
         raise HTTPException(status_code=409, detail=e.detail)
 
+    # 管理员调试模式：消息以 [debug] 开头时绕过字幕约束（仅 uid=100001）
+    is_admin_debug = False
+    message = request.message
+    if current_user.is_admin and message.startswith("[debug]"):
+        is_admin_debug = True
+        message = message[len("[debug]"):].strip() or "你好"
+
     # history 兜底截断：最近 8 条（前端已截，双保险；单条长度由 schema 限 2000）
     history = [{"role": m.role, "content": m.content} for m in request.history[-8:]]
     # 本轮提问追加为最后一条 user 消息
-    history.append({"role": "user", "content": request.message})
+    history.append({"role": "user", "content": message})
 
     raw_text = task["raw_text"]
     video_title = task.get("video_title") or "未知视频"
@@ -727,7 +734,7 @@ async def chat_about_video(
             pieces = []
             try:
                 for kind, payload in chat_with_subtitle_stream(
-                    raw_text, video_title, history, task_id,
+                    raw_text, video_title, history, task_id, is_admin_debug,
                 ):
                     if kind == "delta":
                         pieces.append(payload)
