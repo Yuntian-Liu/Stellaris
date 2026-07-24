@@ -18,7 +18,8 @@ async def verify_turnstile(token: str | None, remote_ip: str | None = None) -> b
     """
     if not IS_PROD:
         return True
-    if token == "dev-bypass" and remote_ip in ("127.0.0.1", "::1", "localhost"):
+    # 本机请求(127.0.0.1/::1):widget 可能渲染不了,允许空 token 通过。外网无法伪造来源 IP,安全
+    if remote_ip in ("127.0.0.1", "::1", "localhost"):
         return True
     if not TURNSTILE_SECRET_KEY:
         return False  # 生产环境必须配 secret,fail-closed

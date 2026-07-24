@@ -750,36 +750,54 @@ async def chat_about_video(
         full_reply = None
         final_usage = None
         charged = 0
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            kind, payload = item
-            if kind == "delta":
-                body = {"type": "delta", "text": payload}
-            elif kind == "done":
-                final_usage, full_reply = payload
-                # 成功即结算（done 事件发出前完成扣费，事件里带实际扣额）
-                if full_reply:
-                    await save_chat_message(task_id, "user", request.message)
-                    await save_chat_message(task_id, "assistant", full_reply, final_usage)
-                    if current_user and final_usage:
-                        charged = await consume_gravity(
-                            current_user.uid,
-                            final_usage["prompt_tokens"] + final_usage["completion_tokens"],
-                            "chat", task_id,
-                        )
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                kind, payload = item
+                if kind == "delta":
+                    body = {"type": "delta", "text": payload}
+                elif kind == "done":
+                    final_usage, full_reply = payload
+                    # 成功即结算（done 事件发出前完成扣费，事件里带实际扣额）
+                    if full_reply:
+                        await save_chat_message(task_id, "user", request.message)
+                        await save_chat_message(task_id, "assistant", full_reply, final_usage)
+                        if current_user and final_usage:
+                            charged = await consume_gravity(
+                                current_user.uid,
+                                final_usage["prompt_tokens"] + final_usage["completion_tokens"],
+                                "chat", task_id,
+                            )
+                        owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
+                        if owner_uid and final_usage:
+                            await incr_stats(
+                                owner_uid,
+                                chat_rounds=1,
+                                tokens_used=final_usage["prompt_tokens"] + final_usage["completion_tokens"],
+                            )
+                    body = {"type": "done", "usage": final_usage, "charged": charged}
+                else:
+                    body = {"type": "error", "message": payload}
+                yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+        finally:
+            # P1-7 SSE 断连白嫖兜底：LLM 已返回 usage 但 done 事件未处理（客户端断开），补扣
+            if final_usage is not None and charged == 0 and current_user:
+                try:
+                    charged = await consume_gravity(
+                        current_user.uid,
+                        final_usage["prompt_tokens"] + final_usage["completion_tokens"],
+                        "chat", task_id,
+                    )
                     owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
-                    if owner_uid and final_usage:
+                    if owner_uid:
                         await incr_stats(
-                            owner_uid,
-                            chat_rounds=1,
+                            owner_uid, chat_rounds=1,
                             tokens_used=final_usage["prompt_tokens"] + final_usage["completion_tokens"],
                         )
-                body = {"type": "done", "usage": final_usage, "charged": charged}
-            else:
-                body = {"type": "error", "message": payload}
-            yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+                except Exception as be:
+                    logger.warning("[Billing] SSE catch-up 结算失败: %s", be)
         await producer
 
     return StreamingResponse(
@@ -1309,10 +1327,48 @@ async def admin_feature_usage(days: int = 7, current_user: User = Depends(get_ad
     return await get_feature_usage(max(1, min(days, 90)))
 
 
+@app.get("/api/admin/task/{task_id}/detail")
+async def admin_task_detail(task_id: str, current_user: User = Depends(get_admin_user)):
+    """任务详情档案：内存 tasks → 磁盘 _rehydrate → DB task_records + billing_ledger"""
+    from admin_store import get_task_detail
+    detail = await get_task_detail(task_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    # 融合运行时数据：内存 tasks 优先，磁盘重建兜底（md/summary 状态从 output 文件恢复）
+    t = tasks.get(task_id)
+    if not t:
+        t = await _rehydrate_task(task_id)
+    if t:
+        # 从 ledger 汇总 charged_*（进程重启后 tasks 内存丢失，但 ledger 持久化）
+        charged_min = t.get("charged_minutes")
+        charged_q = t.get("charged_quantum")
+        if not charged_min or not charged_q:
+            for r in detail.get("ledger", []):
+                if not charged_min and r["currency"] == "minute" and r["amount"] < 0:
+                    charged_min = -r["amount"]
+                if not charged_q and r["currency"] == "quantum" and r["amount"] < 0:
+                    charged_q = -r["amount"]
+        detail["runtime"] = {
+            "status": t.get("status"),
+            "progress": t.get("progress"),
+            "video_title": t.get("video_title"),
+            "subtitle_source": t.get("subtitle_source"),
+            "md_status": t.get("md_status"),
+            "summary_status": t.get("summary_status"),
+            "charged_minutes": charged_min,
+            "charged_quantum": charged_q,
+            "actual_seg_tokens": t.get("actual_seg_tokens"),
+            "actual_chars": t.get("actual_chars"),
+            "error": t.get("error"),
+        }
+    return detail
+
+
 @app.get("/api/admin/recent-tasks")
-async def admin_recent_tasks(uid: int | None = None, current_user: User = Depends(get_admin_user)):
-    """最近提取任务（100 条），可按 UID 过滤"""
-    return {"items": await get_recent_tasks(uid_filter=uid)}
+async def admin_recent_tasks(uid: int | None = None, tid: str | None = None,
+                              current_user: User = Depends(get_admin_user)):
+    """最近提取任务（100 条），可按 UID 或 task_id 过滤"""
+    return {"items": await get_recent_tasks(uid_filter=uid, task_id=tid)}
 
 
 @app.get("/api/admin/anon-usage")

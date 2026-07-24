@@ -561,12 +561,15 @@ async def get_feature_usage(days: int = 7) -> dict:
     return {"days": days, "features": {f: c for f, c in rows}}
 
 
-async def get_recent_tasks(limit: int = 100, uid_filter: int | None = None) -> list[dict]:
-    """最近提取任务列表（task_records），可按 UID 过滤"""
+async def get_recent_tasks(limit: int = 100, uid_filter: int | None = None,
+                           task_id: str | None = None) -> list[dict]:
+    """最近提取任务列表（task_records），可按 UID 或 task_id 过滤"""
     async with async_session() as session:
         stmt = select(TaskRecord).order_by(TaskRecord.created_at.desc()).limit(limit)
         if uid_filter:
             stmt = stmt.where(TaskRecord.owner_uid == uid_filter)
+        if task_id:
+            stmt = stmt.where(TaskRecord.task_id == task_id.strip())
         result = await session.execute(stmt)
     return [
         {
@@ -578,6 +581,43 @@ async def get_recent_tasks(limit: int = 100, uid_filter: int | None = None) -> l
         }
         for r in result.scalars()
     ]
+
+
+async def get_task_detail(task_id: str) -> dict | None:
+    """单个任务详情：task_records + billing_ledger 汇总，供管理后台排查问题"""
+    async with async_session() as session:
+        # task_records 基本信息
+        rec = (await session.execute(
+            select(TaskRecord).where(TaskRecord.task_id == task_id)
+        )).scalar_one_or_none()
+        if not rec:
+            return None
+        # billing_ledger 流水（该任务的所有扣费/赠送记录）
+        ledger_rows = (await session.execute(
+            select(BillingLedger).where(BillingLedger.task_id == task_id)
+            .order_by(BillingLedger.created_at.asc())
+        )).scalars().all()
+    return {
+        "task_id": rec.task_id,
+        "owner_uid": rec.owner_uid,
+        "title": rec.title,
+        "source_platform": rec.source_platform,
+        "status": rec.status,
+        "created_at": _iso_utc(rec.created_at),
+        "ledger": [
+            {
+                "feature": r.feature,
+                "currency": r.currency,
+                "amount": r.amount,
+                "balance_after": r.balance_after,
+                "from_gift": r.from_gift,
+                "from_perm": r.from_perm,
+                "note": r.note,
+                "created_at": _iso_utc(r.created_at),
+            }
+            for r in ledger_rows
+        ],
+    }
 
 
 async def get_health(running_tasks: int = 0) -> dict:

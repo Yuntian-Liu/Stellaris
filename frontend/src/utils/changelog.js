@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现 gift/陈星/星尘 等隐私词
  */
 
-export const APP_VERSION = 'V0.11.6 Regulus'
+export const APP_VERSION = 'V0.11.7 Regulus'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
-export const AGREEMENT_VERSION = '2026-07-24'
+export const AGREEMENT_VERSION = '2026-07-25'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -29,6 +29,14 @@ export const CHANGELOG = [
       '这个版本我们首次做了手机适配，鉴于开发者水平有限，难免还带着些毛边。如果哪个角落不太对劲，还请您在设置-反馈与建议-提交工单告诉我们，开发者将尽快修复',
     ],
     patches: [
+      {
+        version: 'V0.11.7', date: '2026-07-24',
+        items: [
+          '修复 AI 解读中途断开时不计费的漏洞，安全面板待修复项归零',
+          '任务监控支持粘贴 Stellaris ID 查看详情档案：转写字数、Tokens、扣费、MD/概要状态、计费流水，方便排查用户反馈',
+          '结果页与历史记录的任务 ID 旁加一键复制按钮',
+        ],
+      },
       {
         version: 'V0.11.6', date: '2026-07-24',
         items: [

@@ -188,13 +188,19 @@ export const adminApi = {
   setPin: (pin) => request('/api/admin/pin/set', { method: 'POST', body: { pin } }),
   codesSummary: () => request('/api/admin/codes-summary'),
   featureUsage: (days = 7) => request(`/api/admin/feature-usage?days=${days}`),
-  recentTasks: (uid) => request(`/api/admin/recent-tasks${uid ? `?uid=${uid}` : ''}`),
+  recentTasks: (uid, tid) => {
+    const params = []
+    if (uid) params.push(`uid=${uid}`)
+    if (tid) params.push(`tid=${encodeURIComponent(tid)}`)
+    return request(`/api/admin/recent-tasks${params.length ? '?' + params.join('&') : ''}`)
+  },
   health: () => request('/api/admin/health'),
   anonUsage: () => request('/api/admin/anon-usage'),
   revokeCode: (code, pin) => request(`/api/admin/codes/${encodeURIComponent(code)}/revoke`, { method: 'POST', body: { pin } }),
   backupStatus: () => request('/api/admin/backup-status'),
   backupNow: (pin) => request('/api/admin/backup', { method: 'POST', body: { pin } }),
   securityStatus: () => request('/api/admin/security-status'),
+  taskDetail: (taskId) => request(`/api/admin/task/${encodeURIComponent(taskId)}/detail`),
   listTickets: (status) => request(`/api/admin/tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   getTicket: (tid) => request(`/api/admin/tickets/${tid}`),
   replyTicket: (tid, payload) => request(`/api/admin/tickets/${tid}/reply`, { method: 'POST', body: payload }),

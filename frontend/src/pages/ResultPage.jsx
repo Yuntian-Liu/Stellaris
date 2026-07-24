@@ -25,6 +25,7 @@ import {
   BulbOutlined,
   DeleteOutlined,
   InfoCircleOutlined,
+  CopyOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
 import { RETENTION_TEXT } from '../utils/tier'
@@ -293,7 +294,13 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
             fontSize: 12,
             color: 'var(--body)',
             justifySelf: 'start',
-          }}>{taskData.task_id}</code>
+          }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {taskData.task_id}
+              <CopyOutlined style={{ fontSize: 11, color: 'var(--mute)', cursor: 'pointer' }}
+                onClick={() => { navigator.clipboard.writeText(taskData.task_id); message.success('已复制任务 ID') }} />
+            </span>
+          </code>
           {(taskData.actual_chars > 0 || taskData.charged_minutes > 0) && (
             <>
               <span style={{ fontSize: 13, color: 'var(--mute)' }}>本次消耗</span>

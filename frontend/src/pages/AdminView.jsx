@@ -1017,24 +1017,91 @@ function OrdersPanel({ initialFilter }) {
 function TasksPanel() {
   const [items, setItems] = useState(null)
   const [uidFilter, setUidFilter] = useState('')
+  const [tidFilter, setTidFilter] = useState('')
+  const [detail, setDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const load = useCallback(() => {
     const uid = uidFilter.trim() ? parseInt(uidFilter, 10) : null
-    adminApi.recentTasks(uid || undefined).then((r) => setItems(r.items)).catch((e) => message.error(e.message))
-  }, [uidFilter])
+    const tid = tidFilter.trim() || null
+    setDetail(null)
+    adminApi.recentTasks(uid || undefined, tid || undefined).then((r) => {
+      setItems(r.items)
+      // 精确 task_id 搜索：自动拉取详情档案
+      if (tid && r.items?.length === 1) {
+        setDetailLoading(true)
+        adminApi.taskDetail(tid).then(setDetail).catch(() => setDetail(null)).finally(() => setDetailLoading(false))
+      }
+    }).catch((e) => message.error(e.message))
+  }, [uidFilter, tidFilter])
   useEffect(() => { adminApi.recentTasks().then((r) => setItems(r.items)).catch((e) => message.error(e.message)) }, [])
+
+  const reset = () => {
+    setUidFilter(''); setTidFilter(''); setDetail(null)
+    adminApi.recentTasks().then((r) => setItems(r.items))
+  }
 
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <Input
+          size="small" placeholder="Stellaris 任务 ID" value={tidFilter}
+          onChange={(e) => setTidFilter(e.target.value)}
+          style={{ width: 220 }} onPressEnter={load}
+        />
+        <Input
           size="small" placeholder="按 UID 过滤（可选）" value={uidFilter}
           onChange={(e) => setUidFilter(e.target.value)}
-          style={{ width: 200 }} onPressEnter={load}
+          style={{ width: 180 }} onPressEnter={load}
         />
         <Button size="small" onClick={load}>查询</Button>
-        <Button size="small" onClick={() => { setUidFilter(''); adminApi.recentTasks().then((r) => setItems(r.items)) }}>重置</Button>
-        <span style={{ fontSize: 11, color: 'var(--mute)' }}>最近 100 条提取记录</span>
+        <Button size="small" onClick={reset}>重置</Button>
+        <span style={{ fontSize: 11, color: 'var(--mute)' }}>用户反馈时贴 task_id 即可定位</span>
       </div>
+
+      {/* 详情档案（task_id 精确查询时展示） */}
+      {detail && (
+        <div className="card" style={{ padding: '16px 18px', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)', marginBottom: 12 }}>任务档案</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 24px', fontSize: 13 }}>
+            <div><span style={{ color: 'var(--mute)' }}>任务 ID</span> <span className="font-mono">{detail.task_id}</span></div>
+            <div><span style={{ color: 'var(--mute)' }}>UID</span> <span className="font-mono">{detail.owner_uid}</span></div>
+            <div><span style={{ color: 'var(--mute)' }}>标题</span> {detail.title || '未知'}</div>
+            <div><span style={{ color: 'var(--mute)' }}>来源</span> {detail.source_platform || '—'}</div>
+            <div><span style={{ color: 'var(--mute)' }}>创建时间</span> {fmtTime(detail.created_at)}</div>
+            <div><span style={{ color: 'var(--mute)' }}>状态</span> <Tag color={detail.status === 'completed' ? 'success' : 'default'}>{detail.status}</Tag></div>
+            {detail.runtime && (
+              <>
+                <div><span style={{ color: 'var(--mute)' }}>实际转写字数</span> {detail.runtime.actual_chars?.toLocaleString() || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>分段 Tokens</span> {detail.runtime.actual_seg_tokens?.toLocaleString() || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>扣分钟</span> {detail.runtime.charged_minutes != null ? `${detail.runtime.charged_minutes} 分钟` : '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>扣量子波</span> {detail.runtime.charged_quantum != null ? detail.runtime.charged_quantum : '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>MD 笔记</span> {detail.runtime.md_status === 'ready' ? '已生成' : detail.runtime.md_status || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>内容概要</span> {detail.runtime.summary_status === 'ready' ? '已生成' : detail.runtime.summary_status || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>字幕来源</span> {detail.runtime.subtitle_source || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>源标题</span> {detail.runtime.video_title || '—'}</div>
+                {detail.runtime.error && <div style={{ gridColumn: '1 / -1', color: 'var(--error)', fontSize: 12 }}>错误：{detail.runtime.error}</div>}
+              </>
+            )}
+          </div>
+          {detail.ledger?.length > 0 && (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', margin: '14px 0 8px' }}>计费流水</div>
+              <div style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-input)', padding: '6px 12px', maxHeight: 200, overflowY: 'auto' }}>
+                {detail.ledger.map((l, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--hairline)', fontSize: 12 }}>
+                    <span style={{ color: 'var(--mute)', width: 100 }}>{fmtTimeShort(l.created_at) || l.created_at}</span>
+                    <Tag color={l.amount > 0 ? 'success' : 'error'} style={{ fontSize: 10 }}>{FEATURE_LABELS[l.feature] || l.feature}</Tag>
+                    <span className="font-mono" style={{ color: l.amount > 0 ? '#16a34a' : 'var(--ink)' }}>{l.amount > 0 ? '+' : ''}{l.amount} {l.currency}</span>
+                    {l.from_gift != null && <span style={{ fontSize: 10, color: 'var(--mute)' }}>gift:{l.from_gift} perm:{l.from_perm}</span>}
+                    {l.note && <span style={{ fontSize: 10, color: 'var(--mute)' }}>{l.note}</span>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <Table
         size="small"
         rowKey="task_id"
@@ -1044,6 +1111,7 @@ function TasksPanel() {
         pagination={{ pageSize: 20, showSizeChanger: false }}
         columns={[
           { title: '时间', dataIndex: 'created_at', render: fmtTime, width: 150 },
+          { title: '任务 ID', dataIndex: 'task_id', width: 200, className: 'font-mono', ellipsis: true, render: (v) => v || '—' },
           { title: '标题', dataIndex: 'title', ellipsis: true, render: (t) => t || '未知视频' },
           { title: '来源', dataIndex: 'source_platform', width: 100, render: (s) => s || '—' },
           { title: 'UID', dataIndex: 'owner_uid', width: 80, className: 'font-mono', render: (v) => v ?? '—' },
@@ -1530,7 +1598,7 @@ function SecurityPanel() {
           </div>
           <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
             <Row label="CORS 白名单" value={network.cors_origins?.join(', ') || '未设置'} ok />
-            <Row label="SSRF 防护" value="已启用" />
+            <Row label="SSRF 防护" value="已启用" ok />
             <Row label="上传大小上限" value={`${(network.max_upload_mb / 1024).toFixed(0)} GB`} ok />
             <Row label="HTTP 安全头" value={network.security_headers ? '已设置' : '未设置'} ok={network.security_headers} />
           </div>

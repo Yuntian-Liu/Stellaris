@@ -57,7 +57,5 @@ def get_security_status() -> dict:
             "afdian_token_set": bool(AFDIAN_API_TOKEN),
             "resend_key_set": bool(RESEND_API_KEY),
         },
-        "p1_gaps": [
-            {"id": "sse_backrun", "title": "SSE chat 断连白嫖（断线不扣 AI 费用）", "level": "P1"},
-        ],
+        "p1_gaps": [],
     }

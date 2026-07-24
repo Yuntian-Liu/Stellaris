@@ -231,7 +231,7 @@ export default function HomePage({ onSubmit }) {
               视频链接
             </label>
             <Input
-              placeholder="粘贴视频链接，支持 B 站 / 小红书等主流平台"
+              placeholder="粘贴视频链接（B站 / 小红书 / YouTube；抖音暂不支持）"
               size="large"
               value={url}
               onChange={handleUrlChange}

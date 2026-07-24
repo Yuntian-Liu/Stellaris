@@ -4,7 +4,7 @@
  */
 import { useState, useEffect } from 'react'
 import { Modal, Button, message } from 'antd'
-import { RightOutlined, HistoryOutlined } from '@ant-design/icons'
+import { RightOutlined, HistoryOutlined, CopyOutlined } from '@ant-design/icons'
 import api from '../hooks/api'
 import { RETENTION_COPY } from '../utils/tier'
 
@@ -92,8 +92,11 @@ export default function HistoryModal({ open, onClose, onOpenRecord }) {
               }}>
                 {r.title}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 3 }}>
-                {r.source_platform} · {timeAgo(r.created_at)}
+              <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="font-mono" style={{ fontSize: 10 }}>{r.task_id}</span>
+                <CopyOutlined style={{ fontSize: 10, cursor: 'pointer' }}
+                  onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(r.task_id); message.success('已复制任务 ID') }} />
+                <span>· {r.source_platform} · {timeAgo(r.created_at)}</span>
               </div>
             </div>
             {opening === r.task_id
