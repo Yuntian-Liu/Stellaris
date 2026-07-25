@@ -43,17 +43,27 @@ async def save_chat_message(
 
 
 async def get_chat_history(task_id: str) -> list[dict]:
-    """按时间正序取回某任务的对话记录"""
+    """按时间正序取回某任务的对话记录。
+    charged 不落库，按 usage 用 round_tokens 复算（与 consume_gravity 同一公式，
+    全价结算场景恒等；余额不足扣光的极端场景会略有出入，可接受）——
+    否则前端刷新/重开后"扣 N 引力波"会丢失（碳碳实测时隐时现的根因）。"""
+    from billing_store import round_tokens, GRAVITY_PER_TOKEN_UNIT
     async with async_session() as session:
         result = await session.execute(
             select(ChatMessageRecord)
             .where(ChatMessageRecord.task_id == task_id)
             .order_by(ChatMessageRecord.id)
         )
-        return [
-            {"role": r.role, "content": r.content, "usage": r.usage}
-            for r in result.scalars()
-        ]
+        out = []
+        for r in result.scalars():
+            charged = 0
+            if r.role == "assistant" and r.usage:
+                charged = round_tokens(
+                    (r.usage.get("prompt_tokens") or 0) + (r.usage.get("completion_tokens") or 0),
+                    GRAVITY_PER_TOKEN_UNIT,
+                )
+            out.append({"role": r.role, "content": r.content, "usage": r.usage, "charged": charged})
+        return out
 
 
 async def delete_chat_messages(task_id: str) -> None:

@@ -29,6 +29,7 @@ import {
 } from '@ant-design/icons'
 import api from '../hooks/api'
 import { RETENTION_TEXT } from '../utils/tier'
+import { COPY_FOOTER, FILE_FOOTER_MD } from '../utils/copyright'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -308,8 +309,14 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               <span style={{ fontSize: 13, color: 'var(--mute)' }}>本次消耗</span>
               <span style={{ fontSize: 13, color: 'var(--body)', justifySelf: 'start' }}>
                 {taskData.actual_chars > 0 && `${taskData.actual_chars} 字 · ${taskData.actual_seg_tokens || 0} tokens`}
-                {taskData.charged_minutes > 0 && ` · 扣 ${taskData.charged_minutes} 分钟`}
-                {taskData.charged_quantum > 0 && ` + ${taskData.charged_quantum} 量子波`}
+                {taskData.charged_minutes > 0 && (
+                  /* 扣费部分独立 span：PC 用 ::before 补 " · " 同行显示；
+                     移动端 .consume-charges 换块级到第二行（消耗/扣费分两行，不跨行） */
+                  <span className="consume-charges">
+                    扣 {taskData.charged_minutes} 分钟
+                    {taskData.charged_quantum > 0 && ` + ${taskData.charged_quantum} 量子波`}
+                  </span>
+                )}
               </span>
             </>
           )}
@@ -333,12 +340,28 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
           <div style={{
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
             marginBottom: 8,
             color: 'var(--mute)',
             fontSize: 13,
           }}>
-            <FileTextOutlined style={{ marginRight: 6 }} />
-            <span>字幕预览（整理后文本）</span>
+            <span>
+              <FileTextOutlined style={{ marginRight: 6 }} />
+              字幕预览（整理后文本）
+            </span>
+            {/* 复制全文：粘到 Word/笔记软件自行编辑的场景 */}
+            <Button
+              type="text"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => {
+                navigator.clipboard.writeText(previewText + COPY_FOOTER)
+                message.success('已复制字幕全文')
+              }}
+              style={{ fontSize: 12, color: 'var(--mute)', padding: '0 4px' }}
+            >
+              复制
+            </Button>
           </div>
           <div style={{
             background: 'var(--surface-2)',
@@ -942,19 +965,51 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
             增值
           </Tag>
           {cost > 0 && (
-            <span className="font-mono" style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)', fontWeight: 400 }}>
+            <span className="font-mono summary-header-cost" style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)', fontWeight: 400 }}>
               消耗 {cost} 量子波{tokens ? ` · ${tokens} tokens` : ''}
             </span>
           )}
         </div>
-        <Button
-          type="text"
-          size="small"
-          onClick={() => setExpanded(!expanded)}
-          style={{ fontSize: 12, color: 'var(--accent)', padding: '0 4px' }}
-        >
-          {expanded ? '收起' : '展开'}
-        </Button>
+        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+          {/* 复制 / 下载 .md：概要不只是看，也要能带走（前端 Blob 直下，不走后端） */}
+          <Button
+            type="text"
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={() => {
+              navigator.clipboard.writeText(content + COPY_FOOTER)
+              message.success('已复制概要')
+            }}
+            style={{ fontSize: 12, color: 'var(--mute)', padding: '0 4px' }}
+          >
+            复制
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              const blob = new Blob([content + FILE_FOOTER_MD], { type: 'text/markdown;charset=utf-8' })
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(blob)
+              a.download = `stellaris-${taskId}-summary.md`
+              a.click()
+              URL.revokeObjectURL(a.href)
+              message.success('已下载概要 .md')
+            }}
+            style={{ fontSize: 12, color: 'var(--mute)', padding: '0 4px' }}
+          >
+            下载
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            onClick={() => setExpanded(!expanded)}
+            style={{ fontSize: 12, color: 'var(--accent)', padding: '0 4px' }}
+          >
+            {expanded ? '收起' : '展开'}
+          </Button>
+        </span>
       </div>
 
       {/* 内容区（折叠态 maxHeight 限制，展开态自由 + 内部滚动） */}

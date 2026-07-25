@@ -577,6 +577,17 @@ function ChangelogModal({ open, onClose }) {
                   borderTop: '1px solid var(--hairline)',
                   background: 'var(--surface-1)',
                 }}>
+                  {v.intro && (
+                    <div style={{
+                      fontSize: 12.5, color: 'var(--mute)', lineHeight: 1.9,
+                      padding: '10px 14px', marginBottom: 10,
+                      borderLeft: '3px solid var(--accent)',
+                      background: 'var(--surface-2)',
+                      borderRadius: '0 8px 8px 0',
+                    }}>
+                      {v.intro}
+                    </div>
+                  )}
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {v.items.map((item, i) => (
                       <li key={i} style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9 }}>{item}</li>

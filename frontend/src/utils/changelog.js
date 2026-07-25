@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V0.12.4 Spica'
+export const APP_VERSION = 'V0.13.0 Achernar'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
 export const AGREEMENT_VERSION = '2026-07-25.2'
@@ -17,10 +17,24 @@ export function getLatestUpdate() {
     const p = minor.patches[0]
     return { version: p.version, codename: minor.codename, date: p.date, items: p.items }
   }
-  return { version: minor.version, codename: minor.codename, date: minor.date, items: minor.items }
+  return { version: minor.version, codename: minor.codename, date: minor.date, items: minor.items, intro: minor.intro }
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V0.13.0', codename: 'Achernar', date: '2026-07-25',
+    // 开发者寄语（碳碳亲笔，1.0.0 前最后一个 minor 的纪念）
+    intro: '这应该是正式版（1.0.0）以前最后一个 minor 了。高强度开发一周感觉很爽，也学习到了很多新的技术，无论是产品还是技术上。希望这个版本能够顺利运行（不要再有新 patch 了啊啊啊）。明天就迎来真正的用户了，希望顺利，好吧！（开发者的悄悄话）',
+    items: [
+      '字幕预览新增「复制」按钮：一键复制全文，直接粘贴到 Word 或笔记软件里编辑',
+      '内容概要新增「复制」与「下载 .md」：概要不止能看，也能带走',
+      'AI 解读每条回复都可以复制，顶栏还会累计显示本次对话的 tokens 与引力波消耗',
+      '复制和下载的内容会自动附带来源与版权信息（SRT 字幕文件除外），欢迎分享，请注明来处',
+      '修复重新打开历史对话后，部分回复不显示扣费的问题',
+      '移动端排版优化：概要标题与消耗信息不再挤在一起',
+    ],
+    patches: [],
+  },
   {
     version: 'V0.12.0', codename: 'Spica', date: '2026-07-24',
     items: [

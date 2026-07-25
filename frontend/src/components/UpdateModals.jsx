@@ -66,6 +66,22 @@ export default function UpdateModals({ onOpenAgreement }) {
             <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 18 }}>
               {updateInfo.version} · {updateInfo.codename} · {updateInfo.date}
             </div>
+            {/* 开发者寄语（仅 minor 有 intro 时展示；引用块样式与正条区分） */}
+            {updateInfo.intro && (
+              <div style={{
+                textAlign: 'left',
+                fontSize: 12.5,
+                color: 'var(--mute)',
+                lineHeight: 1.9,
+                padding: '10px 14px',
+                marginBottom: 16,
+                borderLeft: '3px solid var(--accent)',
+                background: 'var(--surface-2)',
+                borderRadius: '0 8px 8px 0',
+              }}>
+                {updateInfo.intro}
+              </div>
+            )}
             <ul style={{
               textAlign: 'left', margin: '0 0 20px', paddingLeft: 20,
             }}>

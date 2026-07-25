@@ -165,7 +165,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.12.4-spica",
+    version="0.13.0-achernar",
     lifespan=lifespan,
 )
 
@@ -575,6 +575,21 @@ async def delete_task(
     return TaskResponse(**task)
 
 
+# 下载文件版权尾注（仅响应层追加，DB 存储与页面预览保持纯净；SRT 时间轴格式豁免）
+DOWNLOAD_FOOTER_TXT = (
+    "\n\n———\n"
+    "本字幕由 Stellaris 提取生成 · https://stellaris.ytunx.com/\n"
+    "开源项目 · https://github.com/Yuntian-Liu/Stellaris\n"
+    "Copyright © Yuntian-Liu. All Rights Reserved.\n"
+)
+DOWNLOAD_FOOTER_MD = (
+    "\n\n---\n"
+    "> 本笔记由 [Stellaris](https://stellaris.ytunx.com/) 生成 · "
+    "[GitHub 开源](https://github.com/Yuntian-Liu/Stellaris)\n"
+    "> Copyright © Yuntian-Liu. All Rights Reserved.\n"
+)
+
+
 @app.get("/api/download/{task_id}/{format}")
 async def download_result(
     task_id: str,
@@ -614,6 +629,12 @@ async def download_result(
 
     if not text:
         raise HTTPException(status_code=404, detail="文件不存在（任务可能尚未完成或该格式未生成）")
+
+    # 版权尾注：只在"出门"时追加，DB/预览保持纯净；SRT 时间轴格式豁免（V0.12.5 定稿）
+    if format == "txt":
+        text = text.rstrip() + DOWNLOAD_FOOTER_TXT
+    elif format == "md":
+        text = text.rstrip() + DOWNLOAD_FOOTER_MD
 
     media_type_map = {
         "txt": "text/plain",

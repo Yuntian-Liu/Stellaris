@@ -858,6 +858,23 @@ export default function App() {
         }
         .chat-chip:hover .chat-chip-cost { color: var(--accent); opacity: 0.8; }
 
+        /* AI 气泡额度行：用量信息 + 复制按钮（沉浸行内，右端） */
+        .chat-usage { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .chat-usage-base { order: 1; }
+        .chat-usage-extra { order: 2; display: inline-flex; gap: 0; }
+        .chat-usage-copy {
+          order: 3;
+          margin-left: auto;
+          font-size: 11px;
+          color: var(--hairline-strong);
+          cursor: pointer;
+          transition: color 0.15s;
+        }
+        .chat-usage-copy:hover { color: var(--accent); }
+
+        /* 本次消耗扣费段：PC 与前段同行（::before 补分隔点）；移动端换块级到第二行 */
+        .consume-charges::before { content: ' · '; }
+
         /* AI 解读入口卡 */
         .chat-entry {
           display: flex;
@@ -912,6 +929,13 @@ export default function App() {
           }
           /* 元信息标签列缩窄 */
           .result-meta-grid { grid-template-columns: 56px 1fr !important; }
+          /* 内容概要标题栏：消耗信息换到第二行（标题 + 增值标签 + 操作按钮一行排不下） */
+          .summary-header-cost { display: block; margin-left: 0 !important; margin-top: 3px; }
+          /* 本次消耗：扣费段换第二行（第一行消耗量、第二行扣费，不跨行） */
+          .consume-charges { display: block; }
+          .consume-charges::before { content: ''; }
+          /* AI 解读顶栏累计引力波：移动端隐藏（一行排不下，PC 保留完整显示） */
+          .chat-total-gravity { display: none; }
           /* 首页 hero 光晕裁切（480px 绝对定位光晕超出窄屏视口 → 撑宽容器的元凶） */
           .hero-glow-container { overflow: hidden; }
           /* 首页副标题换行：PC 端一行，移动端拆两行更均衡 */

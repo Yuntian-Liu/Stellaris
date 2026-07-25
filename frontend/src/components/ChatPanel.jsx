@@ -10,16 +10,17 @@
  * 对话记录只存本组件 state，刷新即清空；后端无状态，字幕全文由后端注入。
  */
 import { useState, useRef, useEffect } from 'react'
-import { Button, Input } from 'antd'
+import { Button, Input, message } from 'antd'
 import {
   SendOutlined, DownloadOutlined, CloseOutlined,
-  InfoCircleOutlined, ThunderboltOutlined,
+  InfoCircleOutlined, ThunderboltOutlined, CopyOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import api from '../hooks/api'
 import { MD_COMPONENTS, normalizeLatex } from '../pages/ResultPage'
+import { FILE_FOOTER_MD } from '../utils/copyright'
 
 const SUGGESTIONS = [
   '这个视频讲了什么？',
@@ -46,7 +47,8 @@ function downloadChatMd(videoTitle, messages) {
     lines.push(m.content)
     lines.push('')
   }
-  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  // 版权尾注（V0.12.5：导出文件统一"出门盖章"，与概要下载/后端下载文案一致）
+  const blob = new Blob([lines.join('\n') + FILE_FOOTER_MD], { type: 'text/markdown;charset=utf-8' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = `stellaris-chat-${Date.now()}.md`
@@ -81,14 +83,15 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
   /** 扣费完成后刷新导航栏余额（billing-changed 广播） */
   const notifyBilling = () => window.dispatchEvent(new CustomEvent('stellaris:billing-changed'))
 
-  // 会话累计 token（输出 + 输入），显示在顶栏
+  // 会话累计 token（输出 + 输入）与累计扣费，显示在顶栏
   const totals = messages.reduce((acc, m) => {
     if (m.usage) {
       acc.prompt += m.usage.prompt_tokens
       acc.completion += m.usage.completion_tokens
     }
+    if (m.charged) acc.charged += m.charged
     return acc
-  }, { prompt: 0, completion: 0 })
+  }, { prompt: 0, completion: 0, charged: 0 })
 
   // 本轮预计输入 tokens（发送前辅助决策；字幕全文含在 system 里每轮都发）
   // 估算：字符数 / 1.5（DeepSeek 中文折算，与 /api/estimate 同模型）
@@ -176,6 +179,10 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
               marginLeft: 10, fontSize: 11, fontWeight: 400, color: 'var(--mute)',
             }}>
               累计 {fmtTokens(totals.prompt + totals.completion)} tokens
+              {totals.charged > 0 && (
+                /* 累计引力波移动端隐藏（标题栏一行排不下，碳碳定稿只留 PC） */
+                <span className="chat-total-gravity">{` · ${totals.charged} 引力波`}</span>
+              )}
             </span>
           )}
         </span>
@@ -260,24 +267,36 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                         </span>
                       )
                     }
-                    {m.usage && (
-                      <div className="font-mono" style={{
+                    {m.content && !m.error && (
+                      /* 额度行：用量信息 + 复制按钮沉浸其中（碳碳定稿：不外挂气泡下）。
+                         PC 单行：输入/输出 · 缓存/扣费 ··· 复制；移动端缓存/扣费换行（.chat-usage-extra） */
+                      <div className="font-mono chat-usage" style={{
                         marginTop: 8, paddingTop: 6,
                         borderTop: '1px dashed var(--hairline)',
                         fontSize: 11, color: 'var(--mute)',
                       }}>
-                        ↑ {fmtTokens(m.usage.prompt_tokens)} 输入 · ↓ {fmtTokens(m.usage.completion_tokens)} 输出
-                        {m.usage.cache_hit_tokens > 0 && (
-                          <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
-                            <ThunderboltOutlined style={{ fontSize: 10, marginRight: 2 }} />
-                            缓存 {Math.round(m.usage.cache_hit_tokens / m.usage.prompt_tokens * 100)}%
+                        <span className="chat-usage-base">
+                          {m.usage && `↑ ${fmtTokens(m.usage.prompt_tokens)} 输入 · ↓ ${fmtTokens(m.usage.completion_tokens)} 输出`}
+                        </span>
+                        {m.usage && (m.usage.cache_hit_tokens > 0 || m.charged > 0) && (
+                          <span className="chat-usage-extra">
+                            {m.usage.cache_hit_tokens > 0 && (
+                              <span style={{ color: 'var(--accent)' }}>
+                                <ThunderboltOutlined style={{ fontSize: 10, marginRight: 2 }} />
+                                缓存 {Math.round(m.usage.cache_hit_tokens / m.usage.prompt_tokens * 100)}%
+                              </span>
+                            )}
+                            {m.charged > 0 && (
+                              <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
+                                · 扣 {m.charged} 引力波
+                              </span>
+                            )}
                           </span>
                         )}
-                        {m.charged > 0 && (
-                          <span style={{ color: 'var(--accent)', marginLeft: 6 }}>
-                            · 扣 {m.charged} 引力波
-                          </span>
-                        )}
+                        <CopyOutlined
+                          className="chat-usage-copy"
+                          onClick={() => { navigator.clipboard.writeText(m.content); message.success('已复制') }}
+                        />
                       </div>
                     )}
                   </>
