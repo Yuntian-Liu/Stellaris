@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V0.12.3 Spica'
+export const APP_VERSION = 'V0.12.4 Spica'
 
-/** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增） */
-export const AGREEMENT_VERSION = '2026-07-25'
+/** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
+export const AGREEMENT_VERSION = '2026-07-25.2'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -29,6 +29,12 @@ export const CHANGELOG = [
       'AI 解读安全加固：防止通过话术诱导脱离角色边界，你说什么它都只聊视频',
     ],
     patches: [
+      {
+        version: 'V0.12.4', date: '2026-07-25',
+        items: [
+          '隐私政策补充「未登录提取历史仅保存在您的浏览器」说明，协议更新提示将重新弹出',
+        ],
+      },
       {
         version: 'V0.12.3', date: '2026-07-25',
         items: [
