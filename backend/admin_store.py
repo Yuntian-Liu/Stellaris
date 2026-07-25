@@ -23,7 +23,7 @@ from auth.models import User
 from auth.utils import hash_password, verify_password
 from billing_store import (
     UserBilling, BillingLedger, AnonUsage, _get_or_create, _record, _iso_utc,
-    _period_keys, _TZ_CN, grant_membership,
+    _period_keys, _TZ_CN, grant_membership, _effective_tier_key,
 )
 from config import DATA_DIR
 from redeem_store import RedeemCode
@@ -247,13 +247,22 @@ async def search_users(q: str, limit: int = 20) -> list[dict]:
                 select(UserBilling).where(UserBilling.user_uid.in_(uids))
             )).scalars()
             billings = {r.user_uid: r for r in rows}
-        return [
-            {
+        result = []
+        for u in users:
+            b = billings.get(u.uid)
+            # 档位主显示 = 生效档位（与用户端同口径：is_admin→admin，付费档过期→free 懒降级）；
+            # raw_tier 保留存储原值对账（碳碳定稿：过期还显示原档位会误导运营判断）
+            if b:
+                effective = await _effective_tier_key(session, b)
+            else:
+                effective = "admin" if u.is_admin else "free"
+            result.append({
                 "uid": u.uid,
                 "email": u.email,
                 "nickname": u.nickname,
                 "is_admin": u.is_admin,
-                "tier": (b.membership_tier if b else "free"),
+                "tier": effective,
+                "raw_tier": (b.membership_tier if b else "free"),
                 "expire_at": _iso_utc(b.membership_expire_at) if b else None,
                 "quantum_gift": b.quantum_gift if b else 0,
                 "quantum_perm": b.quantum_perm if b else 0,
@@ -262,10 +271,8 @@ async def search_users(q: str, limit: int = 20) -> list[dict]:
                 "minutes_week": b.minutes_week if b else 0,
                 "minutes_month": b.minutes_month if b else 0,
                 "created_at": _iso_utc(u.created_at),
-            }
-            for u in users
-            for b in [billings.get(u.uid)]
-        ]
+            })
+        return result
 
 
 async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0, note: str = "") -> dict:

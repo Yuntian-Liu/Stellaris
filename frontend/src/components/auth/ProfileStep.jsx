@@ -4,6 +4,7 @@
  */
 import { useState } from 'react'
 import { Input, Button } from 'antd'
+import { avatarUrl } from '../../utils/avatar'
 
 // 符号集与后端 utils.py _PASSWORD_SYMBOLS 完全一致
 const SYMBOLS = '!@#$%^&*()-_=+[]{}|;:,.<>?/'
@@ -58,7 +59,7 @@ export default function ProfileStep({ avatarSeed, onSubmit, onBack }) {
         border: '1px solid var(--hairline)', borderRadius: 12,
       }}>
         <img
-          src={`https://api.dicebear.com/7.x/${AVATAR_STYLE}/svg?seed=${avatarSeed}`}
+          src={avatarUrl(avatarSeed)}
           alt=""
           style={{ width: 48, height: 48, borderRadius: '50%', background: 'white' }}
         />

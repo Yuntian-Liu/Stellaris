@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V0.13.0 Achernar'
+export const APP_VERSION = 'V0.13.1 Achernar'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-07-25.2'
+export const AGREEMENT_VERSION = '2026-07-26'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -33,7 +33,17 @@ export const CHANGELOG = [
       '修复重新打开历史对话后，部分回复不显示扣费的问题',
       '移动端排版优化：概要标题与消耗信息不再挤在一起',
     ],
-    patches: [],
+    patches: [
+      {
+        version: 'V0.13.1', date: '2026-07-26',
+        items: [
+          '头像改为本地生成：注册选头像、个人头像秒开，不再依赖外部服务，弱网环境也不会白着头',
+          '管理后台会员档位显示与用户端口径统一：过期会员显示免费版并标注原档位，一眼可辨',
+          '修复 Stella 邀请档用户在会员期间仍可购买其他档位的问题：永久档不再会被误覆盖',
+          '下载与复制内容的版权符号显示优化',
+        ],
+      },
+    ],
   },
   {
     version: 'V0.12.0', codename: 'Spica', date: '2026-07-24',

@@ -625,6 +625,12 @@ function UserCard({ u, onChanged }) {
         <span style={{ fontWeight: 600, color: 'var(--ink)' }}>{u.nickname}</span>
         <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)' }}>UID {u.uid}</span>
         <TierBadge tier={u.tier} />
+        {/* 生效档位与存储原值不一致（付费档已过期懒降级）→ 补对账小字 */}
+        {u.raw_tier && u.raw_tier !== u.tier && (
+          <span style={{ fontSize: 11, color: 'var(--mute)' }}>
+            （原 {tierMeta(u.raw_tier).cn || u.raw_tier} 已过期）
+          </span>
+        )}
         {u.is_admin && <Tag color="gold" style={{ marginInlineEnd: 0 }}>admin</Tag>}
         <span style={{ fontSize: 12, color: 'var(--mute)' }}>{u.email}</span>
       </div>

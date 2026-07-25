@@ -165,7 +165,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.13.0-achernar",
+    version="0.13.1-achernar",
     lifespan=lifespan,
 )
 
@@ -576,17 +576,18 @@ async def delete_task(
 
 
 # 下载文件版权尾注（仅响应层追加，DB 存储与页面预览保持纯净；SRT 时间轴格式豁免）
+# © 后带 U+FE0E 文本样式选择符：强制按文字符号渲染，避免被系统画成 emoji
 DOWNLOAD_FOOTER_TXT = (
     "\n\n———\n"
     "本字幕由 Stellaris 提取生成 · https://stellaris.ytunx.com/\n"
     "开源项目 · https://github.com/Yuntian-Liu/Stellaris\n"
-    "Copyright © Yuntian-Liu. All Rights Reserved.\n"
+    "Copyright ©︎ Yuntian-Liu. All Rights Reserved.\n"
 )
 DOWNLOAD_FOOTER_MD = (
     "\n\n---\n"
     "> 本笔记由 [Stellaris](https://stellaris.ytunx.com/) 生成 · "
     "[GitHub 开源](https://github.com/Yuntian-Liu/Stellaris)\n"
-    "> Copyright © Yuntian-Liu. All Rights Reserved.\n"
+    "> Copyright ©︎ Yuntian-Liu. All Rights Reserved.\n"
 )
 
 

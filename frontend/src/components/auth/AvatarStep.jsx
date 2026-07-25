@@ -4,6 +4,7 @@
  */
 import { useState } from 'react'
 import { Button } from 'antd'
+import { avatarUrl } from '../../utils/avatar'
 
 const STYLE = 'micah'
 
@@ -14,7 +15,6 @@ function randomSeed() {
   return s
 }
 
-const avatarUrl = (seed) => `https://api.dicebear.com/7.x/${STYLE}/svg?seed=${seed}`
 
 export default function AvatarStep({ onSelect, onBack }) {
   const [pool, setPool] = useState(() => Array.from({ length: 9 }, () => randomSeed()))

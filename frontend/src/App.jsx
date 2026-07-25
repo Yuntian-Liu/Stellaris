@@ -27,6 +27,7 @@ import HistoryModal from './components/HistoryModal'
 import TierBadge from './components/TierBadge'
 import { tierMeta } from './utils/tier'
 import { pushAnonHistory } from './utils/anonHistory'
+import { avatarUrl } from './utils/avatar'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -253,7 +254,7 @@ export default function App() {
                     <div style={{ padding: '14px 16px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
                       <Avatar
                         size={42}
-                        src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
+                        src={avatarUrl(user.avatar_seed)}
                         style={{
                           border: '1px solid var(--hairline)', flexShrink: 0,
                           boxShadow: tierMeta(balances?.tier).ring
@@ -352,7 +353,7 @@ export default function App() {
               >
                 <Avatar
                   size={30}
-                  src={`https://api.dicebear.com/7.x/micah/svg?seed=${user.avatar_seed}`}
+                  src={avatarUrl(user.avatar_seed)}
                   style={{
                     cursor: 'pointer', border: '1px solid var(--hairline)',
                     // 档位头像框（Google One 式）：颜色 = 档位色，免费版无框

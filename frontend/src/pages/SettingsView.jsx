@@ -26,9 +26,9 @@ import TierBadge from '../components/TierBadge'
 import { clientLog } from '../utils/clientLog'
 import LedgerView from '../components/LedgerView'
 import { tierMeta } from '../utils/tier'
+import { avatarUrl } from '../utils/avatar'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
 
-const avatarUrl = (seed) => `https://api.dicebear.com/7.x/micah/svg?seed=${seed}`
 
 /** 每日星语（按日期轮换，同一天所有人看到同一句） */
 const STAR_LINES = [
@@ -730,6 +730,7 @@ function OpenSourceModal({ open, onClose }) {
             ['FastAPI', '后端框架'],
             ['yt-dlp', '视频解析'],
             ['SQLAlchemy', '数据库 ORM'],
+            ['DiceBear', '头像生成（MIT）'],
           ].map(([name, desc], i, arr) => (
             <div key={name} style={{
               display: 'flex', alignItems: 'center', gap: 10,

@@ -111,8 +111,10 @@ export default function MembershipCards({ billing }) {
   }
 
   const currentTier = billing?.tier
-  // 任何会员身份（含试用）期间全部禁用开通；仅 free 状态可购买（碳碳定：升级走人工或到期再充）
-  const hasPaid = ['trial', 'stargazer', 'voyager', 'odyssey'].includes(currentTier)
+  // 任何会员身份（含试用/Stella）期间全部禁用开通；仅 free 状态可购买（碳碳定：升级走人工或到期再充）
+  // stella 也在锁定名单：永久邀请档被付费档覆盖即蒸发，后端是"不同档覆盖"不设防（V0.13.1 补漏）
+  // admin 不加：开发者保留支付测试通道，且有 is_admin 覆盖护体、后台可一键恢复
+  const hasPaid = ['trial', 'stargazer', 'voyager', 'odyssey', 'stella'].includes(currentTier)
   const expireText = billing?.expire_at
     ? `有效期至 ${new Date(billing.expire_at).getMonth() + 1} 月 ${new Date(billing.expire_at).getDate()} 日`
     : null
