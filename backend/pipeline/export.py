@@ -51,7 +51,8 @@ def bilibili_subtitle_to_segments(body: dict) -> list[dict]:
 
 def save_exports(task_id: str, srt_content: str, txt_content: str) -> dict:
     """
-    保存 srt/txt 到任务目录，返回路径信息
+    保存 srt/txt 到任务目录，返回路径信息。
+    V0.12.3 起仅匿名任务使用——登录用户内容只写 DB（save_task_content），不再落盘。
     """
     from utils import get_task_dir
 

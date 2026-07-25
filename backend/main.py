@@ -165,7 +165,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="0.12.2-spica",
+    version="0.12.3-spica",
     lifespan=lifespan,
 )
 
@@ -496,8 +496,8 @@ async def get_task_status(
 
 
 async def _rehydrate_task(task_id: str) -> dict | None:
-    """冷启动重建：DB 优先，文件兜底（V0.12.2 双写过渡期）。
-    DB 有内容 → 直接取；DB 无内容 → 读 TMP_DIR 文件（存量任务/写 DB 失败的兜底）。"""
+    """冷启动重建：DB 优先，文件兜底（V0.12.3 起文件路径仅服务匿名任务与 V0.12.2 前存量残留）。
+    DB 有内容 → 直接取；DB 无内容 → 读 TMP_DIR 文件（匿名任务/存量任务的兜底）。"""
     record = await get_task_record(task_id)
     content = await get_task_content(task_id)
     db_text = content.get("raw_text") if content else None
@@ -596,13 +596,13 @@ async def download_result(
         raise HTTPException(status_code=404, detail="文件不存在（任务可能尚未完成或已清理）")
     _authorize_task(task, current_user)
 
-    # V0.12.2: DB 优先，文件兜底
+    # V0.12.3: DB 优先；文件兜底仅服务匿名任务与存量残留
     col_map = {"txt": "raw_text", "srt": "subtitle_srt", "md": "md_content"}
     content = await get_task_content(task_id)
     text = content.get(col_map[format]) if content else None
 
     if not text:
-        # 文件兜底
+        # 文件兜底（匿名任务 / V0.12.2 前存量任务）
         from utils import get_task_dir
         task_dir = get_task_dir(task_id)
         file_path = task_dir / f"output.{format}"
@@ -1602,9 +1602,11 @@ def _run_pipeline_sync(
             segmented_text, seg_usage = segment_text(raw_text, task_id)
 
         # ⑥ 导出（TXT 用分段后的，SRT 用原始 segments 保留时间轴）
+        # V0.12.3：登录用户内容只写 DB（见下方 save_task_content）；匿名任务无 task_records 行，保留文件写入
         _update_status(task_id, TaskStatus.EXPORTING, 90)
         srt_content = segments_to_srt(segments)
-        export_paths = save_exports(task_id, srt_content, segmented_text)
+        if not task.get("owner_uid"):
+            save_exports(task_id, srt_content, segmented_text)
 
         # ⑦ 统计埋点（登录用户才计数，未登录跳过）
         _incr_stats_sync(
@@ -1636,7 +1638,7 @@ def _run_pipeline_sync(
                     task_id, raw_text=raw_text, subtitle_srt=srt_content,
                 ))
             except Exception as ce:
-                logger.warning("[DB] 保存任务内容失败(文件已落盘): %s", ce)
+                logger.warning("[DB] 保存任务内容失败(内容仅在内存): %s", ce)
 
         # ✅ 完成
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
@@ -1730,10 +1732,11 @@ def _run_pipeline_from_file_sync(
         else:
             segmented_text, seg_usage = segment_text(raw_text, task_id)
 
-        # ⑤ 导出
+        # ⑤ 导出（V0.12.3：登录用户只写 DB；匿名任务保留文件写入）
         _update_status(task_id, TaskStatus.EXPORTING, 90)
         srt_content = segments_to_srt(segments)
-        save_exports(task_id, srt_content, segmented_text)
+        if not task.get("owner_uid"):
+            save_exports(task_id, srt_content, segmented_text)
 
         # ⑥ 统计埋点（登录用户才计数，未登录跳过）
         _incr_stats_sync(
@@ -1765,7 +1768,7 @@ def _run_pipeline_from_file_sync(
                     task_id, raw_text=raw_text, subtitle_srt=srt_content,
                 ))
             except Exception as ce:
-                logger.warning("[DB] 保存任务内容失败(文件已落盘): %s", ce)
+                logger.warning("[DB] 保存任务内容失败(内容仅在内存): %s", ce)
 
         _update_status(task_id, TaskStatus.COMPLETED, 100, extra={
             "video_title": video_title,
@@ -1847,17 +1850,11 @@ def _generate_summary_impl(task_id: str):
     try:
         summary_content, summary_usage = summarize_text(raw_text, task_id)
 
-        # 保存到任务目录（方便后续可能的下载需求）
-        from utils import get_task_dir
-        task_dir = get_task_dir(task_id)
-        summary_path = task_dir / "output_summary.md"
-        summary_path.write_text(summary_content, encoding="utf-8")
-
-        # V0.12.2: 写入 DB（COS 备份全覆盖）
+        # V0.12.2+: 写入 DB（唯一持久化；该功能 401 拦匿名，无需文件兜底）
         try:
             asyncio.run(save_task_content(task_id, summary_content=summary_content))
         except Exception as e:
-            logger.warning("[DB] 保存概要内容失败(文件已落盘): %s", e)
+            logger.warning("[DB] 保存概要内容失败(内容仅在内存): %s", e)
 
         task["summary_status"] = "ready"
         task["summary_error"] = None
@@ -1901,17 +1898,11 @@ def _generate_md_impl(task_id: str):
     try:
         md_content, md_usage = text_to_markdown(raw_text, task_id)
 
-        # 保存到任务目录
-        from utils import get_task_dir
-        task_dir = get_task_dir(task_id)
-        md_path = task_dir / "output.md"
-        md_path.write_text(md_content, encoding="utf-8")
-
-        # V0.12.2: 写入 DB（COS 备份全覆盖）
+        # V0.12.2+: 写入 DB（唯一持久化；该功能 401 拦匿名，无需文件兜底）
         try:
             asyncio.run(save_task_content(task_id, md_content=md_content))
         except Exception as e:
-            logger.warning("[DB] 保存MD内容失败(文件已落盘): %s", e)
+            logger.warning("[DB] 保存MD内容失败(内容仅在内存): %s", e)
 
         task["md_status"] = "ready"
         task["md_error"] = None

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import DateTime, Integer, String, case, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base, async_session
@@ -196,14 +197,21 @@ def round_tokens(tokens: int, unit: int) -> int:
 async def _get_or_create(session, uid: int) -> UserBilling:
     row = await session.get(UserBilling, uid)
     if row is None:
-        row = UserBilling(user_uid=uid)
-        session.add(row)
-        await session.flush()
-        # 懒发放注册礼：新老用户首次拥有计费账户时统一赠送引力波
-        # （老用户注册早于计费功能，靠这里补发；新用户注册后首次触达自动发放）
-        gift = BILLING_TIERS["free"]["gravity_signup_gift"]
-        row.gravity = gift
-        await _record(session, uid, "signup_gift", "gravity", gift, row.gravity)
+        # 并发防护（碳碳实测）：新账号首登时前端并发打多个计费接口，两个请求同时
+        # "查到没有→都 INSERT"，第二个撞 UNIQUE 约束 500（时好时坏，刷新即恢复）。
+        # SAVEPOINT 包住"建账+注册礼"，撞约束回滚到存档点、直接读对方已建好的行。
+        try:
+            async with session.begin_nested():
+                row = UserBilling(user_uid=uid)
+                session.add(row)
+                await session.flush()
+                # 懒发放注册礼：新老用户首次拥有计费账户时统一赠送引力波
+                # （老用户注册早于计费功能，靠这里补发；新用户注册后首次触达自动发放）
+                gift = BILLING_TIERS["free"]["gravity_signup_gift"]
+                row.gravity = gift
+                await _record(session, uid, "signup_gift", "gravity", gift, row.gravity)
+        except IntegrityError:
+            row = await session.get(UserBilling, uid)
     return row
 
 

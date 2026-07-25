@@ -26,6 +26,7 @@ import GuideModal from './components/GuideModal'
 import HistoryModal from './components/HistoryModal'
 import TierBadge from './components/TierBadge'
 import { tierMeta } from './utils/tier'
+import { pushAnonHistory } from './utils/anonHistory'
 import { useAuth } from './contexts/AuthContext'
 
 const { Content } = Layout
@@ -140,15 +141,30 @@ export default function App() {
     return () => window.removeEventListener('stellaris:unauthorized', handler)
   }, [])
 
+  // 首页匿名提示条「了解权益」→ 开计费引导（事件总线，同 stellaris:open-exchange 先例）
+  useEffect(() => {
+    const handler = () => setGuideOpen(true)
+    window.addEventListener('stellaris:open-guide', handler)
+    return () => window.removeEventListener('stellaris:open-guide', handler)
+  }, [])
+
   const handleSubmit = useCallback((data) => {
     setTaskId(data.task_id)
     setPage('progress')
   }, [])
 
   const handleComplete = useCallback((data) => {
+    // 匿名历史：服务端不为匿名建记录，完成时记进浏览器 localStorage（见 utils/anonHistory.js）
+    if (!user) {
+      pushAnonHistory({
+        task_id: data.task_id,
+        title: data.video_title,
+        platform: data.source_platform,
+      })
+    }
     setTaskData(data)
     setPage('result')
-  }, [])
+  }, [user])
 
   const handleBack = useCallback(() => {
     setPage('home')
@@ -203,20 +219,22 @@ export default function App() {
               style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
             />
           </Popover>
+          {/* 历史记录入口（登录/匿名都可见；匿名读浏览器本地记录，见 HistoryModal） */}
+          {!loading && (
+            <Popover
+              placement="bottomRight"
+              content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>提取历史</div>}
+            >
+              <HistoryOutlined
+                onClick={() => setHistoryOpen(true)}
+                style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
+              />
+            </Popover>
+          )}
           {loading ? (
             <div style={{ width: 64, height: 30 }} />
           ) : user ? (
             <>
-              {/* 历史记录入口 */}
-              <Popover
-                placement="bottomRight"
-                content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>提取历史</div>}
-              >
-                <HistoryOutlined
-                  onClick={() => setHistoryOpen(true)}
-                  style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
-                />
-              </Popover>
               <BillingPills onOpenLedger={(c) => { setLedgerInit(c); setMemberOpen(false); setPage('settings') }} />
               <Dropdown
                 open={dropOpen}
@@ -367,7 +385,7 @@ export default function App() {
           />
         )}
         {page === 'home' && (
-          <HomePage onSubmit={handleSubmit} />
+          <HomePage onSubmit={handleSubmit} onNeedAuth={() => setPage('auth')} />
         )}
         {page === 'settings' && (
           <SettingsView

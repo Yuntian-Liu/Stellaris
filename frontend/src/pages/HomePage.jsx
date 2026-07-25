@@ -18,6 +18,7 @@ import {
   FileTextOutlined, ThunderboltOutlined, CloseOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
+import { useAuth } from '../contexts/AuthContext'
 
 const { Text } = Typography
 
@@ -46,7 +47,8 @@ const STAR_POEMS = [
   '把声音，点亮成文字',
 ]
 
-export default function HomePage({ onSubmit }) {
+export default function HomePage({ onSubmit, onNeedAuth }) {
+  const { user, loading: authLoading } = useAuth()
   const [url, setUrl] = useState('')
   const [sessdata, setSessdata] = useState('')
   const [estimating, setEstimating] = useState(false)   // 正在拉取预估
@@ -528,6 +530,31 @@ export default function HomePage({ onSubmit }) {
 
         </div>
       </div>
+
+      {/* ── 匿名权益提示条（仅未登录显示；「了解权益」事件总线开计费引导，同 open-exchange 先例）── */}
+      {!user && !authLoading && (
+        <div style={{
+          marginTop: 16,
+          textAlign: 'center',
+          fontSize: 12,
+          color: 'var(--mute)',
+          lineHeight: 1.8,
+        }}>
+          游客体验中 · 每日 10 分钟免费转写 · 注册解锁 内容总结 / MD 笔记 / AI 解读 / 云端历史，即送 30 引力波
+          <span style={{ marginLeft: 8, whiteSpace: 'nowrap' }}>
+            <a
+              onClick={() => window.dispatchEvent(new CustomEvent('stellaris:open-guide'))}
+              style={{ color: 'var(--accent)', cursor: 'pointer' }}
+            >
+              了解权益
+            </a>
+            <span style={{ margin: '0 4px', color: 'var(--hairline-strong)' }}>/</span>
+            <a onClick={onNeedAuth} style={{ color: 'var(--accent)', cursor: 'pointer', fontWeight: 500 }}>
+              立即注册
+            </a>
+          </span>
+        </div>
+      )}
 
       {/* ── 底部版本标签 ── */}
       <div style={{ textAlign: 'center', marginTop: 32 }}>
