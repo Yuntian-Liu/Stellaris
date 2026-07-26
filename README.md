@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.9.2-4f46e5">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.0.0-4f46e5">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
   <img alt="Python" src="https://img.shields.io/badge/python-3.12+-blue?logo=python&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/react-18-61dafb?logo=react&logoColor=white">
@@ -51,6 +51,7 @@ Built around a **three-currency billing system** and a **membership program** (v
 - **Summary** — one-click content digest（概述 + 要点）
 - **Markdown notes** — structured, downloadable `.md`
 - **AI Chat** — multi-turn Q&A over the subtitle, SSE streaming, prefix-cache friendly
+- **LaTeX rendering** — KaTeX everywhere: chat, summary & MD notes handle math natively
 
 ### 👤 Accounts & Billing
 - Email + UID dual login, password & code channels, Turnstile protection
@@ -65,6 +66,8 @@ Built around a **three-currency billing system** and a **membership program** (v
 - Transparent metering: pre-estimate, post-settlement, 40% round-down forgiveness
 - Consumption ledger with dual-wallet breakdown — every wave is traceable
 - History retention by tier: free 1h → up to 30d, audio deleted right after ASR
+- Anonymous friendly: 10 min/day trial, history kept in your own browser (localStorage)
+- **Copy & download anywhere** — subtitle / summary / per-message copy, with source & copyright footer (SRT exempt)
 
 ### 💎 Membership (爱发电)
 | Tier | Price | Highlights |
@@ -77,9 +80,20 @@ Built around a **three-currency billing system** and a **membership program** (v
 - Cross-tier purchase lock · celebration on arrival ✦
 
 ### 🛡 Admin Dashboard (is_admin only)
+- Eight panels: metrics / users / redeem codes / orders / task monitor / tickets / backups / security
 - Metrics: users / tasks / tokens / revenue / **cost & margin estimation** / 30-day trends (recharts)
 - User management: search, balance adjust, tier grant/revoke — all behind a 6-digit PIN
-- Redeem code studio (custom codes incl. invitation tier), order review & manual fulfillment
+- Feedback ticket system with replies & unread badges; security tab with live block counters
+
+### 🔒 Security & Reliability
+- Login rate-limiting · CORS whitelist · SSRF guard · upload path & size validation
+- Global exception sanitization · HTTP security headers · prompt-injection hardening (code-level, not prompt-level)
+- **Daily COS backup** (Tencent Cloud, Singapore) — full database incl. task content, 7-day retention
+- Schema self-heal on startup (`_ensure_columns`) — zero manual migrations
+- Local avatar generation (DiceBear, MIT) — no third-party avatar API dependency
+
+### 📱 Mobile
+- Single-codebase responsive layer (`@media` overlay) — nav, modals, result page all adapt, PC untouched
 
 ### 🖼 Screenshots
 
@@ -108,10 +122,11 @@ Built around a **three-currency billing system** and a **membership program** (v
 ## 🗺 Roadmap
 
 - [x] Multi-platform extraction & cloud ASR
-- [x] AI understanding layer (segment / summary / MD / chat)
+- [x] AI understanding layer (segment / summary / MD / chat / LaTeX)
 - [x] Accounts & three-currency billing
 - [x] Membership via 爱发电 (auto-fulfillment)
 - [x] Admin dashboard with trends & cost estimation
+- [x] Mobile adaptation · feedback tickets · COS backup · security hardening
 - [ ] Annual plans & more member perks
 - [ ] More platforms & batch processing
 
@@ -134,13 +149,14 @@ Built around a **three-currency billing system** and a **membership program** (v
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18 · Vite · Ant Design 5 · Starlight Design System (Cormorant Garamond / Inter) |
+| Frontend | React 18 · Vite · Ant Design 5 · KaTeX · recharts · DiceBear · Starlight Design System (Cormorant Garamond / Inter) |
 | Backend | Python 3.12+ · FastAPI · SQLAlchemy 2.0 (aiosqlite) · SQLite |
 | ASR | [Xiaomi Mimo](https://platform.mimo.com.cn/) `mimo-v2.5-asr` |
 | LLM | DeepSeek (OpenAI-compatible) — segmentation / summary / markdown / chat |
 | Media | FFmpeg · yt-dlp |
 | Auth | JWT · bcrypt · Cloudflare Turnstile · Resend |
 | Payment | 爱发电 Webhook (RSA-SHA256) |
+| Backup | Tencent COS (daily snapshot, 7-day retention) |
 | Deploy | Single-service Dockerfile · Zeabur (Volume persistence, gzip, immutable assets) |
 
 ---
@@ -221,6 +237,8 @@ Every bit of support becomes a small cell of electricity on the server bill ⚡
 - **DeepSeek** — content understanding
 - **yt-dlp / FFmpeg** — media plumbing
 - **Ant Design** — UI components
+- **DiceBear** — open-source avatar generation (MIT)
+- **KaTeX** — math rendering
 - **爱发电** — membership & payment infrastructure
 - Apple / Vercel / Claude — design inspiration for Starlight
 

@@ -66,6 +66,8 @@ export default function UpdateModals({ onOpenAgreement }) {
             <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 18 }}>
               {updateInfo.version} · {updateInfo.codename} · {updateInfo.date}
             </div>
+            {/* 内容区限高滚动（1.0.0 长日志实测撑满屏；标题与按钮固定可见） */}
+            <div style={{ maxHeight: '52vh', overflowY: 'auto', marginBottom: 20, paddingRight: 4 }}>
             {/* 开发者寄语（仅 minor 有 intro 时展示；引用块样式与正条区分） */}
             {updateInfo.intro && (
               <div style={{
@@ -83,12 +85,13 @@ export default function UpdateModals({ onOpenAgreement }) {
               </div>
             )}
             <ul style={{
-              textAlign: 'left', margin: '0 0 20px', paddingLeft: 20,
+              textAlign: 'left', margin: 0, paddingLeft: 20,
             }}>
               {updateInfo.items.map((item, i) => (
                 <li key={i} style={{ fontSize: 13.5, color: 'var(--body)', lineHeight: 2 }}>{item}</li>
               ))}
             </ul>
+            </div>
             <Button type="primary" size="large" block onClick={closeUpdate}>
               知道了
             </Button>
