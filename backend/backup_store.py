@@ -53,13 +53,13 @@ def _db_path() -> Path:
     return Path(DATABASE_URL.split("///")[-1])
 
 
-def _safe_backup_to(tmp_path: Path) -> bool:
+def _safe_backup_to(tmp_path: Path) -> tuple[bool, int]:
     """用 sqlite3 .backup 命令生成一致性快照（运行时安全）。
-    返回 True 成功；False 失败（库文件不存在等）。"""
+    返回 (成功?, 快照字节数)——记录大小是为了抓「快照比活数据小」的灵异事件（V1.0.1 排查）。"""
     src = _db_path()
     if not src.exists():
         logger.warning("[Backup] DB 文件不存在，跳过：%s", src)
-        return False
+        return False, 0
     try:
         # check_same_thread=False：backup 命令在独立连接执行，不与 ORM 引擎冲突
         src_conn = sqlite3.connect(str(src), check_same_thread=False)
@@ -67,10 +67,12 @@ def _safe_backup_to(tmp_path: Path) -> bool:
         src_conn.backup(dst_conn)
         dst_conn.close()
         src_conn.close()
-        return True
+        size = tmp_path.stat().st_size
+        logger.info("[Backup] 快照生成：%s（%.1f KB）", tmp_path.name, size / 1024)
+        return True, size
     except Exception as e:
         logger.error("[Backup] 生成快照失败: %s", e)
-        return False
+        return False, 0
 
 
 def _upload_to_cos(local_path: Path, object_key: str) -> bool:
@@ -133,7 +135,7 @@ async def do_backup(manual: bool = False) -> dict:
     object_key = f"stellaris-{date_str}.db"
     tmp_path = DATA_DIR / f"_backup_{date_str}.db"
 
-    snapshot_ok = await asyncio.to_thread(_safe_backup_to, tmp_path)
+    snapshot_ok, snapshot_size = await asyncio.to_thread(_safe_backup_to, tmp_path)
     if not snapshot_ok:
         _last_backup = {"time_iso": now_bj.isoformat(), "ok": False, "uploaded": False,
                          "key": object_key, "msg": "快照生成失败", "manual": manual}
@@ -143,7 +145,8 @@ async def do_backup(manual: bool = False) -> dict:
         # 本地开发：生成快照后不上传（清理临时文件）
         tmp_path.unlink(missing_ok=True)
         _last_backup = {"time_iso": now_bj.isoformat(), "ok": True, "uploaded": False,
-                         "key": object_key, "msg": "快照生成成功（COS 未配置，跳过上传）", "manual": manual}
+                         "key": object_key, "msg": f"快照生成成功（COS 未配置，跳过上传），大小 {snapshot_size/1024:.1f} KB", "manual": manual,
+                         "snapshot_size": snapshot_size}
         return {"ok": True, "uploaded": False, "key": object_key, "msg": "快照生成成功（COS 未配置，跳过上传）"}
 
     # ② 上传到 COS
@@ -158,9 +161,11 @@ async def do_backup(manual: bool = False) -> dict:
     #   保留 N 天 = COS 上永远有最近 N 份；当天刚上传的 key 绝不会在清理范围（它最新）
     deleted = await asyncio.to_thread(_purge_old_backups, COS_BACKUP_RETAIN_DAYS)
 
-    logger.info("[Backup] 备份完成：%s → COS %s（清理 %d 份过期）", date_str, object_key, deleted)
+    logger.info("[Backup] 备份完成：%s → COS %s（%.1f KB，清理 %d 份过期）",
+                date_str, object_key, snapshot_size / 1024, deleted)
     _last_backup = {"time_iso": now_bj.isoformat(), "ok": True, "uploaded": True,
-                     "key": object_key, "msg": f"已上传 {object_key}，清理 {deleted} 份过期", "manual": manual}
+                     "key": object_key, "msg": f"已上传 {object_key}（{snapshot_size/1024:.1f} KB），清理 {deleted} 份过期",
+                     "manual": manual, "snapshot_size": snapshot_size}
     return {"ok": True, "uploaded": True, "key": object_key, "msg": f"已上传 {object_key}，清理 {deleted} 份过期"}
 
 
