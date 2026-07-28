@@ -18,6 +18,7 @@ from config import (
     IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY, TURNSTILE_SITE_KEY,
     RESEND_API_KEY, TMP_DIR, DATA_DIR,
     AFDIAN_USER_ID, AFDIAN_API_TOKEN, AFDIAN_SHOP_URL, AFDIAN_PLAN_MAP,
+    JWT_SECRET, COS_SECRET_ID,
 )
 from database import async_session
 from billing_store import UserBilling, BillingLedger, BILLING_TIERS
@@ -100,7 +101,25 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "afdian_token_set": bool(AFDIAN_API_TOKEN),
         "afdian_shop_url_set": bool(AFDIAN_SHOP_URL),
         "afdian_plan_map_count": plan_map_count,
+        # 备份与安全（V1.0.3 扩充：备份谜案/安全审查后补）
+        "cos_backup_set": bool(COS_SECRET_ID),
+        "jwt_secret_set": JWT_SECRET != "dev-secret-change-me",
     }
+
+    # ── 备份状态（V1.0.3：上次备份结果，排查备份问题免上服务器）──
+    backup_info = None
+    try:
+        from backup_store import _last_backup
+        if _last_backup:
+            backup_info = {
+                "time": _last_backup.get("time_iso"),
+                "ok": _last_backup.get("ok"),
+                "uploaded": _last_backup.get("uploaded"),
+                "snapshot_size_kb": round((_last_backup.get("snapshot_size") or 0) / 1024, 1),
+                "msg": _last_backup.get("msg"),
+            }
+    except Exception:
+        pass
 
     # ── 用户上下文（本人）──
     user_ctx = {"uid": uid}
@@ -215,6 +234,7 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         },
         "config_flags": config_flags,
         "system": system,
+        "backup": backup_info,
         "user": user_ctx,
         "tasks": task_snapshots,
         "recent_errors": errors,

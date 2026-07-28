@@ -60,6 +60,8 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
   const [messages, setMessages] = useState([])   // [{role, content, error?, usage?}]
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [slowHint, setSlowHint] = useState(false)   // 首包超 15s 的"仍在思考"提示
+  const slowTimer = useRef(null)
   const listRef = useRef(null)
 
   // 挂载时恢复历史对话（持久化在服务端，关闭/刷新不丢）
@@ -124,11 +126,15 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
       .map(m => ({ role: m.role, content: m.content }))
     setMessages(prev => [...prev, { role: 'user', content: question }])
     setBusy(true)
+    // 首包慢于 15s 时给"仍在思考"提示（防用户以为卡死；V1.0.3）
+    setSlowHint(false)
+    clearTimeout(slowTimer.current)
+    slowTimer.current = setTimeout(() => setSlowHint(true), 15000)
     try {
       // 先占位空 assistant 气泡，流式逐段填充
       setMessages(prev => [...prev, { role: 'assistant', content: '' }])
       await api.chatStream(taskId, question, history, {
-        onDelta: appendLast,
+        onDelta: (text) => { clearTimeout(slowTimer.current); setSlowHint(false); appendLast(text) },
         onDone: (usage, charged) => {
           setMessages(prev => {
             const next = [...prev]
@@ -151,6 +157,8 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
         return next
       })
     } finally {
+      clearTimeout(slowTimer.current)
+      setSlowHint(false)
       setBusy(false)
     }
   }
@@ -264,6 +272,11 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                       : (
                         <span style={{ display: 'inline-block', padding: '2px 4px' }}>
                           <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
+                          {slowHint && (
+                            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)' }}>
+                              思考时间较长，请稍候…
+                            </span>
+                          )}
                         </span>
                       )
                     }

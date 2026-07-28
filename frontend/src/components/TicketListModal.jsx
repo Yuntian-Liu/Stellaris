@@ -75,7 +75,8 @@ export default function TicketListModal({ open, onClose, refreshKey, onTicketRea
           </div>
         }
       >
-        <div style={{ padding: '4px 0' }}>
+        {/* 内容区限高滚动（长回复实测撑满屏，同 1.0.0 版本弹窗修法；标题栏固定可见） */}
+        <div style={{ padding: '4px 4px 4px 0', maxHeight: '60vh', overflowY: 'auto' }}>
           <div className="font-display font-display-xs" style={{ marginBottom: 8 }}>{detail.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <Tag color={CATEGORY_TAG[detail.category]?.color}>{CATEGORY_TAG[detail.category]?.text}</Tag>
@@ -136,7 +137,8 @@ export default function TicketListModal({ open, onClose, refreshKey, onTicketRea
     <Modal open={open} onCancel={handleClose} footer={null} width={520} centered destroyOnClose
       title={<span className="font-display">我的工单</span>}
     >
-      <div style={{ padding: '4px 0' }}>
+      {/* 列表同样限高（工单多了以后长列表也会撑屏，同类问题一并修） */}
+      <div style={{ padding: '4px 4px 4px 0', maxHeight: '60vh', overflowY: 'auto' }}>
         {items === null ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}><Spin /></div>
         ) : items.length === 0 ? (

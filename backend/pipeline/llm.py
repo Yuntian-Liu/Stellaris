@@ -313,6 +313,9 @@ def chat_with_subtitle_stream(
         max_tokens=2500,   # 回复长度硬限，控制输出成本
         stream=True,
         stream_options={"include_usage": True},   # 末 chunk 带 usage（含缓存命中明细）
+        # 首包超时 60s（SDK 默认 600s）：DeepSeek 挂起时尽快失败并记日志，
+        # 用户看到"超时请重试"而非三点动画死等（V1.0.3）
+        timeout=60.0,
     )
 
     total_chars = 0
