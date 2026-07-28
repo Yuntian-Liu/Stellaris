@@ -95,9 +95,11 @@ class EstimateResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    """对话消息（AI 解读模块）"""
+    """对话消息（AI 解读模块）。
+    content 上限 20000：历史消息含 AI 回答，而 max_tokens=2500 允许 AI 写超 2000 字——
+    原 2000 上限会导致长回答后所有追问 422（前端显示 [object Object] 的谜案根因）"""
     role: str = Field(..., description="user | assistant")
-    content: str = Field(..., max_length=2000, description="消息内容（单条限 2000 字）")
+    content: str = Field(..., max_length=20000, description="消息内容")
 
 
 class ChatRequest(BaseModel):

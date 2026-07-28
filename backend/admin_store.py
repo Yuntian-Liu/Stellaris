@@ -126,11 +126,17 @@ async def get_overview(active_tasks: int = 0) -> dict:
         )).scalar_one()
         consumed_today = await _consumption(session, today_start)
         consumed_total = await _consumption(session)
-        # 会员分布：user_billing 原始档位计数（admin 档靠 users.is_admin 解析，单列）
-        tier_rows = (await session.execute(
-            select(UserBilling.membership_tier, func.count())
-            .group_by(UserBilling.membership_tier)
-        )).all()
+        # 会员分布：按【生效档位】统计（与用户端/用户管理同口径懒降级——付费档过期归 free、
+        # is_admin 归 admin；原 GROUP BY 存储原值会把过期付费档错误留在分布里，碳碳实测）
+        billing_rows = (await session.execute(select(UserBilling))).scalars().all()
+        tier_dist: dict[str, int] = {}
+        for b in billing_rows:
+            eff = await _effective_tier_key(session, b)
+            tier_dist[eff] = tier_dist.get(eff, 0) + 1
+        # 无计费账户的用户（注册后从未触达计费）归入免费版
+        free_extra = users_total - len(billing_rows)
+        if free_extra > 0:
+            tier_dist["free"] = tier_dist.get("free", 0) + free_extra
         # 收入：total_amount 是字符串，转 float 求和；today/week 也一起算
         all_rows = (await session.execute(
             select(AfdianOrder.status, AfdianOrder.total_amount, AfdianOrder.created_at)
@@ -166,7 +172,7 @@ async def get_overview(active_tasks: int = 0) -> dict:
         "cost_today": cost_today,
         "cost_total": cost_total,
         "margin": round(revenue - cost_total, 2),   # 毛利 = 收入 - 估算成本（累计，估算口径）
-        "tier_distribution": {tier: c for tier, c in tier_rows},
+        "tier_distribution": tier_dist,
         "revenue": revenue,
         "revenue_today": revenue_today,
         "revenue_week": revenue_week,

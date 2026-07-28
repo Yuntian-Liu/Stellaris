@@ -10,6 +10,19 @@ export function getToken() { return localStorage.getItem(TOKEN_KEY) }
 export function setToken(t) { localStorage.setItem(TOKEN_KEY, t) }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
 
+/** detail 可能是对象/数组（如 422 参数校验错误），强制转可读字符串——
+ *  否则 new Error(对象) 会显示 [object Object]（V1.0.2 谜案修复） */
+function readableDetail(detail) {
+  if (!detail) return null
+  if (typeof detail === 'string') return detail
+  // 422 数组：取每条 msg 拼起来最人话；其余结构 JSON 兜底
+  if (Array.isArray(detail)) {
+    const msgs = detail.map(d => d?.msg).filter(Boolean)
+    if (msgs.length) return msgs.join('；')
+  }
+  return detail.message || detail.msg || JSON.stringify(detail)
+}
+
 /**
  * 统一请求封装
  * - 自动注入 Authorization: Bearer <token>
@@ -41,11 +54,11 @@ async function request(path, { method = 'GET', body, headers, isForm = false } =
     clearToken()
     window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || '登录已过期,请重新登录')
+    throw new Error(readableDetail(err.detail) || '登录已过期,请重新登录')
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `请求失败 (${res.status})`)
+    throw new Error(readableDetail(err.detail) || `请求失败 (${res.status})`)
   }
   return res.json()
 }
@@ -86,7 +99,7 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `请求失败 (${res.status})`)
+    throw new Error(readableDetail(err.detail) || `请求失败 (${res.status})`)
   }
 
   const reader = res.body.getReader()
@@ -137,7 +150,11 @@ export const authApi = {
   }),
   loginCode: (email, code) => request('/api/auth/login-code', { method: 'POST', body: { email, code } }),
   register: (payload) => request('/api/auth/register', { method: 'POST', body: payload }),
-  loginPassword: (email_or_uid, password) => request('/api/auth/login-password', { method: 'POST', body: { email_or_uid, password } }),
+  loginPassword: (email_or_uid, password, turnstileToken) => request('/api/auth/login-password', {
+    method: 'POST',
+    headers: { 'cf-turnstile-response': turnstileToken || '' },
+    body: { email_or_uid, password },
+  }),
   getMe: () => request('/api/auth/me'),
   updateProfile: (payload) => request('/api/auth/profile', { method: 'PUT', body: payload }),
   changePassword: (old_password, new_password) =>

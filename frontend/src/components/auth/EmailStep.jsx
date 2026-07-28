@@ -92,7 +92,7 @@ export default function EmailStep({ onSuccess }) {
     if (!agreed) { setError('请先阅读并同意用户协议与隐私政策'); return }
     setLoading(true)
     try {
-      const res = await authApi.loginPassword(email, password)
+      const res = await authApi.loginPassword(email, password, turnstileToken)
       onSuccess({ step: 'done', token: res.token, user: res.user })
     } catch (e) {
       setError(e.message)
