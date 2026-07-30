@@ -60,8 +60,8 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
   const [messages, setMessages] = useState([])   // [{role, content, error?, usage?}]
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [slowHint, setSlowHint] = useState(false)   // 首包超 15s 的"仍在思考"提示
-  const slowTimer = useRef(null)
+  const [thinkSec, setThinkSec] = useState(null)   // 思考计时（秒；null=未在思考，V1.0.4 三段递进）
+  const thinkTimer = useRef(null)
   const listRef = useRef(null)
 
   // 挂载时恢复历史对话（持久化在服务端，关闭/刷新不丢）
@@ -126,15 +126,16 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
       .map(m => ({ role: m.role, content: m.content }))
     setMessages(prev => [...prev, { role: 'user', content: question }])
     setBusy(true)
-    // 首包慢于 15s 时给"仍在思考"提示（防用户以为卡死；V1.0.3）
-    setSlowHint(false)
-    clearTimeout(slowTimer.current)
-    slowTimer.current = setTimeout(() => setSlowHint(true), 15000)
+    // 思考计时器（V1.0.4）：发送即计秒，三段递进（颜色标在秒数上）；首包/完成/失败即停
+    setThinkSec(0)
+    clearInterval(thinkTimer.current)
+    thinkTimer.current = setInterval(() => setThinkSec(s => s + 1), 1000)
+    const stopThink = () => { clearInterval(thinkTimer.current); setThinkSec(null) }
     try {
       // 先占位空 assistant 气泡，流式逐段填充
       setMessages(prev => [...prev, { role: 'assistant', content: '' }])
       await api.chatStream(taskId, question, history, {
-        onDelta: (text) => { clearTimeout(slowTimer.current); setSlowHint(false); appendLast(text) },
+        onDelta: (text) => { stopThink(); appendLast(text) },
         onDone: (usage, charged) => {
           setMessages(prev => {
             const next = [...prev]
@@ -157,8 +158,7 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
         return next
       })
     } finally {
-      clearTimeout(slowTimer.current)
-      setSlowHint(false)
+      stopThink()
       setBusy(false)
     }
   }
@@ -272,11 +272,19 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                       : (
                         <span style={{ display: 'inline-block', padding: '2px 4px' }}>
                           <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />
-                          {slowHint && (
-                            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)' }}>
-                              思考时间较长，请稍候…
-                            </span>
-                          )}
+                          {thinkSec !== null && (() => {
+                            // 三段递进：颜色只标秒数，文案统一常规语域（碳碳定稿）
+                            const stage = thinkSec >= 60
+                              ? { text: '仍在思考，请再稍候', color: 'var(--error)' }
+                              : thinkSec >= 15
+                                ? { text: '思考时间较长', color: '#d97706' }
+                                : { text: '解读中', color: 'var(--mute)' }
+                            return (
+                              <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--mute)' }}>
+                                {stage.text} · <span style={{ color: stage.color, fontWeight: 500 }}>{thinkSec}s</span>
+                              </span>
+                            )
+                          })()}
                         </span>
                       )
                     }

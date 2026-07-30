@@ -49,10 +49,20 @@ _STARTED_AT = time.time()
 
 
 def attach_log_buffer():
-    """启动时挂到 root logger（uvicorn 日志默认传播到 root）"""
+    """启动时挂到 root logger（uvicorn 日志默认传播到 root）。
+    两件事（V1.0.4 实锤的日志黑洞）：
+    1. root 级别提到 INFO——默认 WARNING 会静默丢弃 [LLM]/[Backup] 等 INFO 日志
+    2. root 补 StreamHandler——uvicorn 只给自己的 logger 配控制台，业务日志此前
+       不进 stdout（备份谜案时 Zeabur 日志面板找不到 [Backup] 行的根因）"""
     root = logging.getLogger()
-    handler = _BufferHandler(level=logging.INFO)
-    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    root.addHandler(_BufferHandler(level=logging.INFO))
+    if not any(getattr(h, "_stellaris_console", False) for h in root.handlers):
+        console = logging.StreamHandler()
+        console._stellaris_console = True   # 标记防热重载重复添加
+        console.setLevel(logging.INFO)
+        console.setFormatter(logging.Formatter("%(message)s"))
+        root.addHandler(console)
 
 
 def _dir_size_mb(path) -> float:

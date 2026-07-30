@@ -9,7 +9,9 @@
 切换 LLM 只需改 config.py 的 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL。
 """
 import logging
+import time
 
+import httpx
 from openai import OpenAI
 
 from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
@@ -313,16 +315,22 @@ def chat_with_subtitle_stream(
         max_tokens=2500,   # 回复长度硬限，控制输出成本
         stream=True,
         stream_options={"include_usage": True},   # 末 chunk 带 usage（含缓存命中明细）
-        # 首包超时 60s（SDK 默认 600s）：DeepSeek 挂起时尽快失败并记日志，
-        # 用户看到"超时请重试"而非三点动画死等（V1.0.3）
-        timeout=60.0,
+        # 分相超时（V1.0.4，碳碳定稿）：read 是"等下一个数据块"的超时而非全程——
+        # 思考阶段 120s 无首字节才判卡死；流式开始后块间 120s 无数据才掐断。
+        # 判据是"块间隔"而非"总时长"：AI 回答再长再慢都不会被腰斩。
+        timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=60.0),
     )
 
+    t_start = time.time()   # 首包耗时统计（诊断用）
+    ttft_logged = False
     total_chars = 0
     for chunk in stream:
         # 正文片段
         if chunk.choices and chunk.choices[0].delta.content:
             piece = chunk.choices[0].delta.content
+            if not ttft_logged:
+                ttft_logged = True
+                logger.info("[LLM] 首包: %.1fs (task=%s)", time.time() - t_start, task_id)
             total_chars += len(piece)
             yield ("delta", piece)
         # usage 在最后一个 chunk（choices 为空）
