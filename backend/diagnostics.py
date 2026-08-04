@@ -99,9 +99,14 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         plan_map_count = len(_json.loads(AFDIAN_PLAN_MAP or "{}"))
     except _json.JSONDecodeError:
         plan_map_count = -1   # JSON 解析失败（配置错误，诊断要看见）
+    # V1.1.0：模型仓库生效值（排障关键——模型可能已被后台切换，env 默认值不再代表实际）
+    from model_store import get_llm_active, get_asr_model
+    llm_provider, llm_model_active = get_llm_active()
     config_flags = {
         "is_prod": IS_PROD,
-        "llm_model": LLM_MODEL,
+        "llm_model": llm_model_active,
+        "llm_provider": llm_provider,
+        "asr_model": get_asr_model(),
         "mimo_key_set": bool(MIMO_API_KEY),
         "llm_key_set": bool(LLM_API_KEY),
         "turnstile_set": bool(TURNSTILE_SITE_KEY),
@@ -183,6 +188,12 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
                     "amount": r.amount, "balance_after": r.balance_after,
                     "from_gift": r.from_gift, "from_perm": r.from_perm,
                     "task_id": r.task_id,
+                    # V1.1.0 发票列（成本/模型类排障必需；老行为 None）
+                    "model": r.model, "cost_yuan": r.cost_yuan,
+                    "prompt_tokens": r.prompt_tokens,
+                    "completion_tokens": r.completion_tokens,
+                    "cache_hit_tokens": r.cache_hit_tokens,
+                    "cache_miss_tokens": r.cache_miss_tokens,
                 }
                 for r in ledger.scalars()
             ]

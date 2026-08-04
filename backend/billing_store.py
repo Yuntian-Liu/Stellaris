@@ -157,6 +157,18 @@ class BillingLedger(Base):
     from_perm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     note: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 管理员备注（admin_adjust 等）
+    # V1.1.0 分模型成本：结算时记"当时模型+真实用量+真实成本"（发票原则，改价不改历史）
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_hit_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_miss_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_yuan: Mapped[float | None] = mapped_column(nullable=True)
+    # 价签快照（V1.1.0：账单公式需要"当时单价"，与 model_configs 改价互不影响）
+    price_input: Mapped[float | None] = mapped_column(nullable=True)
+    price_output: Mapped[float | None] = mapped_column(nullable=True)
+    price_cache_hit: Mapped[float | None] = mapped_column(nullable=True)
+    price_per_hour: Mapped[float | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -346,12 +358,37 @@ async def grant_membership(uid: int, tier_key: str, days: int | None,
 async def _record(session, uid: int, feature: str, currency: str,
                   amount: int, balance_after: int, task_id: str | None = None,
                   from_gift: int | None = None, from_perm: int | None = None,
-                  note: str | None = None):
+                  note: str | None = None,
+                  model: str | None = None, usage: dict | None = None,
+                  cost_yuan: float | None = None, prices: dict | None = None):
+    """写流水。V1.1.0：可附带 model + usage + cost_yuan + prices（价签快照，账单公式用）"""
     session.add(BillingLedger(
         user_uid=uid, feature=feature, currency=currency,
         amount=amount, balance_after=balance_after, task_id=task_id,
         from_gift=from_gift, from_perm=from_perm, note=note,
+        model=model,
+        prompt_tokens=(usage or {}).get("prompt_tokens"),
+        completion_tokens=(usage or {}).get("completion_tokens"),
+        cache_hit_tokens=(usage or {}).get("cache_hit_tokens"),
+        cache_miss_tokens=(usage or {}).get("cache_miss_tokens"),
+        cost_yuan=cost_yuan,
+        price_input=(prices or {}).get("price_input"),
+        price_output=(prices or {}).get("price_output"),
+        price_cache_hit=(prices or {}).get("price_cache_hit"),
+        price_per_hour=(prices or {}).get("price_per_hour"),
     ))
+
+
+def _llm_cost(usage: dict, prices: dict) -> float:
+    """按价签算 LLM 真实成本（元）：未命中×输入价 + 命中×命中价 + 输出×输出价"""
+    miss = usage.get("cache_miss_tokens") or 0
+    hit = usage.get("cache_hit_tokens") or 0
+    # 无缓存拆分时（老模型/无缓存机制），全部按未命中计
+    if not miss and not hit:
+        miss = usage.get("prompt_tokens") or 0
+    comp = usage.get("completion_tokens") or 0
+    return round((miss * prices["price_input"] + hit * prices["price_cache_hit"]
+                  + comp * prices["price_output"]) / 1e6, 6)
 
 
 class InsufficientError(Exception):
@@ -372,27 +409,40 @@ async def grant_signup_gravity(uid: int) -> None:
 
 
 async def consume_minutes(uid: int, minutes: int, task_id: str) -> None:
-    """成功后扣分钟（三周期同时记）。失败任务不调用本函数。"""
+    """成功后扣分钟（三周期同时记）。失败任务不调用本函数。
+    V1.1.0：按当时生效 ASR 模型记 model + 真实成本（minutes/60 × 时价）。"""
     if minutes <= 0:
         return
+    from model_store import get_model_prices
+    prices = await get_model_prices("asr")
+    cost_yuan = round(minutes / 60 * (prices["price_per_hour"] or 0), 6)
     async with async_session() as session:
         row = await _get_or_create(session, uid)
         _apply_resets(row, await _effective_tier_key(session, row))
         row.minutes_day += minutes
         row.minutes_week += minutes
         row.minutes_month += minutes
-        await _record(session, uid, "extract", "minute", -minutes, row.minutes_day, task_id)
+        await _record(session, uid, "extract", "minute", -minutes, row.minutes_day, task_id,
+                      model=prices["model"], cost_yuan=cost_yuan, prices=prices)
         await session.commit()
 
 
-async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | None = None) -> int:
+async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | None = None,
+                          usage: dict | None = None) -> int:
     """成功后按 tokens 扣量子波（四成取整；先扣赠送钱包再扣活动钱包；不倒欠）。
     返回实际扣的量子波数。
     R2：原子条件 UPDATE（CASE 同时扣双钱包，先 gift 后 perm，引用旧值），总额不足则扣光，
-    杜绝并发超扣。双钱包 from_gift/from_perm 记账在极端并发下可能近似（Kimi 接受），总额精确。"""
+    杜绝并发超扣。双钱包 from_gift/from_perm 记账在极端并发下可能近似（Kimi 接受），总额精确。
+    V1.1.0：传 usage（真实 token 拆分）时，按当时生效模型价签记 model + usage + 真实成本。"""
     cost = round_tokens(tokens, QUANTUM_PER_TOKEN_UNIT)
     if cost <= 0:
         return 0
+    model, cost_yuan, prices = None, None, None
+    if usage is not None:
+        from model_store import get_model_prices
+        prices = await get_model_prices("llm")
+        model = prices["model"]
+        cost_yuan = _llm_cost(usage, prices)
     async with async_session() as session:
         row = await _get_or_create(session, uid)
         _apply_resets(row, await _effective_tier_key(session, row))
@@ -423,7 +473,8 @@ async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | No
             fp = old_perm - old_row.quantum_perm
             await _record(session, uid, feature, "quantum", -cost,
                           old_row.quantum_gift + old_row.quantum_perm, task_id,
-                          from_gift=-fg, from_perm=-fp)
+                          from_gift=-fg, from_perm=-fp,
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
             await session.commit()
             return cost
         # 第二段：0 < 总额 < cost → 扣光（不倒债）
@@ -446,19 +497,28 @@ async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | No
             total_old = cur_gift + cur_perm
             logger.warning("[Billing] 量子波竞态不足: uid=%s 需 %d 有 %d,扣到 0", uid, cost, total_old)
             await _record(session, uid, feature, "quantum", -total_old, 0, task_id,
-                          from_gift=-cur_gift, from_perm=-cur_perm)
+                          from_gift=-cur_gift, from_perm=-cur_perm,
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
             await session.commit()
             return total_old
         await session.commit()
         return 0
 
 
-async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | None = None) -> int:
+async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | None = None,
+                          usage: dict | None = None) -> int:
     """成功后按 tokens 扣引力波（四成取整；不倒欠）。返回实际扣的引力波数。
-    R2：两段式原子条件 UPDATE——余额够扣全款，不足扣光，gravity 永不跨 0，杜绝并发超扣。"""
+    R2：两段式原子条件 UPDATE——余额够扣全款，不足扣光，gravity 永不跨 0，杜绝并发超扣。
+    V1.1.0：传 usage 时按当时生效模型价签记 model + usage + 真实成本。"""
     cost = round_tokens(tokens, GRAVITY_PER_TOKEN_UNIT)
     if cost <= 0:
         return 0
+    model, cost_yuan, prices = None, None, None
+    if usage is not None:
+        from model_store import get_model_prices
+        prices = await get_model_prices("llm")
+        model = prices["model"]
+        cost_yuan = _llm_cost(usage, prices)
     async with async_session() as session:
         row = await _get_or_create(session, uid)
         _apply_resets(row, await _effective_tier_key(session, row))
@@ -472,7 +532,8 @@ async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | No
         )
         if r.rowcount == 1:
             new_bal = (await session.get(UserBilling, uid)).gravity
-            await _record(session, uid, feature, "gravity", -cost, new_bal, task_id)
+            await _record(session, uid, feature, "gravity", -cost, new_bal, task_id,
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
             await session.commit()
             return cost
         # 第二段：0 < 余额 < cost → 扣光（不倒债）
@@ -486,7 +547,8 @@ async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | No
         )
         if r2.rowcount == 1:
             logger.warning("[Billing] 引力波竞态不足: uid=%s 需 %d 有 %d,扣到 0", uid, cost, old)
-            await _record(session, uid, feature, "gravity", -old, 0, task_id)
+            await _record(session, uid, feature, "gravity", -old, 0, task_id,
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
             await session.commit()
             return old
         await session.commit()

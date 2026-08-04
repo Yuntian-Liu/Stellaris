@@ -58,6 +58,29 @@ _EXPECTED_COLUMNS = [
     ("task_records", "subtitle_srt", "TEXT"),
     ("task_records", "md_content", "TEXT"),
     ("task_records", "summary_content", "TEXT"),
+    # V1.1.0 分模型成本体系：流水记"当时模型+用量+真实成本"（发票原则）
+    ("billing_ledger", "model", "VARCHAR"),
+    ("billing_ledger", "prompt_tokens", "INTEGER"),
+    ("billing_ledger", "completion_tokens", "INTEGER"),
+    ("billing_ledger", "cache_hit_tokens", "INTEGER"),
+    ("billing_ledger", "cache_miss_tokens", "INTEGER"),
+    ("billing_ledger", "cost_yuan", "FLOAT"),
+    # V1.1.0 模型价签（NULL=按 provider 默认价）
+    ("model_configs", "price_input", "FLOAT"),
+    ("model_configs", "price_output", "FLOAT"),
+    ("model_configs", "price_cache_hit", "FLOAT"),
+    ("model_configs", "price_per_hour", "FLOAT"),
+    # V1.1.0 流水价签快照（账单公式需要"当时单价"，改价不改历史）
+    ("billing_ledger", "price_input", "FLOAT"),
+    ("billing_ledger", "price_output", "FLOAT"),
+    ("billing_ledger", "price_cache_hit", "FLOAT"),
+    ("billing_ledger", "price_per_hour", "FLOAT"),
+    # V1.1.0 任务统计字段持久化（原仅存内存，重启即失）
+    ("task_records", "actual_chars", "INTEGER"),
+    ("task_records", "actual_seg_tokens", "INTEGER"),
+    ("task_records", "subtitle_source", "VARCHAR(32)"),
+    ("task_records", "md_status", "VARCHAR(16)"),
+    ("task_records", "summary_status", "VARCHAR(16)"),
 ]
 
 

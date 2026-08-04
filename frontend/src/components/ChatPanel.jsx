@@ -17,6 +17,7 @@ import {
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import api from '../hooks/api'
 import { MD_COMPONENTS, normalizeLatex } from '../pages/ResultPage'
@@ -268,7 +269,7 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
                 : (
                   <>
                     {m.content
-                      ? <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(m.content)}</ReactMarkdown>
+                      ? <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(m.content)}</ReactMarkdown>
                       : (
                         <span style={{ display: 'inline-block', padding: '2px 4px' }}>
                           <span className="chat-dot" /><span className="chat-dot" /><span className="chat-dot" />

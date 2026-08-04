@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
-  Empty, Tooltip, message, Radio, Collapse,
+  Empty, Tooltip, message, Radio, Collapse, Switch,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
@@ -15,8 +15,8 @@ import {
   CloudUploadOutlined,
 } from '@ant-design/icons'
 import {
-  ResponsiveContainer, ComposedChart, BarChart, Bar, Line,
-  XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid,
+  ResponsiveContainer, ComposedChart, BarChart, Bar, Line, AreaChart, Area,
+  XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, Legend,
 } from 'recharts'
 import { adminApi } from '../hooks/api'
 import TierBadge from '../components/TierBadge'
@@ -1046,6 +1046,12 @@ function TasksPanel() {
     adminApi.recentTasks().then((r) => setItems(r.items))
   }
 
+  const openDetail = (tid) => {
+    setDetailLoading(true)
+    adminApi.taskDetail(tid).then(setDetail).catch(() => setDetail(null))
+      .finally(() => setDetailLoading(false))
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
@@ -1089,6 +1095,41 @@ function TasksPanel() {
               </>
             )}
           </div>
+          {/* 成本摘要带 + 账单明细（V1.1.0 发票列；老任务显示无明细） */}
+          {detail.cost_summary && (
+            detail.cost_summary.has_invoice ? (
+              <>
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+                  background: 'var(--accent-light)', borderRadius: 'var(--r-input)',
+                  padding: '10px 14px', margin: '12px 0 8px',
+                }}>
+                  <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent)' }}>
+                    ¥{detail.cost_summary.total}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--body)' }}>
+                    {detail.cost_summary.asr_minutes > 0 && `ASR ${detail.cost_summary.asr_minutes.toFixed(1)} 分钟 · `}
+                    {detail.cost_summary.models.join(' / ')} ·
+                    输入 {fmtTokens(detail.cost_summary.prompt)} · 输出 {fmtTokens(detail.cost_summary.completion)}
+                    {detail.cost_summary.hit_rate != null && ` · 命中 ${detail.cost_summary.hit_rate}%`}
+                  </span>
+                </div>
+                <div className="font-mono" style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9, padding: '0 2px' }}>
+                  {detail.ledger.filter(l => l.cost_yuan != null).map((l, i) => (
+                    <div key={i}>
+                      {l.currency === 'minute'
+                        ? `${l.feature}   ${Math.abs(l.amount).toFixed(1)} 分钟 × ¥${l.price_per_hour}/h = ¥${l.cost_yuan}`
+                        : `${l.feature}   ${l.cache_miss_tokens ?? l.prompt_tokens}×${l.price_input} + ${l.cache_hit_tokens ?? 0}×${l.price_cache_hit} + ${l.completion_tokens}×${l.price_output}（¥/M）= ¥${l.cost_yuan}`}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--mute)', margin: '12px 0 8px' }}>
+                历史任务，无成本明细
+              </div>
+            )
+          )}
           {detail.ledger?.length > 0 && (
             <>
               <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', margin: '14px 0 8px' }}>计费流水</div>
@@ -1117,10 +1158,19 @@ function TasksPanel() {
         pagination={{ pageSize: 20, showSizeChanger: false }}
         columns={[
           { title: '时间', dataIndex: 'created_at', render: fmtTime, width: 150 },
-          { title: '任务 ID', dataIndex: 'task_id', width: 200, className: 'font-mono', ellipsis: true, render: (v) => v || '—' },
+          { title: '任务 ID', dataIndex: 'task_id', width: 200, ellipsis: true, render: (v, r) => (
+            // ID 即链接：定长整齐，与"搜 ID 查档案"语义对应（V1.1.0 碳碳定稿）
+            <a onClick={() => openDetail(r.task_id)} className="font-mono"
+              style={{ color: 'var(--accent)', cursor: 'pointer' }}>
+              {v || '—'}
+            </a>
+          ) },
           { title: '标题', dataIndex: 'title', ellipsis: true, render: (t) => t || '未知视频' },
           { title: '来源', dataIndex: 'source_platform', width: 100, render: (s) => s || '—' },
           { title: 'UID', dataIndex: 'owner_uid', width: 80, className: 'font-mono', render: (v) => v ?? '—' },
+          { title: '', width: 60, render: (_, r) => (
+            <Button type="text" size="small" onClick={() => openDetail(r.task_id)}>详情</Button>
+          ) },
         ]}
       />
     </div>
@@ -1464,7 +1514,10 @@ function DataPanel() {
               { title: '文件', dataIndex: 'key', ellipsis: true },
               { title: '大小', dataIndex: 'size_bytes', width: 90, render: (v) => v ? `${(v / 1024 / 1024).toFixed(1)} MB` : '—' },
               { title: '剩余', dataIndex: 'days_until_cleanup', width: 65, align: 'center', render: (d) => (
-                <span style={{ color: d <= 1 ? 'var(--error)' : d <= 3 ? '#d97706' : 'var(--mute)' }}>{d} 天</span>
+                // d<=0：已过保留线、今天 04:00 即被清理（0点-4点窗口期原为"-1 天"，V1.0.5 修复）
+                d <= 0
+                  ? <span style={{ color: 'var(--error)', fontSize: 12 }}>今日清理</span>
+                  : <span style={{ color: d <= 1 ? 'var(--error)' : d <= 3 ? '#d97706' : 'var(--mute)' }}>{d} 天</span>
               ) },
             ]}
           />
@@ -1639,16 +1692,364 @@ export default function AdminView({ onBack }) {
             <OverviewPanel onGoOrders={() => { setOrderFilter('abnormal'); setTab('orders') }} />
           ) },
           { key: 'users', label: '用户管理', children: <UsersPanel /> },
-          { key: 'codes', label: '兑换码', children: <CodesPanel /> },
+          { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
+          { key: 'tickets', label: '工单处理', children: <TicketsPanel /> },
           { key: 'orders', label: '订单核验', children: (
             <OrdersPanel key={orderFilter} initialFilter={orderFilter} />
           ) },
-          { key: 'tasks', label: '任务监控', children: <TasksPanel /> },
-          { key: 'tickets', label: '工单处理', children: <TicketsPanel /> },
+          { key: 'codes', label: '兑换码', children: <CodesPanel /> },
           { key: 'data', label: '数据管理', children: <DataPanel /> },
+          { key: 'models', label: '模型', children: <ModelsPanel /> },
+          { key: 'cost', label: '成本', children: <CostPanel /> },
           { key: 'security', label: '安全', children: <SecurityPanel /> },
         ]}
       />
+    </div>
+  )
+}
+
+/* ───────── 模型仓库（V1.1.0：LLM/ASR 双槽位，点启用即时切换）───────── */
+
+const PROVIDER_LABEL = { deepseek: 'DeepSeek', mimo: 'Xiaomi Mimo' }
+
+function ModelSlotPanel({ slot, title, desc, items, source, onRefresh, requirePin }) {
+  const [label, setLabel] = useState('')
+  const [provider, setProvider] = useState('deepseek')
+  const [model, setModel] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [pricingFor, setPricingFor] = useState(null)   // 定价编辑中的模型行
+  const [priceForm, setPriceForm] = useState({})
+  const active = items.find(m => m.is_active)
+
+  const openPricing = (m) => {
+    setPricingFor(m)
+    setPriceForm({
+      price_input: m.price_input ?? '',
+      price_output: m.price_output ?? '',
+      price_cache_hit: m.price_cache_hit ?? '',
+      price_per_hour: m.price_per_hour ?? '',
+    })
+  }
+  const savePricing = () => {
+    requirePin(async (pin) => {
+      await adminApi.updatePricing(pricingFor.id, { ...priceForm, pin })
+      message.success('价签已更新（之后的消费按新价计）')
+      setPricingFor(null)
+      onRefresh()
+    })
+  }
+
+  const submit = () => {
+    if (!label.trim() || !model.trim()) { message.warning('显示名与模型名不能为空'); return }
+    requirePin(async (pin) => {
+      await adminApi.addModel({ slot, label: label.trim(), provider, model: model.trim(), pin })
+      message.success('已添加')
+      setLabel(''); setModel('')
+      onRefresh()
+    })
+  }
+
+  return (
+    <div className="card" style={{ padding: '16px 18px', marginBottom: 14 }}>
+      <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', marginBottom: 2 }}>{title}</div>
+      <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 12 }}>{desc}</div>
+
+      {/* 当前生效 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        padding: '8px 12px', marginBottom: 12,
+        background: 'var(--accent-light)', borderRadius: 'var(--r-input)', fontSize: 12.5,
+      }}>
+        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>当前生效</span>
+        {active ? (
+          <>
+            <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{active.label}</span>
+            <span className="font-mono" style={{ color: 'var(--mute)', fontSize: 11 }}>
+              {PROVIDER_LABEL[active.provider]} · {active.model}
+            </span>
+          </>
+        ) : (
+          <span style={{ color: 'var(--mute)' }}>环境变量默认（后台未配置）</span>
+        )}
+      </div>
+
+      {/* 已保存列表 */}
+      {items.map(m => (
+        <div key={m.id} style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+          padding: '8px 12px', marginBottom: 6,
+          border: `1px solid ${m.is_active ? 'var(--accent)' : 'var(--hairline)'}`,
+          borderRadius: 'var(--r-input)', fontSize: 13,
+        }}>
+          <span style={{ fontWeight: 500, color: 'var(--ink)' }}>{m.label}</span>
+          <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)' }}>
+            {PROVIDER_LABEL[m.provider]} · {m.model}
+          </span>
+          <span style={{ flex: 1 }} />
+          {m.is_active
+            ? <Tag color="green" style={{ marginInlineEnd: 0 }}>生效中</Tag>
+            : (
+              <>
+                <Button size="small" onClick={() => requirePin(async (pin) => {
+                  await adminApi.activateModel(m.id, pin)
+                  message.success(`已切换到 ${m.label}`)
+                  onRefresh()
+                })}>启用</Button>
+                <Button size="small" danger type="text" onClick={() => requirePin(async (pin) => {
+                  try {
+                    await adminApi.deleteModel(m.id, pin)
+                    message.success('已删除')
+                    onRefresh()
+                  } catch (e) { message.error(e.message) }
+                })}>删除</Button>
+              </>
+            )}
+          <Button size="small" type="text" onClick={() => openPricing(m)}>定价</Button>
+        </div>
+      ))}
+
+      {/* 定价编辑弹窗（留空 = 按厂商默认价；PIN 保存） */}
+      <Modal
+        open={!!pricingFor}
+        onCancel={() => setPricingFor(null)}
+        onOk={savePricing}
+        okText="保存"
+        cancelText="取消"
+        width={420}
+        centered
+        title={pricingFor ? `定价 · ${pricingFor.label}` : ''}
+      >
+        {pricingFor && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
+              留空则按厂商默认价计算；修改只影响之后的消费，历史流水不变。
+            </div>
+            {pricingFor.slot === 'llm' ? (
+              <>
+                <Input addonBefore="输入价（元/百万 tokens）" value={priceForm.price_input}
+                  placeholder="默认 4"
+                  onChange={e => setPriceForm(f => ({ ...f, price_input: e.target.value }))} />
+                <Input addonBefore="输出价（元/百万 tokens）" value={priceForm.price_output}
+                  placeholder="默认 12"
+                  onChange={e => setPriceForm(f => ({ ...f, price_output: e.target.value }))} />
+                <Input addonBefore="缓存命中价（元/百万 tokens）" value={priceForm.price_cache_hit}
+                  placeholder="默认 0.5"
+                  onChange={e => setPriceForm(f => ({ ...f, price_cache_hit: e.target.value }))} />
+              </>
+            ) : (
+              <Input addonBefore="每小时价格（元）" value={priceForm.price_per_hour}
+                placeholder="默认 0.498"
+                onChange={e => setPriceForm(f => ({ ...f, price_per_hour: e.target.value }))} />
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* 添加表单（PC 管理后台：输入框拉宽，占位提示完整可见） */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+        <Input size="small" placeholder="显示名（如 DeepSeek V4 Flash）" value={label}
+          onChange={e => setLabel(e.target.value)} style={{ width: 280 }} />
+        {slot === 'llm' && (
+          <Select size="small" value={provider} onChange={setProvider} style={{ width: 150 }}
+            options={Object.entries(PROVIDER_LABEL).map(([value, l]) => ({ value, label: l }))} />
+        )}
+        <Input size="small" placeholder="模型名（如 deepseek-v4-flash）" value={model}
+          onChange={e => setModel(e.target.value)} className="font-mono" style={{ width: 280 }} />
+        <Button size="small" type="primary" loading={busy} onClick={submit}>添加</Button>
+      </div>
+    </div>
+  )
+}
+
+function ModelsPanel() {
+  const [data, setData] = useState(null)
+  const { requirePin, pinModal } = usePinFlow()
+
+  const load = useCallback(() => {
+    adminApi.listModels().then(setData).catch(e => message.error(e.message))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, color: 'var(--mute)' }}>
+          添加一次永久保存，点「启用」即时切换，无需重启。密钥始终走环境变量，不会入库。
+        </span>
+        <span style={{ flex: 1 }} />
+        <Button size="small" icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+      </div>
+      {data && (
+        <>
+          <ModelSlotPanel slot="llm" title="LLM 模型" desc="驱动语义分段 / 内容概要 / MD 笔记 / AI 解读"
+            items={data.models.llm || []} source={data.source?.llm} onRefresh={load} requirePin={requirePin} />
+          <ModelSlotPanel slot="asr" title="ASR 模型" desc="驱动语音转写（厂商固定 Xiaomi Mimo）"
+            items={data.models.asr || []} source={data.source?.asr} onRefresh={load} requirePin={requirePin} />
+        </>
+      )}
+      {pinModal}
+    </div>
+  )
+}
+
+/* ───────── 成本 Tab（V1.1.0：分模型真实成本，结算时写入）───────── */
+
+const MODEL_COLORS = ['#4f46e5', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
+
+function fmtTokens(n) {
+  if (n == null) return '—'
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+function CostPanel() {
+  const [days, setDays] = useState(30)
+  const [data, setData] = useState(null)
+  const [showLegacy, setShowLegacy] = useState(false)   // 历史估算行（默认关，精确视图）
+
+  const load = useCallback(() => {
+    adminApi.costStats(days).then(setData).catch(e => message.error(e.message))
+  }, [days])
+  useEffect(() => { load() }, [load])
+
+  const c = data?.cards || {}
+  const models = data?.per_model || []
+  const trend = data?.trend || []
+  const legacy = data?.legacy
+  const modelNames = [...new Set(models.map(m => m.model))]
+
+  const cardStyle = {
+    flex: 1, minWidth: 140, padding: '12px 16px',
+    background: 'var(--surface-2)', borderRadius: 'var(--r-input)',
+    border: '1px solid var(--hairline)',
+  }
+  const numStyle = { fontSize: 20, fontWeight: 600, color: 'var(--ink)' }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+        <Radio.Group value={days} onChange={e => setDays(e.target.value)} size="small">
+          <Radio.Button value={1}>今日</Radio.Button>
+          <Radio.Button value={7}>7 天</Radio.Button>
+          <Radio.Button value={30}>30 天</Radio.Button>
+          <Radio.Button value={0}>全部</Radio.Button>
+        </Radio.Group>
+        {legacy?.cost > 0 && (
+          <span style={{ marginLeft: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Switch size="small" checked={showLegacy} onChange={setShowLegacy} />
+            <span style={{ fontSize: 12, color: 'var(--mute)' }}>包含历史估算</span>
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <Button size="small" icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+      </div>
+
+      {/* 总览卡 */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div style={cardStyle}>
+          <div style={{ fontSize: 11, color: 'var(--mute)' }}>总成本</div>
+          <div style={numStyle}>¥{c.total_cost ?? '—'}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={{ fontSize: 11, color: 'var(--mute)' }}>输入 tokens</div>
+          <div style={numStyle}>{fmtTokens(c.prompt_tokens)}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={{ fontSize: 11, color: 'var(--mute)' }}>输出 tokens</div>
+          <div style={numStyle}>{fmtTokens(c.completion_tokens)}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={{ fontSize: 11, color: 'var(--mute)' }}>整体缓存命中率</div>
+          <div style={{ ...numStyle, color: 'var(--accent)' }}>
+            {c.overall_hit_rate != null ? `${c.overall_hit_rate}%` : '—'}
+          </div>
+        </div>
+      </div>
+
+      {/* 成本趋势（按模型堆叠） */}
+      {trend.length > 0 && (
+        <div className="card" style={{ padding: '14px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 10 }}>
+            成本趋势（按模型）
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={trend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--hairline)" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--mute)" />
+              <YAxis tick={{ fontSize: 11 }} stroke="var(--mute)" width={50}
+                tickFormatter={v => `¥${v}`} />
+              <ChartTooltip formatter={(v) => `¥${Number(v).toFixed(4)}`} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {modelNames.map((name, i) => (
+                <Area key={name} type="monotone" dataKey={name} stackId="1"
+                  stroke={MODEL_COLORS[i % MODEL_COLORS.length]}
+                  fill={MODEL_COLORS[i % MODEL_COLORS.length]}
+                  fillOpacity={0.25} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* 分模型明细 */}
+      <div className="card" style={{ padding: '14px 16px' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 10 }}>
+          分模型明细
+        </div>
+        {models.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--mute)', padding: '12px 0' }}>
+            该时间段暂无成本数据（V1.1.0 起的消费才会记入）
+          </div>
+        )}
+        {models.map(m => (
+          <div key={m.model} style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '9px 12px', marginBottom: 6,
+            border: '1px solid var(--hairline)', borderRadius: 'var(--r-input)',
+            fontSize: 12.5,
+          }}>
+            <span className="font-mono" style={{ fontWeight: 600, color: 'var(--ink)', fontSize: 12 }}>
+              {m.model}
+            </span>
+            <span style={{ flex: 1 }} />
+            <span style={{ color: 'var(--mute)' }}>
+              {m.minutes > 0
+                ? `输入 ${m.minutes.toFixed(1)} 分钟`
+                : `输入 ${fmtTokens(m.prompt)}`}
+            </span>
+            {m.minutes === 0 && <span style={{ color: 'var(--mute)' }}>输出 {fmtTokens(m.completion)}</span>}
+            {m.hit_rate != null && (
+              <span style={{ color: 'var(--accent)' }}>命中 {m.hit_rate}%</span>
+            )}
+            <span style={{ fontWeight: 600, color: 'var(--ink)', minWidth: 70, textAlign: 'right' }}>
+              ¥{m.cost}
+            </span>
+          </div>
+        ))}
+        {/* 历史估算行（开关开启且老行存在时；灰色虚线区分发票区） */}
+        {showLegacy && legacy?.cost > 0 && (
+          <>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              padding: '9px 12px', marginTop: 4,
+              border: '1px dashed var(--hairline-strong)', borderRadius: 'var(--r-input)',
+              fontSize: 12.5, opacity: 0.75,
+            }}>
+              <span style={{ fontWeight: 600, color: 'var(--mute)', fontSize: 12 }}>
+                历史消耗（估算）
+              </span>
+              <span style={{ flex: 1 }} />
+              <span style={{ color: 'var(--mute)' }}>输入 —</span>
+              <span style={{ color: 'var(--mute)' }}>输出 —</span>
+              <span style={{ fontWeight: 600, color: 'var(--mute)', minWidth: 70, textAlign: 'right' }}>
+                ¥{legacy.cost}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6, opacity: 0.8 }}>
+              V1.1.0 前的消耗按混合费率估算（分钟 {legacy.minutes} · 量子波 {legacy.quantum} · 引力波 {legacy.gravity}），与数据看板同口径
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

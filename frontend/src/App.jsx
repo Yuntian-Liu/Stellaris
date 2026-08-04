@@ -122,7 +122,9 @@ export default function App() {
   }, [balances?.tier, user?.uid])
 
   // 彩蛋：3 秒内连点 logo ✦ 7 次 → 流星雨
-  const handleBrandClick = () => {
+  // 提取进行中点品牌先弹确认（防误点前功尽弃；不导航、不计流星雨）——确认后仍是"防卡死关机键"
+  const [leaveConfirm, setLeaveConfirm] = useState(false)
+  const goHome = () => {
     setPage('home')
     const c = clickRef.current
     c.count += 1
@@ -133,6 +135,10 @@ export default function App() {
       setMeteorOn(true)
       setTimeout(() => setMeteorOn(false), 4500)
     }
+  }
+  const handleBrandClick = () => {
+    if (page === 'progress') { setLeaveConfirm(true); return }
+    goHome()
   }
 
   // 401(token 失效)→ 跳登录页
@@ -437,6 +443,34 @@ export default function App() {
 
       {/* 计费引导（问号触发） */}
       <GuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+
+      {/* 提取进行中点品牌 → 确认离开（登录/匿名文案区分；「返回主页」保留防卡死关机键） */}
+      <Modal
+        open={leaveConfirm}
+        onCancel={() => setLeaveConfirm(false)}
+        footer={null}
+        width={400}
+        centered
+        title={<span className="font-display">离开提取进度页？</span>}
+      >
+        <div style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9, padding: '4px 0 16px' }}>
+          字幕还在提取中，现在返回主页将离开进度页。
+          {user
+            ? '提取会继续在后台完成，你可以稍后在历史记录中找到它。'
+            : '未登录状态下，提取结果将不会保留。'}
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Button block onClick={() => setLeaveConfirm(false)}>再等等</Button>
+          <Button
+            block
+            danger
+            onClick={() => { setLeaveConfirm(false); goHome() }}
+            style={{ borderRadius: 'var(--r-btn)' }}
+          >
+            返回主页
+          </Button>
+        </div>
+      </Modal>
 
       {/* 历史记录（点记录直接回结果页） */}
       <HistoryModal

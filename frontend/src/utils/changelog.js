@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.0.4 Alcyone'
+export const APP_VERSION = 'V1.1.0 Bellatrix'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-07-26'
+export const AGREEMENT_VERSION = '2026-08-05'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,20 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V1.1.0', codename: 'Bellatrix', date: '2026-08-05',
+    // 开发者寄语（碳碳亲笔）
+    intro: '开发者的悄悄话：不鸣则已，一鸣惊人(bushi。几天没更新了，一更新就放大招哈哈！这几天可把开发者的脑袋愁秃了，我们连夜加入了很多实用的新功能呢！还大大优化了用户体验！希望大家喜欢～',
+    items: [
+      'AI 解读支持 Markdown 表格渲染：公式、表格同屏展示，理工科内容更清晰',
+      '防止误触：提取中途点击标题会先询问确认，不再担心手滑前功尽弃',
+      '模型调度机制上线：开发者可以在成本与质量之间灵活选用更优的 AI 模型——你只管提问，体验只会越来越好',
+      '计费底座重构：每一次 AI 消耗的 tokens、所用模型与计价方式都精确记录，你的每一笔钱花在哪儿，从此有据可查',
+      '缓存机制再进化：兼容更多模型厂商的缓存协议，AI 对话更快、成本更低',
+      '协议更新：AI 模型与厂商可能基于成本与服务质量动态调整（始终为境内服务商，数据用途不变）',
+    ],
+    patches: [],
+  },
   {
     version: 'V1.0.0', codename: 'Alcyone', date: '2026-07-26',
     // 开发者寄语（碳碳亲笔，1.0.0 正式版发布宣言）

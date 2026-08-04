@@ -31,6 +31,24 @@ class TaskRecord(Base):
     subtitle_srt: Mapped[str | None] = mapped_column(Text, nullable=True)
     md_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 统计字段持久化（V1.1.0：原仅存内存，重启即失；档案 DB 优先内存兜底）
+    actual_chars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_seg_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subtitle_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    md_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    summary_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+
+async def save_task_runtime(task_id: str, **fields) -> None:
+    """按列更新统计字段（V1.1.0；NULL 字段跳过不覆盖，记录不存在则忽略）"""
+    async with async_session() as session:
+        r = await session.get(TaskRecord, task_id)
+        if not r:
+            return
+        for field, value in fields.items():
+            if hasattr(r, field) and value is not None:
+                setattr(r, field, value)
+        await session.commit()
 
 
 async def save_task_record(task_id: str, owner_uid: int | None,
