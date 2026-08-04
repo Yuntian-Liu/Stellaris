@@ -37,7 +37,7 @@ from pipeline.asr import transcribe_with_mimo, probe_media_duration
 from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_with_subtitle_stream
 from chat_store import save_chat_message, get_chat_history, delete_chat_messages
 from history_store import (
-    save_task_record, list_task_records, delete_task_record,
+    save_task_record, save_task_runtime, list_task_records, delete_task_record,
     save_task_content, get_task_content, nullify_task_content,
     migrate_files_to_db,
     get_task_owner_map, get_task_record,
@@ -89,8 +89,12 @@ async def lifespan(app: FastAPI):
     print("[Stellaris] starting up...")
     attach_log_buffer()   # 内存环形日志缓冲（诊断导出用）
     # 初始化数据库（建表）——分档清理依赖 task_records/user_billing，须先建表
+    # 注意：model_store 必须先 import（注册 ModelConfig 到 Base.metadata），否则 create_all 不建 model_configs
+    from model_store import seed_model_configs
     await init_db()
     print("[Stellaris] 数据库已就绪")
+    # V1.1.0: 模型仓库 seed（表为空写预置）+ 活跃配置加载进同步缓存
+    await seed_model_configs()
     # V0.12.2: 一次性迁移 TMP_DIR 存量文件到 DB（幂等，在清理之前执行）
     migrated = await migrate_files_to_db()
     if migrated:
@@ -165,7 +169,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.0.4-alcyone",
+    version="1.1.0-bellatrix",
     lifespan=lifespan,
 )
 
@@ -824,7 +828,7 @@ async def chat_about_video(
                             charged = await consume_gravity(
                                 current_user.uid,
                                 final_usage["prompt_tokens"] + final_usage["completion_tokens"],
-                                "chat", task_id,
+                                "chat", task_id, usage=final_usage,
                             )
                         owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
                         if owner_uid and final_usage:
@@ -844,7 +848,7 @@ async def chat_about_video(
                     charged = await consume_gravity(
                         current_user.uid,
                         final_usage["prompt_tokens"] + final_usage["completion_tokens"],
-                        "chat", task_id,
+                        "chat", task_id, usage=final_usage,
                     )
                     owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
                     if owner_uid:
@@ -1119,6 +1123,104 @@ async def _check_admin_pin(current_user: User, body: dict) -> None:
         await verify_admin_pin(current_user.uid, str(body.get("pin", "") or "").strip())
     except PinError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+# ===== 模型仓库（V1.1.0）=====
+
+@app.get("/api/admin/models")
+async def admin_list_models(current_user: User = Depends(get_admin_user)):
+    """模型配置全量（按槽位分组 + 生效来源标注）"""
+    from model_store import list_models
+    return await list_models()
+
+
+@app.post("/api/admin/models")
+async def admin_add_model(
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """添加模型配置 {slot, label, provider, model}（PIN；asr 槽强制 mimo）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from model_store import add_model
+    try:
+        row = await add_model(
+            str(body.get("slot", "")),
+            str(body.get("label", "")),
+            str(body.get("provider", "")),
+            str(body.get("model", "")),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "item": row}
+
+
+@app.post("/api/admin/models/{model_id}/activate")
+async def admin_activate_model(
+    model_id: int,
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """启用一条模型配置（同槽位互斥；PIN）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from model_store import activate_model
+    try:
+        await activate_model(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/models/{model_id}")
+async def admin_delete_model(
+    model_id: int,
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """删除一条模型配置（PIN；生效中的拒绝）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from model_store import delete_model
+    try:
+        await delete_model(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+# ===== 管理后台 PIN =====
+
+@app.post("/api/admin/models/{model_id}/pricing")
+async def admin_update_pricing(
+    model_id: int,
+    req: Request,
+    current_user: User = Depends(get_admin_user),
+):
+    """更新模型价签（PIN；空值=回默认）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from model_store import update_pricing
+    pricing = {}
+    for k in ("price_input", "price_output", "price_cache_hit", "price_per_hour"):
+        if k in body:
+            v = body[k]
+            pricing[k] = float(v) if v not in (None, "") else None
+    try:
+        row = await update_pricing(model_id, pricing)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "item": row}
+
+
+@app.get("/api/admin/cost/stats")
+async def admin_cost_stats(
+    days: int | None = None,
+    current_user: User = Depends(get_admin_user),
+):
+    """分模型成本统计（成本 Tab 数据源）"""
+    from admin_store import cost_stats
+    return await cost_stats(days)
 
 
 @app.post("/api/admin/pin/set")
@@ -1404,17 +1506,22 @@ async def admin_task_detail(task_id: str, current_user: User = Depends(get_admin
                     charged_min = -r["amount"]
                 if not charged_q and r["currency"] == "quantum" and r["amount"] < 0:
                     charged_q = -r["amount"]
+        # V1.1.0: 统计字段 DB 优先（persisted），NULL 回落内存 tasks dict（进行中的任务）
+        persisted = detail.get("persisted") or {}
+        def _pf(key):
+            v = persisted.get(key)
+            return v if v is not None else t.get(key)
         detail["runtime"] = {
             "status": t.get("status"),
             "progress": t.get("progress"),
             "video_title": t.get("video_title"),
-            "subtitle_source": t.get("subtitle_source"),
-            "md_status": t.get("md_status"),
-            "summary_status": t.get("summary_status"),
+            "subtitle_source": _pf("subtitle_source"),
+            "md_status": _pf("md_status"),
+            "summary_status": _pf("summary_status"),
             "charged_minutes": charged_min,
             "charged_quantum": charged_q,
-            "actual_seg_tokens": t.get("actual_seg_tokens"),
-            "actual_chars": t.get("actual_chars"),
+            "actual_seg_tokens": _pf("actual_seg_tokens"),
+            "actual_chars": _pf("actual_chars"),
             "error": t.get("error"),
         }
     return detail
@@ -1644,12 +1751,17 @@ def _run_pipeline_sync(
         task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
             _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
-                                 seg_tokens, task_id)
+                                 seg_tokens, task_id, seg_usage=seg_usage)
             # 历史记录（未登录不记）
             try:
                 asyncio.run(save_task_record(
                     task_id, task["owner_uid"], video_title,
                     task.get("source_platform") or "",
+                ))
+                # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
+                asyncio.run(save_task_runtime(
+                    task_id, actual_chars=len(raw_text), actual_seg_tokens=seg_tokens,
+                    subtitle_source=task.get("subtitle_source"),
                 ))
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
@@ -1774,12 +1886,17 @@ def _run_pipeline_from_file_sync(
         task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
             _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
-                                 seg_tokens, task_id)
+                                 seg_tokens, task_id, seg_usage=seg_usage)
             # 历史记录（未登录不记）
             try:
                 asyncio.run(save_task_record(
                     task_id, task["owner_uid"], video_title,
                     task.get("source_platform") or "",
+                ))
+                # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
+                asyncio.run(save_task_runtime(
+                    task_id, actual_chars=len(raw_text), actual_seg_tokens=seg_tokens,
+                    subtitle_source=task.get("subtitle_source"),
                 ))
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
@@ -1833,7 +1950,7 @@ def _incr_stats_sync(owner_uid: int | None, **fields: int) -> None:
 
 
 def _settle_billing_sync(owner_uid: int | None, minutes: int,
-                         seg_tokens: int, task_id: str) -> None:
+                         seg_tokens: int, task_id: str, seg_usage: dict | None = None) -> None:
     """同步上下文（线程池）里做计费结算；未登录跳过，失败不影响主流程。
     结算结果（实际扣费）写回 task，供前端回显。"""
     if not owner_uid:
@@ -1845,7 +1962,8 @@ def _settle_billing_sync(owner_uid: int | None, minutes: int,
             await consume_minutes(owner_uid, minutes, task_id)
             charged_min = minutes
         if seg_tokens > 0:
-            charged_q = await consume_quantum(owner_uid, seg_tokens, "segment", task_id)
+            charged_q = await consume_quantum(owner_uid, seg_tokens, "segment", task_id,
+                                              usage=seg_usage)
         task = tasks.get(task_id)
         if task is not None:
             task["charged_minutes"] = charged_min
@@ -1880,6 +1998,10 @@ def _generate_summary_impl(task_id: str):
 
         task["summary_status"] = "ready"
         task["summary_error"] = None
+        try:
+            asyncio.run(save_task_runtime(task_id, summary_status="ready"))
+        except Exception:
+            pass
         task["summary_content"] = summary_content   # 直接带回前端展示
         # 实际 tokens（前端"有理有据"展示，与扣费同源）
         total_tokens = summary_usage["prompt_tokens"] + summary_usage["completion_tokens"]
@@ -1888,7 +2010,8 @@ def _generate_summary_impl(task_id: str):
         if task.get("owner_uid"):
             try:
                 task["summary_cost"] = asyncio.run(
-                    consume_quantum(task["owner_uid"], total_tokens, "summary", task_id)
+                    consume_quantum(task["owner_uid"], total_tokens, "summary", task_id,
+                               usage=summary_usage)
                 )
             except Exception as be:
                 logger.warning("[Billing] 概要结算失败(不影响功能): %s", be)
@@ -1928,6 +2051,10 @@ def _generate_md_impl(task_id: str):
 
         task["md_status"] = "ready"
         task["md_error"] = None
+        try:
+            asyncio.run(save_task_runtime(task_id, md_status="ready"))
+        except Exception:
+            pass
         # 实际 tokens（前端"有理有据"展示，与扣费同源）
         total_tokens = md_usage["prompt_tokens"] + md_usage["completion_tokens"]
         task["md_tokens"] = total_tokens
@@ -1935,7 +2062,8 @@ def _generate_md_impl(task_id: str):
         if task.get("owner_uid"):
             try:
                 task["md_cost"] = asyncio.run(
-                    consume_gravity(task["owner_uid"], total_tokens, "md", task_id)
+                    consume_gravity(task["owner_uid"], total_tokens, "md", task_id,
+                              usage=md_usage)
                 )
             except Exception as be:
                 logger.warning("[Billing] MD 结算失败(不影响功能): %s", be)

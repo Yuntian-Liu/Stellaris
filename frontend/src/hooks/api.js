@@ -221,6 +221,12 @@ export const adminApi = {
   listTickets: (status) => request(`/api/admin/tickets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   getTicket: (tid) => request(`/api/admin/tickets/${tid}`),
   replyTicket: (tid, payload) => request(`/api/admin/tickets/${tid}/reply`, { method: 'POST', body: payload }),
+  listModels: () => request('/api/admin/models'),
+  addModel: (payload) => request('/api/admin/models', { method: 'POST', body: payload }),
+  activateModel: (id, pin) => request(`/api/admin/models/${id}/activate`, { method: 'POST', body: { pin } }),
+  deleteModel: (id, pin) => request(`/api/admin/models/${id}`, { method: 'DELETE', body: { pin } }),
+  updatePricing: (id, payload) => request(`/api/admin/models/${id}/pricing`, { method: 'POST', body: payload }),
+  costStats: (days) => request(`/api/admin/cost/stats${days ? `?days=${days}` : ''}`),
 }
 
 export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi }

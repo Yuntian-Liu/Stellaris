@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.0.4 Alcyone'
+export const APP_VERSION = 'V1.1.0 Bellatrix'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-07-26'
+export const AGREEMENT_VERSION = '2026-08-05'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,20 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V1.1.0', codename: 'Bellatrix', date: '2026-08-05',
+    // 开发者寄语（碳碳亲笔）
+    intro: '开发者的悄悄话：不鸣则已，一鸣惊人(bushi。几天没更新了，一更新就放大招哈哈！这几天可把开发者的脑袋愁秃了，我们连夜加入了很多实用的新功能呢！还大大优化了用户体验！希望大家喜欢～',
+    items: [
+      'AI 解读支持 Markdown 表格渲染：公式、表格同屏展示，理工科内容更清晰',
+      '新增「模型」管理：LLM 与 ASR 模型可随时切换，DeepSeek 与 Xiaomi Mimo 一键互切，新增模型一次保存永久可用',
+      '新增「成本」面板：分模型查看 tokens 用量、缓存命中率与真实成本，消费透明到每一行',
+      '任务档案升级为透明账单：每次提取消耗多少 tokens、用的什么模型、怎么算的钱，逐行可查',
+      '缓存机制再进化：同时兼容 DeepSeek 与 OpenAI 标准缓存协议，小米模型缓存命中也能精准计量',
+      '体验细节：提取中途点标题会先询问，防止误触前功尽弃；备份剩余天数显示修正；管理后台布局优化',
+    ],
+    patches: [],
+  },
   {
     version: 'V1.0.0', codename: 'Alcyone', date: '2026-07-26',
     // 开发者寄语（碳碳亲笔，1.0.0 正式版发布宣言）

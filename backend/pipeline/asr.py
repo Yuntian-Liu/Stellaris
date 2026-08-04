@@ -35,6 +35,12 @@ def _get_client() -> OpenAI:
     return _client
 
 
+def _active_asr_model() -> str:
+    """当前生效的 ASR 模型名（V1.1.0 模型仓库缓存，切换即时生效）"""
+    from model_store import get_asr_model
+    return get_asr_model()
+
+
 def transcribe_with_mimo(audio_path: Path, task_id: str) -> dict:
     """
     调用小米 Mimo ASR 将音频转为文字。
@@ -90,7 +96,7 @@ def transcribe_with_mimo(audio_path: Path, task_id: str) -> dict:
 
         try:
             completion = client.chat.completions.create(
-                model=MIMO_MODEL,
+                model=_active_asr_model(),
                 messages=[{
                     "role": "user",
                     "content": [{

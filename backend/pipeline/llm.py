@@ -14,24 +14,34 @@ import time
 import httpx
 from openai import OpenAI
 
-from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL  # noqa: F401 (LLM_* 由 model_store 凭证映射使用)
 
 logger = logging.getLogger(__name__)
 
-# ── 客户端实例（复用连接）───────────────────────────────
-_client: OpenAI | None = None
+# ── 客户端实例（按厂商复用连接）────────────────────────
+_clients: dict[str, OpenAI] = {}
 
 
-def _get_client() -> OpenAI:
-    """懒初始化 LLM 客户端，支持热更新 key。"""
-    global _client
-    if not LLM_API_KEY:
-        raise RuntimeError(
-            "LLM_API_KEY 未设置。请在 backend/.env 中配置 DeepSeek API Key。"
-        )
-    if _client is None or _client.api_key != LLM_API_KEY:
-        _client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    return _client
+def _get_client(provider: str | None = None) -> OpenAI:
+    """按厂商懒初始化 LLM 客户端（V1.1.0 模型仓库）。
+    provider 缺省时取当前生效配置的厂商；凭证永远来自环境变量（model_store.PROVIDER_CREDENTIALS）。"""
+    from model_store import PROVIDER_CREDENTIALS, get_llm_active
+    if provider is None:
+        provider, _ = get_llm_active()
+    api_key, base_url = PROVIDER_CREDENTIALS[provider]
+    if not api_key:
+        raise RuntimeError(f"{provider} 的 API Key 未设置（环境变量缺失）。")
+    client = _clients.get(provider)
+    if client is None or client.api_key != api_key:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        _clients[provider] = client
+    return client
+
+
+def _active_model() -> str:
+    """当前生效的 LLM 模型名（模型仓库缓存，切换即时生效）"""
+    from model_store import get_llm_active
+    return get_llm_active()[1]
 
 
 # ── Prompt 设计 ───────────────────────────────────────
@@ -144,14 +154,33 @@ def _build_chat_system(raw_text: str, video_title: str, is_admin_debug: bool = F
 
 # ── 核心函数 ──────────────────────────────────────────
 
+def _extract_cache_tokens(u) -> tuple[int, int]:
+    """从 usage 提取缓存命中/未命中 tokens（V1.1.0 双字段兼容）。
+    DeepSeek：顶层 prompt_cache_hit/miss_tokens；
+    小米等 OpenAI 新标准：prompt_tokens_details.cached_tokens（未命中=prompt-cached）。
+    都没有 → (0, 0)，成本公式按全输入价兜底。"""
+    hit = getattr(u, "prompt_cache_hit_tokens", None)
+    if hit is not None:
+        return hit or 0, getattr(u, "prompt_cache_miss_tokens", 0) or 0
+    details = getattr(u, "prompt_tokens_details", None)
+    cached = (getattr(details, "cached_tokens", 0) or 0) if details else 0
+    if cached:
+        return cached, max((u.prompt_tokens or 0) - cached, 0)
+    return 0, 0
+
+
 def _usage_dict(completion) -> dict:
-    """从 completion 提取 token 用量（统计/计费用）"""
+    """从 completion 提取 token 用量（统计/计费用）。V1.1.0 补缓存拆分（成本按命中/未命中分别计价）"""
     u = getattr(completion, "usage", None)
     if not u:
-        return {"prompt_tokens": 0, "completion_tokens": 0}
+        return {"prompt_tokens": 0, "completion_tokens": 0,
+                "cache_hit_tokens": 0, "cache_miss_tokens": 0}
+    hit, miss = _extract_cache_tokens(u)
     return {
         "prompt_tokens": u.prompt_tokens or 0,
         "completion_tokens": u.completion_tokens or 0,
+        "cache_hit_tokens": hit,
+        "cache_miss_tokens": miss,
     }
 
 
@@ -171,11 +200,12 @@ def segment_text(raw_text: str, task_id: str) -> tuple[str, dict]:
         return raw_text, {"prompt_tokens": 0, "completion_tokens": 0}
 
     client = _get_client()
+    model = _active_model()
     logger.info("[LLM] 语义分段开始: %d 字符 (task=%s)", len(raw_text), task_id)
 
     try:
         completion = client.chat.completions.create(
-            model=LLM_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": _SEGMENT_SYSTEM},
                 {"role": "user", "content": raw_text},
@@ -210,10 +240,11 @@ def text_to_markdown(raw_text: str, task_id: str) -> tuple[str, dict]:
         raise ValueError("空文本，无法转换为 Markdown")
 
     client = _get_client()
+    model = _active_model()
     logger.info("[LLM] Markdown 转写开始: %d 字符 (task=%s)", len(raw_text), task_id)
 
     completion = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=model,
         messages=[
             {"role": "system", "content": _MD_SYSTEM},
             {"role": "user", "content": raw_text},
@@ -247,10 +278,11 @@ def summarize_text(raw_text: str, task_id: str) -> tuple[str, dict]:
         raise ValueError("空文本，无法生成总结")
 
     client = _get_client()
+    model = _active_model()
     logger.info("[LLM] 总结概要开始: %d 字符 (task=%s)", len(raw_text), task_id)
 
     completion = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=model,
         messages=[
             {"role": "system", "content": _SUMMARY_SYSTEM},
             {"role": "user", "content": raw_text},
@@ -300,6 +332,7 @@ def chat_with_subtitle_stream(
         raise ValueError("字幕文本缺失，无法进行对话")
 
     client = _get_client()
+    model = _active_model()
     messages = [{"role": "system", "content": _build_chat_system(raw_text, video_title, is_admin_debug)}]
     for msg in history:
         if msg.get("role") in ("user", "assistant") and msg.get("content"):
@@ -309,7 +342,7 @@ def chat_with_subtitle_stream(
                 len(raw_text), len(history), task_id)
 
     stream = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=model,
         messages=messages,
         temperature=0.5,
         max_tokens=2500,   # 回复长度硬限，控制输出成本
@@ -336,11 +369,12 @@ def chat_with_subtitle_stream(
         # usage 在最后一个 chunk（choices 为空）
         if getattr(chunk, "usage", None):
             u = chunk.usage
+            hit, miss = _extract_cache_tokens(u)   # 双字段兼容（DeepSeek/OpenAI 标准）
             usage = {
                 "prompt_tokens": u.prompt_tokens,
                 "completion_tokens": u.completion_tokens,
-                "cache_hit_tokens": getattr(u, "prompt_cache_hit_tokens", 0) or 0,
-                "cache_miss_tokens": getattr(u, "prompt_cache_miss_tokens", 0) or 0,
+                "cache_hit_tokens": hit,
+                "cache_miss_tokens": miss,
             }
             logger.info(
                 "[LLM] AI 对话完成: %d 字符, prompt=%d(命中缓存 %d), completion=%d (task=%s)",

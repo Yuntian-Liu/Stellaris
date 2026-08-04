@@ -13,7 +13,7 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import case, func, select
@@ -78,8 +78,10 @@ def _est_cost(minute: int, quantum: int, gravity: int) -> float:
                  + gravity * COST_PER_GRAVITY, 2)
 
 
-async def _consumption(session, since: datetime | None = None) -> dict[str, int]:
-    """三货币消耗量（billing_ledger 中 amount<0 的绝对值求和；since 限定起点）"""
+async def _consumption(session, since: datetime | None = None,
+                       legacy_only: bool = False) -> dict[str, int]:
+    """三货币消耗量（billing_ledger 中 amount<0 的绝对值求和；since 限定起点）。
+    legacy_only=True 只数无 cost_yuan 的老行（V1.1.0 Overview 混合口径：老行按波估算）。"""
     out = {}
     for cur in _CURRENCIES:
         stmt = select(func.coalesce(func.sum(-BillingLedger.amount), 0)).where(
@@ -87,8 +89,19 @@ async def _consumption(session, since: datetime | None = None) -> dict[str, int]
         )
         if since is not None:
             stmt = stmt.where(BillingLedger.created_at >= since)
+        if legacy_only:
+            stmt = stmt.where(BillingLedger.cost_yuan.is_(None))
         out[cur] = (await session.execute(stmt)).scalar_one()
     return out
+
+
+async def _real_cost(session, since: datetime | None = None) -> float:
+    """新流水真实成本求和（V1.1.0 起 cost_yuan 非空的"发票"行）"""
+    stmt = select(func.coalesce(func.sum(BillingLedger.cost_yuan), 0.0)).where(
+        BillingLedger.cost_yuan.isnot(None))
+    if since is not None:
+        stmt = stmt.where(BillingLedger.created_at >= since)
+    return float((await session.execute(stmt)).scalar_one())
 
 
 # ===== 看板统计 =====
@@ -151,10 +164,16 @@ async def get_overview(active_tasks: int = 0) -> dict:
     status_counts: dict[str, int] = {}
     for s, _, _ in all_rows:
         status_counts[s] = status_counts.get(s, 0) + 1
-    cost_today = _est_cost(consumed_today["minute"], consumed_today["quantum"],
-                           consumed_today["gravity"])
-    cost_total = _est_cost(consumed_total["minute"], consumed_total["quantum"],
-                           consumed_total["gravity"])
+    # V1.1.0 混合口径：成本 = 新流水真实 cost_yuan 求和 + 老流水按波估算（渐进真实化）
+    async with async_session() as session:
+        legacy_today = await _consumption(session, today_start, legacy_only=True)
+        legacy_total = await _consumption(session, legacy_only=True)
+        cost_today = round(await _real_cost(session, today_start)
+                           + _est_cost(legacy_today["minute"], legacy_today["quantum"],
+                                       legacy_today["gravity"]), 2)
+        cost_total = round(await _real_cost(session)
+                           + _est_cost(legacy_total["minute"], legacy_total["quantum"],
+                                       legacy_total["gravity"]), 2)
     return {
         "users_total": users_total,
         "users_today": users_today,
@@ -171,7 +190,7 @@ async def get_overview(active_tasks: int = 0) -> dict:
         "consumed_total": consumed_total,
         "cost_today": cost_today,
         "cost_total": cost_total,
-        "margin": round(revenue - cost_total, 2),   # 毛利 = 收入 - 估算成本（累计，估算口径）
+        "margin": round(revenue - cost_total, 2),   # 毛利 = 收入 - 成本（V1.1.0 起混合口径：新真实+老估算）
         "tier_distribution": tier_dist,
         "revenue": revenue,
         "revenue_today": revenue_today,
@@ -610,6 +629,20 @@ async def get_task_detail(task_id: str) -> dict | None:
             select(BillingLedger).where(BillingLedger.task_id == task_id)
             .order_by(BillingLedger.created_at.asc())
         )).scalars().all()
+    invoice = [r for r in ledger_rows if r.cost_yuan is not None]
+    cost_summary = {
+        "has_invoice": bool(invoice),
+        "total": round(sum(r.cost_yuan or 0 for r in invoice), 4),
+        "asr_minutes": sum(abs(r.amount or 0) for r in invoice if r.currency == "minute"),
+        "models": sorted({r.model for r in invoice if r.model}),
+        "prompt": sum(r.prompt_tokens or 0 for r in invoice),
+        "completion": sum(r.completion_tokens or 0 for r in invoice),
+        "hit_rate": None,
+    }
+    hit = sum(r.cache_hit_tokens or 0 for r in invoice)
+    miss = sum(r.cache_miss_tokens or 0 for r in invoice)
+    if hit + miss:
+        cost_summary["hit_rate"] = round(hit / (hit + miss) * 100, 1)
     return {
         "task_id": rec.task_id,
         "owner_uid": rec.owner_uid,
@@ -617,6 +650,15 @@ async def get_task_detail(task_id: str) -> dict | None:
         "source_platform": rec.source_platform,
         "status": rec.status,
         "created_at": _iso_utc(rec.created_at),
+        "cost_summary": cost_summary,
+        # V1.1.0 持久化统计字段（runtime 卡 DB 数据源；NULL 时路由层回落内存）
+        "persisted": {
+            "actual_chars": rec.actual_chars,
+            "actual_seg_tokens": rec.actual_seg_tokens,
+            "subtitle_source": rec.subtitle_source,
+            "md_status": rec.md_status,
+            "summary_status": rec.summary_status,
+        },
         "ledger": [
             {
                 "feature": r.feature,
@@ -627,6 +669,17 @@ async def get_task_detail(task_id: str) -> dict | None:
                 "from_perm": r.from_perm,
                 "note": r.note,
                 "created_at": _iso_utc(r.created_at),
+                # V1.1.0 发票列（账单明细用；老行为 None）
+                "model": r.model,
+                "prompt_tokens": r.prompt_tokens,
+                "completion_tokens": r.completion_tokens,
+                "cache_hit_tokens": r.cache_hit_tokens,
+                "cache_miss_tokens": r.cache_miss_tokens,
+                "cost_yuan": r.cost_yuan,
+                "price_input": r.price_input,
+                "price_output": r.price_output,
+                "price_cache_hit": r.price_cache_hit,
+                "price_per_hour": r.price_per_hour,
             }
             for r in ledger_rows
         ],
@@ -661,4 +714,84 @@ async def get_anon_usage_today() -> dict:
         "ips": rows[0] or 0,
         "minutes": rows[1] or 0,
         "limit": limit,
+    }
+
+
+# ===== 分模型成本统计（V1.1.0：结算时写入的真实成本，发票原则）=====
+
+async def cost_stats(days: int | None) -> dict:
+    """成本 Tab 数据源：总览卡 + 分模型明细 + 按天×模型趋势。
+    口径：cost_yuan 非 NULL 的流水（V1.1.0 起的新时代数据；老流水不在此统计）。"""
+    since = None
+    if days:
+        # naive UTC（与 created_at 存储形式一致；aware 直接比会报错）
+        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    async with async_session() as session:
+        stmt = select(
+            BillingLedger.model, BillingLedger.currency, BillingLedger.feature,
+            BillingLedger.prompt_tokens, BillingLedger.completion_tokens,
+            BillingLedger.cache_hit_tokens, BillingLedger.cache_miss_tokens,
+            BillingLedger.cost_yuan, BillingLedger.amount, BillingLedger.created_at,
+        ).where(BillingLedger.cost_yuan.isnot(None))
+        if since:
+            stmt = stmt.where(BillingLedger.created_at >= since)
+        rows = (await session.execute(stmt)).all()
+
+    per_model: dict[str, dict] = {}
+    trend: dict[str, dict[str, float]] = {}
+    tot = {"cost": 0.0, "prompt": 0, "completion": 0, "hit": 0, "miss": 0}
+    for (model, currency, feature, pt, ct, hit, miss, cost_yuan, amount, created_at) in rows:
+        name = model or "unknown"
+        m = per_model.setdefault(name, {
+            "model": name, "prompt": 0, "completion": 0, "cache_hit": 0,
+            "cache_miss": 0, "minutes": 0, "cost": 0.0,
+        })
+        m["prompt"] += pt or 0
+        m["completion"] += ct or 0
+        m["cache_hit"] += hit or 0
+        m["cache_miss"] += miss or 0
+        if currency == "minute":
+            m["minutes"] += abs(amount or 0)
+        m["cost"] += cost_yuan or 0
+        tot["prompt"] += pt or 0
+        tot["completion"] += ct or 0
+        tot["hit"] += hit or 0
+        tot["miss"] += miss or 0
+        tot["cost"] += cost_yuan or 0
+        # 趋势：按天 × 模型
+        day = created_at.strftime("%m-%d") if created_at else "?"
+        trend.setdefault(day, {})[name] = round(
+            trend.setdefault(day, {}).get(name, 0) + (cost_yuan or 0), 6)
+
+    for m in per_model.values():
+        denom = m["cache_hit"] + m["cache_miss"]
+        m["hit_rate"] = round(m["cache_hit"] / denom * 100, 1) if denom else None
+        m["cost"] = round(m["cost"], 4)
+    overall_rate = round(tot["hit"] / (tot["hit"] + tot["miss"]) * 100, 1) \
+        if (tot["hit"] + tot["miss"]) else None
+
+    # 历史估算（V1.1.0 前老行，cost_yuan IS NULL；与 Overview 老行同费率口径，两界面对账一致）
+    async with async_session() as session:
+        legacy = {"minutes": 0, "quantum": 0, "gravity": 0}
+        for cur in ("minute", "quantum", "gravity"):
+            stmt = select(func.coalesce(func.sum(-BillingLedger.amount), 0)).where(
+                BillingLedger.currency == cur, BillingLedger.amount < 0,
+                BillingLedger.cost_yuan.is_(None))
+            if since:
+                stmt = stmt.where(BillingLedger.created_at >= since)
+            legacy[{"minute": "minutes"}.get(cur, cur)] = (await session.execute(stmt)).scalar_one()
+        legacy["cost"] = round(
+            legacy["minutes"] * COST_PER_MINUTE + legacy["quantum"] * COST_PER_QUANTUM
+            + legacy["gravity"] * COST_PER_GRAVITY, 2)
+
+    return {
+        "cards": {
+            "total_cost": round(tot["cost"], 4),
+            "prompt_tokens": tot["prompt"],
+            "completion_tokens": tot["completion"],
+            "overall_hit_rate": overall_rate,
+        },
+        "per_model": sorted(per_model.values(), key=lambda x: -x["cost"]),
+        "trend": [{"date": d, **v} for d, v in sorted(trend.items())],
+        "legacy": legacy,
     }

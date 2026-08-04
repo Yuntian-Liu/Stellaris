@@ -32,6 +32,7 @@ import { RETENTION_TEXT } from '../utils/tier'
 import { COPY_FOOTER, FILE_FOOTER_MD } from '../utils/copyright'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
@@ -759,7 +760,31 @@ export const MD_COMPONENTS = {
       borderRadius: 8, fontSize: 13, lineHeight: 1.7,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       overflowX: 'auto', margin: '0 0 10px',
+      border: '1px solid var(--hairline)',
     }} {...props} />
+  ),
+  // 表格（remark-gfm 解析；窄面板下横滑，PC/移动端通吃，碳碳定稿）
+  table: ({node, ...props}) => (
+    <div style={{ overflowX: 'auto', margin: '0 0 10px' }}>
+      <table style={{
+        borderCollapse: 'collapse', fontSize: 13, minWidth: '50%',
+      }} {...props} />
+    </div>
+  ),
+  th: ({node, style, ...props}) => (
+    // 样式必须合并：GFM 对齐标记（:---）会让 react-markdown 传入自己的
+    // style(textAlign)，直接 {...props} 展开会整个覆盖自定义样式（V1.0.5 踩坑）
+    <th {...props} style={{
+      border: '1px solid #c7d2fe', padding: '6px 12px',
+      background: 'var(--accent-light)', fontWeight: 600, color: 'var(--accent)',
+      textAlign: 'left', whiteSpace: 'nowrap', ...style,
+    }} />
+  ),
+  td: ({node, style, ...props}) => (
+    <td {...props} style={{
+      border: '1px solid #c7d2fe', padding: '6px 12px',
+      color: 'var(--body)', lineHeight: 1.6, ...style,
+    }} />
   ),
 }
 
@@ -1027,7 +1052,7 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
           WebkitMaskImage: expanded ? 'none' : 'linear-gradient(to bottom, black 80px, transparent 120px)',
         }}
       >
-        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(content)}</ReactMarkdown>
+        <ReactMarkdown components={MD_COMPONENTS} remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>{normalizeLatex(content)}</ReactMarkdown>
       </div>
 
       {/* 折叠态下若溢出，底部显示"展开"提示 */}
