@@ -52,7 +52,7 @@ function getActiveLabel(status) {
   return map[status] || '准备中'
 }
 
-export default function ProgressPage({ taskId, onComplete, onBack }) {
+export default function ProgressPage({ taskId, onComplete, onBack, onBackGuarded }) {
   const [status, setStatus] = useState(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
@@ -204,12 +204,12 @@ export default function ProgressPage({ taskId, onComplete, onBack }) {
           </div>
         )}
 
-        {/* 操作按钮 */}
+        {/* 操作按钮（提取中点返回先弹确认，与点品牌标题对称；出错态直接离开） */}
         <div style={{ marginTop: 28, textAlign: 'center' }}>
           <Space>
             <Button
               icon={<ArrowLeftOutlined />}
-              onClick={onBack}
+              onClick={() => (error ? onBack() : onBackGuarded())}
               style={{ borderRadius: 'var(--r-btn)', height: 36 }}
             >
               返回

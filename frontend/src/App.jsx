@@ -419,6 +419,7 @@ export default function App() {
             taskId={taskId}
             onComplete={handleComplete}
             onBack={handleBack}
+            onBackGuarded={() => setLeaveConfirm(true)}
           />
         )}
         {page === 'result' && taskData && (
