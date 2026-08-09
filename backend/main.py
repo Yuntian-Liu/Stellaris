@@ -52,7 +52,7 @@ from database import init_db, get_db
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, get_current_user_optional, get_admin_user
 from auth.models import User
-from auth.utils import decode_access_token, get_client_ip   # get_client_ip: P1-12 X-Forwarded-For 拿真实 IP
+from auth.utils import decode_access_token, get_client_ip, check_estimate_rate   # get_client_ip: P1-12 X-Forwarded-For 拿真实 IP
 from stats_store import incr_stats, get_stats
 from billing_store import (
     BILLING_TIERS, TIER_DISPLAY, QUANTUM_PER_TOKEN_UNIT, round_tokens,
@@ -130,6 +130,10 @@ async def _cleanup_expired_tasks() -> list[str]:
     for task_dir in TMP_DIR.iterdir():
         if not task_dir.is_dir():
             continue
+        # 只清任务目录（stellaris-{hex}）：TMP_DIR 默认是项目根 tmp/，同时存放协作文档、
+        # 实验脚本等人类文件——2026-08-10 实测 collab 文档夹险被当过期任务吃掉，必须按名过滤
+        if not task_dir.name.startswith("stellaris-"):
+            continue
         try:
             dirs.append((task_dir.name, task_dir.stat().st_mtime))
         except OSError:
@@ -169,7 +173,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.1.1-bellatrix",
+    version="1.1.2-bellatrix",
     lifespan=lifespan,
 )
 
@@ -223,8 +227,8 @@ app.include_router(auth_router)
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """健康检查"""
-    return HealthResponse()
+    """健康检查（版本号跟随 app.version，SOP 只需同步 main.py 一处）"""
+    return HealthResponse(version=app.version)
 
 
 @app.get("/api/config")
@@ -256,6 +260,9 @@ async def estimate_cost(
     估算分钟 + 量子波消耗与当前余量，让用户确认后再提交（不扣费）。
     """
     import math
+    # V1.2.0：剪贴板自动探测使本接口可被前端主动触发，加 IP 限流防刷（10 次/分钟）
+    if not check_estimate_rate(get_client_ip(req)):
+        raise HTTPException(status_code=429, detail="操作太频繁，请稍后再试")
     try:
         info = await asyncio.to_thread(probe_bilibili_info, request.url, request.sessdata)
     except Exception as e:

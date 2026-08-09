@@ -117,6 +117,25 @@ def check_send_code_rate(ip: str) -> bool:
     return True
 
 
+# ===== estimate rate limit（V1.2.0：剪贴板自动探测把 estimate 从手动触发变为前端主动触发，
+# IP 每分钟 10 次——真人一分钟复制不了几个链接，5 次恐误伤 NAT 同 IP，10 为平衡；碳碳拍板）=====
+_estimate_rate: dict[str, list[float]] = {}
+ESTIMATE_RATE_WINDOW_SEC = 60
+ESTIMATE_RATE_MAX = 10
+
+
+def check_estimate_rate(ip: str) -> bool:
+    """预估接口 IP 限流：返回 True 允许，False 超限。进程重启清空。"""
+    now = time.time()
+    arr = [t for t in _estimate_rate.get(ip, []) if now - t < ESTIMATE_RATE_WINDOW_SEC]
+    if len(arr) >= ESTIMATE_RATE_MAX:
+        _estimate_rate[ip] = arr
+        return False
+    arr.append(now)
+    _estimate_rate[ip] = arr
+    return True
+
+
 # ===== login rate limit（密码登录 IP 每分钟 10 次，P0-4 防暴力撞密码）=====
 _login_rate: dict[str, list[float]] = {}
 LOGIN_RATE_WINDOW_SEC = 60

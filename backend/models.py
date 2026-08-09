@@ -109,9 +109,9 @@ class ChatRequest(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """健康检查响应"""
+    """健康检查响应（version 由 main.py health_check 传入 app.version，此默认值仅为兜底）"""
     status: str = "ok"
-    version: str = "V0.12.2 Spica"
+    version: str = "unknown"
 
 
 # ===== 反馈工单（V0.9.4）=====

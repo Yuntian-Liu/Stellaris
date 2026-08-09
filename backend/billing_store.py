@@ -610,9 +610,16 @@ async def check_and_consume_anon(ip: str, est_minutes: int) -> None:
     async with async_session() as session:
         row = await session.get(AnonUsage, ip)
         if row is None:
-            row = AnonUsage(ip=ip)
-            session.add(row)
-            await session.flush()
+            # 并发防护（同 _get_or_create 的踩坑 19 模式）：同 IP 并发提交时两个请求
+            # 同时"查到没有→都 INSERT"，第二个撞主键 500（Minimax 03 棒复查发现，
+            # Kimi 复现坐实）。SAVEPOINT 包住建行，撞约束回滚到存档点、读对方已建好的行。
+            try:
+                async with session.begin_nested():
+                    row = AnonUsage(ip=ip)
+                    session.add(row)
+                    await session.flush()
+            except IntegrityError:
+                row = await session.get(AnonUsage, ip)
         if row.day_key != day_key:
             row.minutes_day = 0
             row.day_key = day_key

@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.1.1 Bellatrix'
+export const APP_VERSION = 'V1.1.2 Bellatrix'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-08-05'
+export const AGREEMENT_VERSION = '2026-08-10'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -34,6 +34,15 @@ export const CHANGELOG = [
       '协议更新：AI 模型与厂商可能基于成本与服务质量动态调整（始终为境内服务商，数据用途不变）',
     ],
     patches: [
+      {
+        version: 'V1.1.2', date: '2026-08-10',
+        items: [
+          '复制视频链接后回到本站，会自动识别并弹出预估确认卡——从复制到开始提取，一步直达（Chrome/Edge 自动识别，其他浏览器可在页面空白处直接粘贴触发）',
+          '按钮文案更名实相符：第一步改为「查看视频信息」，确认预估后再「确认并开始提取」；取消预估时自动清空链接输入框',
+          '服务端加固：预估接口限流防刷、匿名额度并发保护、健康检查版本号修正、临时文件清理规则收紧',
+          '隐私政策更新：新增剪贴板链接识别记录的本地存储说明（仅存于你的浏览器、不会上传，可随时清除）',
+        ],
+      },
       {
         version: 'V1.1.1', date: '2026-08-07',
         items: [

@@ -2,22 +2,24 @@
  * 页面 1：输入页 — Starlight 设计系统
  *
  * 两段式提交流程（成本透明化）：
- *   A. 输入链接 → 点击「开始提取」先调 /api/estimate 拉取元数据
- *   B. 展示预估确认卡（时长 / 预计字数 / 预计 tokens）→ 用户确认后才真正提交
+ *   A. 输入链接 → 点击「查看视频信息」先调 /api/estimate 拉取元数据
+ *   B. 展示预估确认卡（时长 / 预计字数 / 预计 tokens）→ 用户点「确认并开始提取」才真正提交
  *
  * 视觉方向：Apple 式克制留白 + OpenAI 式简洁层级，零装饰渐变
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Input, Button, Upload, Typography,
-  Collapse, Tag, Tooltip,
+  Collapse, Tag, Tooltip, Modal,
 } from 'antd'
 import {
   LinkOutlined, UploadOutlined, RocketOutlined,
   InfoCircleOutlined, ClockCircleOutlined,
   FileTextOutlined, ThunderboltOutlined, CloseOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
+import useClipboardLink from '../hooks/useClipboardLink'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Text } = Typography
@@ -36,6 +38,14 @@ function formatDuration(sec) {
 /** 千分位格式化 */
 function formatNumber(n) {
   return n.toLocaleString('en-US')
+}
+
+/** 链接中间省略：保头尾（头看平台、尾看 BV 号/参数），完整链接由 Tooltip 兜底 */
+function middleEllipsis(u, max = 44) {
+  if (!u || u.length <= max) return u
+  const head = Math.ceil(max * 0.6)
+  const tail = max - head - 1
+  return `${u.slice(0, head)}…${u.slice(-tail)}`
 }
 
 /** 观星小诗（与结果页同款，每次访问随机一句） */
@@ -58,6 +68,52 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   const [skipSegment, setSkipSegment] = useState(false)  // 降级：跳过智能分段（量子波不足时可选）
   const [error, setError] = useState(null)
   const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
+
+  // ── 剪贴板链接自动检测（V1.2.0；定稿 tmp/collab/clipboard-autofill/05_kimi.md）──
+  // 切回页面时若剪贴板里有新的视频链接 → 弹窗（询问 + 预估）。候选人出现即探测，
+  // 12s 硬超时；失败就地换一行小字。任何表态（提取/不了/×/遮罩/失败关闭）都记名单。
+  const [clipProbe, setClipProbe] = useState(null)   // { status: 'loading'|'ready'|'failed', data }
+  const { candidate, resolveCandidate } = useClipboardLink(
+    () => !url.trim() && !estimating && !submitting
+  )
+
+  // 弹窗打开即探测（sessdata 不进弹窗；探测零成本只读元数据）
+  useEffect(() => {
+    if (!candidate) { setClipProbe(null); return }
+    let cancelled = false
+    setClipProbe({ status: 'loading', data: null })
+    let rejectTimeout
+    const timeout = new Promise((_, reject) => { rejectTimeout = reject })
+    const timer = setTimeout(() => rejectTimeout(new Error('clip probe timeout')), 12000)
+    Promise.race([api.estimate(candidate.url, ''), timeout])
+      .then((data) => { if (!cancelled) setClipProbe({ status: 'ready', data }) })
+      .catch(() => { if (!cancelled) setClipProbe({ status: 'failed', data: null }) })
+    return () => { cancelled = true; clearTimeout(timer) }   // 清理 timer 残留（小克 09 棒 nit）
+  }, [candidate])
+
+  // 弹窗内「开始提取」：已拿到预估，直接提交（不重复探测）
+  const handleClipConfirm = async () => {
+    const link = candidate?.url
+    if (!link || clipProbe?.status !== 'ready') return
+    resolveCandidate()                // 记名单（提取过不再弹）
+    setUrl(link)                      // 输入框同步显示，保持流程可见
+    setEstimateData(clipProbe.data)   // 预估卡同步呈现（后台流程一致）
+    setSubmitting(true)
+    setError(null)
+    try {
+      const res = await api.submit({
+        source: 'bilibili_url',
+        url: link,
+        sessdata: null,
+        est_minutes: clipProbe.data?.est_minutes ?? null,
+        skip_segment: false,
+      })
+      onSubmit(res)
+    } catch (e) {
+      setError(e.message || '提交失败，请稍后重试')
+      setSubmitting(false)
+    }
+  }
 
   // 第一步：拉取成本预估
   const handleEstimate = async () => {
@@ -93,9 +149,11 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     }
   }
 
-  // 取消确认，回到输入态
+  // 取消确认，回到输入态（顺带清空链接框——取消=放弃这条链接，不留残值）
   const handleCancelEstimate = () => {
     setEstimateData(null)
+    setUrl('')
+    if (skipSegment) setSkipSegment(false)
     setError(null)
   }
 
@@ -524,7 +582,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
               disabled={!url.trim() || submitting}
               block
             >
-              {estimating ? '正在解析视频信息...' : '开始提取字幕'}
+              {estimating ? '正在解析视频信息...' : '查看视频信息'}
             </Button>
           )}
 
@@ -586,6 +644,115 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
           Stellaris · Made with care
         </Text>
       </div>
+
+      {/* ── 剪贴板链接检测弹窗（信息层级：弹窗负责"问"，预估区负责"帮你决定"）── */}
+      <Modal
+        open={!!candidate}
+        onCancel={resolveCandidate}
+        footer={null}
+        width={400}
+        centered
+        title={<span className="font-display">提取刚复制的视频链接？</span>}
+      >
+        {candidate && (
+          <>
+            {/* 识别到的链接（中间省略保头尾；悬停/点按 Tooltip 看完整链接） */}
+            <Tooltip title={candidate.url} placement="bottom">
+              <div className="font-mono" style={{
+                fontSize: 12,
+                color: 'var(--mute)',
+                background: 'var(--surface-2)',
+                borderRadius: 6,
+                padding: '6px 10px',
+                marginBottom: 14,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {middleEllipsis(candidate.url)}
+              </div>
+            </Tooltip>
+
+            {/* 内容区三态：loading / ready / failed */}
+            {clipProbe?.status === 'loading' && (
+              <div className="font-caption" style={{
+                fontSize: 13, padding: '18px 0', textAlign: 'center', color: 'var(--mute)',
+              }}>
+                <LoadingOutlined style={{ marginRight: 8, color: 'var(--accent)' }} />
+                正在读取视频信息…
+              </div>
+            )}
+
+            {clipProbe?.status === 'failed' && (
+              <div className="font-caption" style={{
+                fontSize: 13, padding: '12px 0 16px', color: 'var(--mute)', lineHeight: 1.7,
+              }}>
+                读取视频信息失败，可关闭后手动粘贴重试。
+              </div>
+            )}
+
+            {clipProbe?.status === 'ready' && clipProbe.data && (
+              <div style={{
+                background: 'var(--surface-2)',
+                border: '1px solid var(--hairline)',
+                borderRadius: 'var(--r-card)',
+                padding: '14px 16px 12px',
+                marginBottom: 4,
+              }}>
+                <div style={{
+                  fontSize: 14, fontWeight: 500, color: 'var(--ink)', lineHeight: 1.5,
+                  marginBottom: 10, overflow: 'hidden', display: '-webkit-box',
+                  WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                }}>
+                  {clipProbe.data.title}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <EstimateRow
+                    icon={<ClockCircleOutlined />}
+                    label="视频时长"
+                    value={formatDuration(clipProbe.data.duration_sec)}
+                  />
+                  <EstimateRow
+                    icon={<FileTextOutlined />}
+                    label="预计转写字数"
+                    value={`约 ${formatNumber(clipProbe.data.est_char_count)} 字`}
+                  />
+                  <EstimateRow
+                    icon={<ThunderboltOutlined />}
+                    label="智能整理预计消耗"
+                    value={`约 ${formatNumber(clipProbe.data.est_llm_tokens)} tokens`}
+                    tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量"
+                  />
+                  <EstimateRow
+                    icon={<ClockCircleOutlined />}
+                    label="本次消耗"
+                    value={`${clipProbe.data.est_minutes} 分钟 + ${clipProbe.data.est_quantum} 量子波`}
+                    tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* 按钮行：failed 态只留关闭 */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <Button block onClick={resolveCandidate}>
+                {clipProbe?.status === 'failed' ? '关闭' : '不了'}
+              </Button>
+              {clipProbe?.status !== 'failed' && (
+                <Button
+                  block
+                  type="primary"
+                  disabled={clipProbe?.status !== 'ready'}
+                  onClick={handleClipConfirm}
+                  style={{ borderRadius: 'var(--r-btn)' }}
+                >
+                  确认并开始提取
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   )
 }
