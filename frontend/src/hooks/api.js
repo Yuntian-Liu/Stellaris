@@ -29,7 +29,7 @@ function readableDetail(detail) {
  * - 401:清 token + 派发 stellaris:unauthorized 事件(由 AuthContext/App 监听)
  * - !ok:抛 Error(detail)
  */
-async function request(path, { method = 'GET', body, headers, isForm = false } = {}) {
+async function request(path, { method = 'GET', body, headers, isForm = false, keepAuthOn401 = false } = {}) {
   const token = getToken()
   const finalHeaders = { ...(headers || {}) }
   if (token) finalHeaders.Authorization = `Bearer ${token}`
@@ -51,14 +51,21 @@ async function request(path, { method = 'GET', body, headers, isForm = false } =
   clientLog.add('api', `${method} ${path} ${res.status}`)
 
   if (res.status === 401) {
-    clearToken()
-    window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
+    // keepAuthOn401：文件柜专用密码错误也走 401，但不能因此清掉全局登录态
+    if (!keepAuthOn401) {
+      clearToken()
+      window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
+    }
     const err = await res.json().catch(() => ({}))
-    throw new Error(readableDetail(err.detail) || '登录已过期,请重新登录')
+    const e = new Error(readableDetail(err.detail) || '登录已过期,请重新登录')
+    e.status = 401
+    throw e
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(readableDetail(err.detail) || `请求失败 (${res.status})`)
+    const e = new Error(readableDetail(err.detail) || `请求失败 (${res.status})`)
+    e.status = res.status
+    throw e
   }
   return res.json()
 }
@@ -227,6 +234,20 @@ export const adminApi = {
   deleteModel: (id, pin) => request(`/api/admin/models/${id}/delete`, { method: 'POST', body: { pin } }),
   updatePricing: (id, payload) => request(`/api/admin/models/${id}/pricing`, { method: 'POST', body: payload }),
   costStats: (days) => request(`/api/admin/cost/stats${days ? `?days=${days}` : ''}`),
+  /* 文件柜（V1.1.3）：除 password/* 外都要 X-Vault-Password；401 不清全局登录态（keepAuthOn401） */
+  vaultPassStatus: () => request('/api/admin/vault/password/status'),
+  vaultSetPassword: (pin, newPassword) =>
+    request('/api/admin/vault/password', { method: 'POST', body: { pin, new_password: newPassword } }),
+  vaultList: (pass, prefix = '') =>
+    request(`/api/admin/vault?prefix=${encodeURIComponent(prefix)}`, { headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
+  vaultGet: (pass, path) =>
+    request(`/api/admin/vault/file?path=${encodeURIComponent(path)}`, { headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
+  vaultPut: (pass, payload) =>
+    request('/api/admin/vault/file', { method: 'PUT', body: payload, headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
+  vaultRename: (pass, payload) =>
+    request('/api/admin/vault/rename', { method: 'POST', body: payload, headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
+  vaultDelete: (pass, payload) =>
+    request('/api/admin/vault/delete', { method: 'POST', body: payload, headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
 }
 
 export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi }

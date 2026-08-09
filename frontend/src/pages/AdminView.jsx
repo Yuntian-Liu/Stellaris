@@ -3,26 +3,31 @@
  * 四板块（Tabs）：数据看板 / 用户管理 / 兑换码 / 订单核验
  * 数据全部走 adminApi（后端 get_admin_user 守卫，非 admin 403）
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
-  Empty, Tooltip, message, Radio, Collapse, Switch,
+  Empty, Tooltip, message, Radio, Collapse, Switch, Upload,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
   DownOutlined, UpOutlined, ClockCircleOutlined, DotChartOutlined,
   GlobalOutlined, SwapOutlined, GiftOutlined, ToolOutlined, DownloadOutlined,
-  CloudUploadOutlined,
+  CloudUploadOutlined, FolderOutlined, FolderAddOutlined, FileOutlined, InboxOutlined, LockOutlined,
 } from '@ant-design/icons'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, AreaChart, Area,
   XAxis, YAxis, Tooltip as ChartTooltip, CartesianGrid, Legend,
 } from 'recharts'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
+import rehypeKatex from 'rehype-katex'
 import { adminApi } from '../hooks/api'
 import TierBadge from '../components/TierBadge'
 import PinModal from '../components/PinModal'
 import TicketStatusStamp from '../components/TicketStatusStamp'
 import { tierMeta, GRANT_CONFIG } from '../utils/tier'
+import { MD_COMPONENTS, normalizeLatex } from './ResultPage'
 
 /** 千分位缩写（与 SettingsView 同口径） */
 function fmt(n) {
@@ -1671,6 +1676,600 @@ function SecurityPanel() {
   )
 }
 
+/* ───────── ⑪ 文件柜（V1.1.3 Dev Vault：管理员私人文档云柜）───────── */
+
+const VAULT_MAX_SIZE = 1024 * 1024   // 与后端 1MB 上限一致的前端预检
+
+/** 敏感文件名检测（镜像 backend/vault_store.py：.env / .envrc / .env.* / *.pem / *.key / id_rsa*，模板放行） */
+const SENSITIVE_ALLOW = new Set(['.env.example', '.env.sample', '.env.template'])
+function isSensitiveName(path) {
+  const name = path.split('/').pop().toLowerCase()
+  if (SENSITIVE_ALLOW.has(name)) return false
+  if (name === '.env' || name === '.envrc') return true
+  return name.startsWith('.env.') || name.endsWith('.pem') || name.endsWith('.key') || name.startsWith('id_rsa')
+}
+
+const fmtSize = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`)
+
+/** 文件夹名校验（镜像后端 path 段白名单 ^[\w.-]{1,64}$，Python \w 含中文；仅单级，不允许 /） */
+const FOLDER_NAME_RE = /^[一-鿿\w.-]{1,64}$/
+function folderNameError(name) {
+  if (!name) return null   // 空不提示，由按钮禁用兜底
+  if (name.includes('/')) return '只支持单级文件夹，名称不能包含 /'
+  if (name === '..') return '文件夹名不允许为 ..'
+  if (!FOLDER_NAME_RE.test(name)) return '仅允许中英文、数字、. _ -（≤64 字符）'
+  return null
+}
+
+/** 专用密码强度提示（≥8 位 + 大小写字母 + 数字 + 符号） */
+const PASS_RULES = [
+  { key: 'len', label: '至少 8 位', test: (p) => p.length >= 8 },
+  { key: 'case', label: '含大小写字母', test: (p) => /[a-z]/.test(p) && /[A-Z]/.test(p) },
+  { key: 'digit', label: '含数字', test: (p) => /\d/.test(p) },
+  { key: 'symbol', label: '含符号', test: (p) => /[^A-Za-z0-9]/.test(p) },
+]
+
+function PassRules({ value }) {
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {PASS_RULES.map((r) => {
+        const ok = r.test(value)
+        return (
+          <span key={r.key} style={{ fontSize: 12, color: ok ? '#16a34a' : 'var(--mute)' }}>
+            {ok ? '✓' : '○'} {r.label}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function VaultPanel() {
+  const { requirePin, pinModal } = usePinFlow()
+  const [stage, setStage] = useState('loading')   // loading | set | unlock | main
+  const [passInput, setPassInput] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [prefix, setPrefix] = useState('')
+  const [listing, setListing] = useState(null)    // {folders, files}
+  const [viewing, setViewing] = useState(null)    // {path, content, size, updated_at}
+  const [mdMode, setMdMode] = useState('render')
+  const [renameFor, setRenameFor] = useState(null)
+  const [renameTo, setRenameTo] = useState('')
+  const [changePassOpen, setChangePassOpen] = useState(false)
+  const [mkdirOpen, setMkdirOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [freshFolder, setFreshFolder] = useState(null)   // 刚"新建"进入的虚拟文件夹路径（空态提示用）
+  const uploadBatchRef = useRef([])
+
+  const passRef = useRef('')   // 专用密码只活在本组件内存：切 Tab 不丢（面板保持挂载），退后台/刷新即清
+  const curPass = () => passRef.current
+
+  /** 统一 vault 调用：401 = 专用密码失效/错误 → 清内存回密码闸（不碰全局登录态） */
+  const vaultCall = useCallback(async (fn) => {
+    try {
+      return await fn()
+    } catch (e) {
+      if (e.status === 401) {
+        passRef.current = ''
+        setListing(null)
+        setViewing(null)
+        setStage('unlock')
+        message.error('密码错误，请重新输入')
+        e.vaultRelogin = true   // 调用方据此跳过重复报错
+      }
+      throw e
+    }
+  }, [])
+
+  const load = useCallback(async (p) => {
+    try {
+      const r = await vaultCall(() => adminApi.vaultList(curPass(), p ?? prefix))
+      setListing(r)
+      setPrefix(r.prefix)
+    } catch (e) {
+      if (!e.vaultRelogin) message.error(e.message)
+    }
+  }, [prefix, vaultCall])
+
+  /** 进 Tab：查密码状态；密码只存内存（面板首次挂载即到输入框，切 Tab 保活不重输） */
+  useEffect(() => {
+    let alive = true
+    adminApi.vaultPassStatus()
+      .then(async ({ set }) => {
+        if (!alive) return
+        if (!set) { setStage('set'); return }
+        if (!passRef.current) { setStage('unlock'); return }
+        try {
+          const r = await vaultCall(() => adminApi.vaultList(passRef.current, ''))
+          if (!alive) return
+          setListing(r)
+          setPrefix(r.prefix)
+          setStage('main')
+        } catch {
+          /* vaultCall 已处理 401；其他错误（限流等）回密码输入框重试 */
+          if (alive) setStage('unlock')
+        }
+      })
+      .catch((e) => { if (alive) { message.error(e.message); setStage('unlock') } })
+    return () => { alive = false }
+  }, [vaultCall])
+
+  const tryUnlock = async () => {
+    if (!passInput) return
+    setChecking(true)
+    try {
+      const r = await vaultCall(() => adminApi.vaultList(passInput, ''))
+      passRef.current = passInput
+      setPassInput('')
+      setListing(r)
+      setPrefix(r.prefix)
+      setStage('main')
+    } catch (e) {
+      if (!e.vaultRelogin) message.error(e.message)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  /** 设置/修改专用密码（管理 PIN 确认 = 忘记密码的重置入口）；成功后清内存强制用新密码重进 */
+  const submitNewPass = () => {
+    if (!PASS_RULES.every((r) => r.test(newPass))) { message.warning('密码未达到强度要求'); return }
+    requirePin(async (pin) => {
+      await adminApi.vaultSetPassword(pin, newPass)
+      passRef.current = ''
+      setNewPass('')
+      setChangePassOpen(false)
+      setListing(null)
+      setViewing(null)
+      setStage('unlock')
+      message.success('专用密码已设置，请用新密码进入')
+    })
+  }
+
+  /* ── 上传（Dragger 多选/拖拽，beforeUpload 收批后自走 vaultPut）── */
+
+  const beforeUpload = (file, fileList) => {
+    uploadBatchRef.current.push(file)
+    if (uploadBatchRef.current.length >= fileList.length) {
+      const batch = uploadBatchRef.current
+      uploadBatchRef.current = []
+      handleUploadBatch(batch)
+    }
+    return false   // 阻止 antd 自动上传
+  }
+
+  const handleUploadBatch = (files) => {
+    const ok = []
+    for (const f of files) {
+      if (f.size > VAULT_MAX_SIZE) message.error(`${f.name} 超过 1MB，已跳过`)
+      else ok.push(f)
+    }
+    if (!ok.length) return
+    const run = (allowSensitive) => requirePin(async (pin) => {
+      let failed = 0
+      for (const f of ok) {
+        const path = prefix ? `${prefix}/${f.name}` : f.name
+        try {
+          const content = await f.text()
+          await vaultCall(() => adminApi.vaultPut(curPass(), { path, content, allow_sensitive: allowSensitive, pin }))
+        } catch (e) {
+          failed += 1
+          if (e.vaultRelogin) break   // 密码已失效，后续文件无意义
+          message.error(`${f.name} 上传失败：${e.message}`)
+        }
+      }
+      if (!failed) message.success(`已上传 ${ok.length} 个文件`)
+      else if (failed < ok.length) message.warning(`完成，${failed} 个失败`)
+      load()
+    })
+    const sensitive = ok.filter((f) => isSensitiveName(f.name))
+    if (sensitive.length) {
+      Modal.confirm({
+        centered: true,
+        title: '检测到敏感文件，确认上传？',
+        content: (
+          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+            以下文件名命中敏感规则（环境变量 / 私钥类）：
+            <div className="font-mono" style={{
+              marginTop: 6, padding: '6px 10px', fontSize: 12,
+              background: 'var(--surface-2)', borderRadius: 'var(--r-input)',
+            }}>
+              {sensitive.map((f) => <div key={f.name}>{f.name}</div>)}
+            </div>
+          </div>
+        ),
+        okText: '确认上传',
+        cancelText: '取消',
+        onOk: () => run(true),
+      })
+    } else {
+      run(false)
+    }
+  }
+
+  /* ── 查看 / 下载 / 重命名 / 删除 ── */
+
+  const openFile = async (path) => {
+    try {
+      const r = await vaultCall(() => adminApi.vaultGet(curPass(), path))
+      setViewing(r)
+      setMdMode('render')
+    } catch (e) {
+      if (!e.vaultRelogin) message.error(e.message)
+    }
+  }
+
+  const downloadFile = async (path) => {
+    try {
+      const r = await vaultCall(() => adminApi.vaultGet(curPass(), path))
+      const url = URL.createObjectURL(new Blob([r.content], { type: 'text/plain;charset=utf-8' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = path.split('/').pop()   // 文件名单段
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      if (!e.vaultRelogin) message.error(e.message)
+    }
+  }
+
+  const submitRename = () => {
+    const to = renameTo.trim().replace(/^\/+|\/+$/g, '')
+    if (!to || to === renameFor) { setRenameFor(null); return }
+    requirePin(async (pin) => {
+      await vaultCall(() => adminApi.vaultRename(curPass(), { from: renameFor, to, pin }))
+      message.success('已重命名')
+      setRenameFor(null)
+      load()
+    })
+  }
+
+  const removeFile = (path) => {
+    Modal.confirm({
+      centered: true,
+      title: '删除文件？',
+      content: `「${path}」删除后不可恢复。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => requirePin(async (pin) => {
+        await vaultCall(() => adminApi.vaultDelete(curPass(), { path, pin }))
+        message.success('已删除')
+        if (viewing?.path === path) setViewing(null)
+        load()
+      }),
+    })
+  }
+
+  /** 递归统计文件夹下文件数（后端 list 不递归，逐层统计给删除确认文案用） */
+  const countFiles = async (p) => {
+    const r = await vaultCall(() => adminApi.vaultList(curPass(), p))
+    let n = r.files.length
+    for (const f of r.folders) n += await countFiles(r.prefix ? `${r.prefix}/${f}` : f)
+    return n
+  }
+
+  const removeFolder = async (name) => {
+    const folderPath = prefix ? `${prefix}/${name}` : name
+    let countText = '其下全部文件'
+    try {
+      countText = `其下全部 ${await countFiles(folderPath)} 个文件`
+    } catch (e) {
+      if (e.vaultRelogin) return   // 已回密码闸
+    }
+    Modal.confirm({
+      centered: true,
+      title: `删除文件夹「${name}」？`,
+      content: `将删除${countText}，不可恢复。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => requirePin(async (pin) => {
+        await vaultCall(() => adminApi.vaultDelete(curPass(), { prefix: folderPath, pin }))
+        message.success('文件夹已删除')
+        load()
+      }),
+    })
+  }
+
+  /**
+   * 新建文件夹：虚拟机制（后端无文件夹实体）——纯前端导航进入新路径，
+   * 上传第一个文件后才真实存在；直接离开则自动消失（符合预期）。
+   */
+  const createFolder = () => {
+    const name = newFolderName.trim()
+    if (!name || folderNameError(name)) return
+    if (listing?.folders.includes(name)) { message.warning('当前目录已存在同名文件夹'); return }
+    const p = prefix ? `${prefix}/${name}` : name
+    setMkdirOpen(false)
+    setNewFolderName('')
+    setViewing(null)
+    setFreshFolder(p)
+    load(p)
+  }
+
+  /* ── 渲染 ── */
+
+  const changePassModal = (
+    <Modal
+      open={changePassOpen}
+      onCancel={() => { setChangePassOpen(false); setNewPass('') }}
+      onOk={submitNewPass}
+      okText="保存"
+      cancelText="取消"
+      width={380}
+      centered
+      title="设置新的专用密码"
+      okButtonProps={{ disabled: !PASS_RULES.every((r) => r.test(newPass)) }}
+    >
+      <div style={{ paddingTop: 8 }}>
+        <Input.Password
+          autoComplete="off"
+          placeholder="新专用密码"
+          value={newPass}
+          onChange={(e) => setNewPass(e.target.value)}
+        />
+        <PassRules value={newPass} />
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
+          保存需管理 PIN 确认；保存后需用新密码重新进入文件柜。
+        </div>
+      </div>
+    </Modal>
+  )
+
+  if (stage === 'loading') {
+    return <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--mute)', fontSize: 13 }}>加载中…</div>
+  }
+
+  if (stage === 'set' || stage === 'unlock') {
+    return (
+      <div style={{ maxWidth: 380, margin: '40px auto' }}>
+        <div className="card" style={{ padding: '22px 22px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <LockOutlined style={{ color: 'var(--accent)' }} />
+            <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)' }}>文件柜</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 16, lineHeight: 1.7 }}>
+            {stage === 'set'
+              ? '首次使用需设置文件柜专用密码（独立于登录密码，仅管理员自用）。'
+              : '输入文件柜专用密码进入。'}
+          </div>
+          {stage === 'unlock' ? (
+            <>
+              <Input.Password
+                autoComplete="off"
+                placeholder="文件柜专用密码"
+                value={passInput}
+                onChange={(e) => setPassInput(e.target.value)}
+                onPressEnter={tryUnlock}
+              />
+              <Button type="primary" block loading={checking} onClick={tryUnlock} style={{ marginTop: 12 }}>
+                进入文件柜
+              </Button>
+              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--mute)' }}>
+                忘记密码？
+                <a onClick={() => setChangePassOpen(true)} style={{ color: 'var(--accent)' }}>用管理 PIN 重置</a>
+              </div>
+            </>
+          ) : (
+            <>
+              <Input.Password
+                autoComplete="off"
+                placeholder="设置文件柜专用密码"
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+              />
+              <PassRules value={newPass} />
+              <Button
+                type="primary" block style={{ marginTop: 12 }}
+                disabled={!PASS_RULES.every((r) => r.test(newPass))}
+                onClick={submitNewPass}
+              >
+                设置并继续
+              </Button>
+            </>
+          )}
+        </div>
+        {changePassModal}
+        {pinModal}
+      </div>
+    )
+  }
+
+  /* 主界面 */
+  const crumbs = prefix ? prefix.split('/') : []
+  const isMd = viewing?.path?.toLowerCase().endsWith('.md')
+  const rowStyle = {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '8px 10px', borderBottom: '1px solid var(--hairline)',
+  }
+
+  return (
+    <div>
+      {/* 工具行：面包屑 + 刷新 + 改密码 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap' }}>
+          <span
+            onClick={() => { setViewing(null); load('') }}
+            style={{ cursor: 'pointer', fontWeight: 500, color: crumbs.length ? 'var(--accent)' : 'var(--ink)' }}
+          >文件柜</span>
+          {crumbs.map((seg, i) => {
+            const p = crumbs.slice(0, i + 1).join('/')
+            const last = i === crumbs.length - 1
+            return (
+              <span key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--mute)' }}>/</span>
+                <span
+                  onClick={() => { if (!last) { setViewing(null); load(p) } }}
+                  style={{ cursor: last ? 'default' : 'pointer', color: last ? 'var(--ink)' : 'var(--accent)', fontWeight: last ? 500 : 400 }}
+                >{seg}</span>
+              </span>
+            )
+          })}
+        </div>
+        <span style={{ flex: 1 }} />
+        <Button size="small" icon={<FolderAddOutlined />} onClick={() => setMkdirOpen(true)}>新建文件夹</Button>
+        <Button size="small" icon={<ReloadOutlined />} onClick={() => load()}>刷新</Button>
+        <Button size="small" type="text" onClick={() => setChangePassOpen(true)}>修改专用密码</Button>
+      </div>
+
+      {viewing ? (
+        /* 阅读区 */
+        <div className="card" style={{ padding: '14px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => setViewing(null)}>返回列表</Button>
+            <span className="font-mono" style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 500, wordBreak: 'break-all' }}>{viewing.path}</span>
+            <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>
+              {fmtSize(viewing.size)} · {fmtTime(viewing.updated_at)}
+            </span>
+            <span style={{ flex: 1 }} />
+            {isMd && (
+              <Radio.Group size="small" value={mdMode} onChange={(e) => setMdMode(e.target.value)}>
+                <Radio.Button value="render">渲染</Radio.Button>
+                <Radio.Button value="raw">原文</Radio.Button>
+              </Radio.Group>
+            )}
+            <Button size="small" icon={<DownloadOutlined />} onClick={() => downloadFile(viewing.path)}>下载</Button>
+          </div>
+          {isMd && mdMode === 'render' ? (
+            <div style={{ padding: '4px 2px' }}>
+              <ReactMarkdown
+                components={MD_COMPONENTS}
+                remarkPlugins={[remarkMath, remarkGfm]}
+                rehypePlugins={[rehypeKatex]}
+              >{normalizeLatex(viewing.content)}</ReactMarkdown>
+            </div>
+          ) : (
+            <pre className="font-mono" style={{
+              background: 'var(--surface-1)', padding: '10px 14px', borderRadius: 8,
+              fontSize: 13, lineHeight: 1.7, overflowX: 'auto', margin: 0,
+              border: '1px solid var(--hairline)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            }}>{viewing.content}</pre>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* 上传（多选 + 拖拽；批处理收齐后统一走敏感检测 + PIN） */}
+          <Upload.Dragger
+            multiple
+            fileList={[]}
+            showUploadList={false}
+            beforeUpload={beforeUpload}
+            style={{ marginBottom: 14 }}
+          >
+            <p style={{ margin: '6px 0' }}><InboxOutlined style={{ fontSize: 28, color: 'var(--accent)' }} /></p>
+            <p style={{ fontSize: 13, color: 'var(--ink)', margin: 0 }}>点击或拖拽文件到此处上传</p>
+            <p style={{ fontSize: 11, color: 'var(--mute)', margin: '4px 0 6px' }}>
+              支持多选 · 单文件 ≤ 1MB · 上传到当前目录{prefix ? `（${prefix}/）` : '（根目录）'}
+            </p>
+          </Upload.Dragger>
+
+          {/* 列表：文件夹 + 文件 */}
+          <div className="card" style={{ padding: '4px 8px' }}>
+            {!listing ? (
+              <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--mute)', fontSize: 12 }}>加载中…</div>
+            ) : (listing.folders.length + listing.files.length === 0) ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={freshFolder === prefix ? '这是一个新文件夹，上传第一个文件后即创建' : '空目录'}
+                style={{ padding: '20px 0' }}
+              />
+            ) : (
+              <>
+                {listing.folders.map((name) => (
+                  <div key={`d-${name}`} style={rowStyle}>
+                    <FolderOutlined style={{ color: 'var(--accent)', fontSize: 15 }} />
+                    <span
+                      onClick={() => { setViewing(null); load(prefix ? `${prefix}/${name}` : name) }}
+                      style={{ cursor: 'pointer', fontWeight: 500, color: 'var(--ink)', fontSize: 13, flex: 1, wordBreak: 'break-all' }}
+                    >{name}</span>
+                    <Button size="small" type="text" danger onClick={() => removeFolder(name)}>删除</Button>
+                  </div>
+                ))}
+                {listing.files.map((f) => (
+                  <div key={`f-${f.path}`} style={rowStyle}>
+                    <FileOutlined style={{ color: 'var(--mute)', fontSize: 14 }} />
+                    <span
+                      onClick={() => openFile(f.path)}
+                      style={{ cursor: 'pointer', color: 'var(--ink)', fontSize: 13, wordBreak: 'break-all' }}
+                    >{f.name}</span>
+                    <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>{fmtSize(f.size)}</span>
+                    <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>{fmtTimeShort(f.updated_at)}</span>
+                    <span style={{ flex: 1 }} />
+                    <Button size="small" type="text" onClick={() => openFile(f.path)}>查看</Button>
+                    <Button size="small" type="text" onClick={() => downloadFile(f.path)}>下载</Button>
+                    <Button size="small" type="text" onClick={() => { setRenameFor(f.path); setRenameTo(f.path) }}>重命名</Button>
+                    <Button size="small" type="text" danger onClick={() => removeFile(f.path)}>删除</Button>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* 重命名/移动弹窗（改文件夹段 = 移动） */}
+      <Modal
+        open={!!renameFor}
+        onCancel={() => setRenameFor(null)}
+        onOk={submitRename}
+        okText="确定"
+        cancelText="取消"
+        width={420}
+        centered
+        title="重命名 / 移动"
+      >
+        <div style={{ paddingTop: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 8, lineHeight: 1.7 }}>
+            修改路径中的文件夹部分即可移动文件；目标已存在同名文件会被拒绝。
+          </div>
+          <Input
+            className="font-mono"
+            value={renameTo}
+            onChange={(e) => setRenameTo(e.target.value)}
+            onPressEnter={submitRename}
+          />
+        </div>
+      </Modal>
+
+      {/* 新建文件夹弹窗（虚拟文件夹：确认即导航进入，上传首文件后才真实存在） */}
+      <Modal
+        open={mkdirOpen}
+        onCancel={() => { setMkdirOpen(false); setNewFolderName('') }}
+        onOk={createFolder}
+        okText="进入文件夹"
+        cancelText="取消"
+        width={380}
+        centered
+        title="新建文件夹"
+        okButtonProps={{ disabled: !newFolderName.trim() || !!folderNameError(newFolderName.trim()) }}
+      >
+        <div style={{ paddingTop: 8 }}>
+          <Input
+            placeholder="文件夹名（单级）"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onPressEnter={createFolder}
+            status={folderNameError(newFolderName.trim()) ? 'error' : ''}
+          />
+          {folderNameError(newFolderName.trim()) && (
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--error)' }}>
+              {folderNameError(newFolderName.trim())}
+            </div>
+          )}
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
+            创建于当前目录{prefix ? `（${prefix}/）` : '（根目录）'}；虚拟文件夹上传第一个文件后即真实存在。
+          </div>
+        </div>
+      </Modal>
+
+      {changePassModal}
+      {pinModal}
+    </div>
+  )
+}
+
 /* ───────── 主界面 ───────── */
 
 export default function AdminView({ onBack }) {
@@ -1699,6 +2298,7 @@ export default function AdminView({ onBack }) {
           ) },
           { key: 'codes', label: '兑换码', children: <CodesPanel /> },
           { key: 'data', label: '数据管理', children: <DataPanel /> },
+          { key: 'vault', label: '文件柜', children: <VaultPanel /> },
           { key: 'models', label: '模型', children: <ModelsPanel /> },
           { key: 'cost', label: '成本', children: <CostPanel /> },
           { key: 'security', label: '安全', children: <SecurityPanel /> },

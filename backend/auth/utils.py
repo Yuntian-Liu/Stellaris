@@ -136,6 +136,24 @@ def check_estimate_rate(ip: str) -> bool:
     return True
 
 
+# ===== vault rate limit（V1.1.3 文件柜：IP 每分钟 30 次；防 VAULT_TOKEN 泄露后被刷的纵深防御）=====
+_vault_rate: dict[str, list[float]] = {}
+VAULT_RATE_WINDOW_SEC = 60
+VAULT_RATE_MAX = 30
+
+
+def check_vault_rate(ip: str) -> bool:
+    """文件柜接口 IP 限流：返回 True 允许，False 超限。进程重启清空。"""
+    now = time.time()
+    arr = [t for t in _vault_rate.get(ip, []) if now - t < VAULT_RATE_WINDOW_SEC]
+    if len(arr) >= VAULT_RATE_MAX:
+        _vault_rate[ip] = arr
+        return False
+    arr.append(now)
+    _vault_rate[ip] = arr
+    return True
+
+
 # ===== login rate limit（密码登录 IP 每分钟 10 次，P0-4 防暴力撞密码）=====
 _login_rate: dict[str, list[float]] = {}
 LOGIN_RATE_WINDOW_SEC = 60

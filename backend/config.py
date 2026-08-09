@@ -119,6 +119,8 @@ COS_REGION = os.getenv("COS_REGION", "ap-singapore")
 COS_BACKUP_RETAIN_DAYS = int(os.getenv("COS_BACKUP_RETAIN_DAYS", "7"))  # 保留天数
 
 
+VAULT_TOKEN = os.getenv("VAULT_TOKEN", "")   # 文件柜 API 通道（Kimi curl 直传）；未配 → 通道整体关闭
+
 # ===== 爱发电（会员开通）=====
 # 店铺主页（会员卡"开通"按钮跳转；方案建好后换具体方案链接）
 AFDIAN_SHOP_URL = os.getenv("AFDIAN_SHOP_URL", "")

@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI):
     # 初始化数据库（建表）——分档清理依赖 task_records/user_billing，须先建表
     # 注意：model_store 必须先 import（注册 ModelConfig 到 Base.metadata），否则 create_all 不建 model_configs
     from model_store import seed_model_configs
+    import vault_store  # noqa: F401 踩坑 22 同规：先 import 注册 VaultFile 表，create_all 才会建 vault_files
     await init_db()
     print("[Stellaris] 数据库已就绪")
     # V1.1.0: 模型仓库 seed（表为空写预置）+ 活跃配置加载进同步缓存
@@ -173,7 +174,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.1.2-bellatrix",
+    version="1.1.3-bellatrix",
     lifespan=lifespan,
 )
 
@@ -1482,6 +1483,128 @@ async def admin_recheck_order(
         return await recheck_order(out_trade_no)
     except AdminError as e:
         raise HTTPException(status_code=502, detail=e.detail)
+
+
+# ===== 文件柜（V1.1.3 Dev Vault，管理员私人文档云柜）=====
+# 设计定稿 tmp/collab/dev-vault/02_kimi.md v5；安全根基：纯 DB 存储无文件系统概念 + path 逐段白名单
+
+from config import VAULT_TOKEN  # noqa: E402
+import secrets as _secrets      # noqa: E402
+from auth.utils import check_vault_rate  # noqa: E402
+from vault_store import (       # noqa: E402
+    VaultError, list_prefix, get_file, upsert_file, rename_file,
+    delete_path, delete_prefix, vault_password_set, set_vault_password,
+    verify_vault_password,
+)
+
+
+async def _vault_guard(req: Request, current_user: User | None) -> bool:
+    """文件柜统一守卫：限流 → VAULT_TOKEN 全权限通道 → admin + 专用密码逐次校验。
+    返回 True = 走的 token 全权限通道（无需登录态、跳过 PIN——token 本身就代表全权限）"""
+    if not check_vault_rate(get_client_ip(req)):
+        raise HTTPException(status_code=429, detail="操作太频繁，请稍后再试")
+    token = req.headers.get("X-Vault-Token", "")
+    if token and VAULT_TOKEN and _secrets.compare_digest(token, VAULT_TOKEN):
+        return True   # API 通道（Kimi curl 直传）= 全权限，保护级别最高：env only
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="无权限")
+    try:
+        await verify_vault_password(current_user.uid, req.headers.get("X-Vault-Password", ""))
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    return False
+
+
+@app.get("/api/admin/vault")
+async def admin_vault_list(req: Request, prefix: str = "",
+                           current_user: User | None = Depends(get_current_user_optional)):
+    """按前缀列目录（folders + files，不返 content）"""
+    await _vault_guard(req, current_user)
+    try:
+        return await list_prefix(prefix)
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.get("/api/admin/vault/file")
+async def admin_vault_get(req: Request, path: str = "",
+                          current_user: User | None = Depends(get_current_user_optional)):
+    """读取文件全文（JSON）"""
+    await _vault_guard(req, current_user)
+    try:
+        return await get_file(path)
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.put("/api/admin/vault/file")
+async def admin_vault_put(req: Request,
+                          current_user: User | None = Depends(get_current_user_optional)):
+    """上传/覆盖 {path, content, allow_sensitive?, pin}（同名即覆盖；敏感名需确认 flag）"""
+    body = await req.json()
+    via_token = await _vault_guard(req, current_user)
+    if not via_token:
+        await _check_admin_pin(current_user, body)
+    try:
+        return await upsert_file(
+            str(body.get("path", "")), str(body.get("content", "")),
+            current_user.uid if current_user else None, bool(body.get("allow_sensitive")),
+            via="token" if via_token else "admin",
+        )
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/admin/vault/rename")
+async def admin_vault_rename(req: Request,
+                             current_user: User | None = Depends(get_current_user_optional)):
+    """重命名/移动 {from, to, pin}（to 已存在 409）"""
+    body = await req.json()
+    via_token = await _vault_guard(req, current_user)
+    if not via_token:
+        await _check_admin_pin(current_user, body)
+    try:
+        return await rename_file(str(body.get("from", "")), str(body.get("to", "")),
+                                 current_user.uid if current_user else None)
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/admin/vault/delete")
+async def admin_vault_delete(req: Request,
+                             current_user: User | None = Depends(get_current_user_optional)):
+    """删除 {path} 单文件 或 {prefix} 整个文件夹；不存在幂等"""
+    body = await req.json()
+    via_token = await _vault_guard(req, current_user)
+    if not via_token:
+        await _check_admin_pin(current_user, body)
+    try:
+        if body.get("prefix"):
+            return {"deleted": await delete_prefix(str(body["prefix"]))}
+        await delete_path(str(body.get("path", "")))
+        return {"deleted": 1}
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.get("/api/admin/vault/password/status")
+async def admin_vault_pass_status(current_user: User = Depends(get_admin_user)):
+    """专用密码是否已设（进 Tab 判断弹设置还是输入；只返布尔）"""
+    return {"set": await vault_password_set(current_user.uid)}
+
+
+@app.post("/api/admin/vault/password")
+async def admin_vault_pass_set(req: Request, current_user: User = Depends(get_admin_user)):
+    """设置/修改专用密码 {pin, new_password}（仅 admin PIN 守卫 = 忘记时的重置入口）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    try:
+        await set_vault_password(current_user.uid, str(body.get("new_password", "")))
+        return {"ok": True}
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
 # ===== 管理后台：运营统计/工具 =====

@@ -18,7 +18,7 @@ from config import (
     IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY, TURNSTILE_SITE_KEY,
     RESEND_API_KEY, TMP_DIR, DATA_DIR,
     AFDIAN_USER_ID, AFDIAN_API_TOKEN, AFDIAN_SHOP_URL, AFDIAN_PLAN_MAP,
-    JWT_SECRET, COS_SECRET_ID,
+    JWT_SECRET, COS_SECRET_ID, VAULT_TOKEN,
 )
 from database import async_session
 from billing_store import UserBilling, BillingLedger, BILLING_TIERS
@@ -119,6 +119,8 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         # 备份与安全（V1.0.3 扩充：备份谜案/安全审查后补）
         "cos_backup_set": bool(COS_SECRET_ID),
         "jwt_secret_set": JWT_SECRET != "dev-secret-change-me",
+        # 文件柜（V1.1.3：只报布尔——token/密码本身永不导出；vault 内容/路径绝不进诊断包）
+        "vault_token_set": bool(VAULT_TOKEN),
     }
 
     # ── 备份状态（V1.0.3：上次备份结果，排查备份问题免上服务器）──
@@ -151,6 +153,7 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
                 select(AuthUser).where(AuthUser.uid == uid))).scalar_one_or_none()
             user_ctx["is_admin"] = bool(u and u.is_admin)
             user_ctx["admin_pin_set"] = bool(u and u.admin_pin_hash)  # 管理密码已设置（V0.9.0）
+            user_ctx["vault_pass_set"] = bool(u and u.vault_pass_hash)  # 文件柜专用密码已设置（V1.1.3）
             b = await session.get(UserBilling, uid)
             if b:
                 tier_key = await _effective_tier_key(session, b)
