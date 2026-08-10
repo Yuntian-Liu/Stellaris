@@ -192,6 +192,18 @@ export const ticketApi = {
   getDetail: (tid) => request(`/api/tickets/${tid}`),
 }
 
+/* ═══ 文件柜（用户开放内测，需登录；未开通 403。401 走 request 默认行为：清登录态跳登录）═══ */
+
+export const vaultApi = {
+  status: () => request('/api/vault/status'),
+  apply: (note) => request('/api/vault/apply', { method: 'POST', body: note ? { note } : {} }),
+  list: (prefix = '') => request(`/api/vault?prefix=${encodeURIComponent(prefix)}`),
+  get: (path) => request(`/api/vault/file?path=${encodeURIComponent(path)}`),
+  store: (payload) => request('/api/vault/store', { method: 'POST', body: payload }),
+  rename: (payload) => request('/api/vault/rename', { method: 'POST', body: payload }),
+  remove: (payload) => request('/api/vault/delete', { method: 'POST', body: payload }),
+}
+
 /* ═══ 管理看板接口（V0.9.0，后端 get_admin_user 守卫：非 admin 403）═══ */
 
 export const adminApi = {
@@ -248,6 +260,9 @@ export const adminApi = {
     request('/api/admin/vault/rename', { method: 'POST', body: payload, headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
   vaultDelete: (pass, payload) =>
     request('/api/admin/vault/delete', { method: 'POST', body: payload, headers: { 'X-Vault-Password': pass }, keepAuthOn401: true }),
+  /* 文件柜用户内测管理：开通/关闭 + 配额调整（走 requirePin，PIN 放请求体） */
+  vaultUsers: () => request('/api/admin/vault/users'),
+  vaultSetUser: (payload) => request('/api/admin/vault/user', { method: 'POST', body: payload }),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }

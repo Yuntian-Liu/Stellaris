@@ -22,6 +22,7 @@ import rehypeKatex from 'rehype-katex'
 import api from '../hooks/api'
 import { MD_COMPONENTS, normalizeLatex } from '../pages/ResultPage'
 import { FILE_FOOTER_MD } from '../utils/copyright'
+import VaultStoreControl from './VaultStoreControl'
 
 const SUGGESTIONS = [
   '这个视频讲了什么？',
@@ -57,7 +58,7 @@ function downloadChatMd(videoTitle, messages) {
   URL.revokeObjectURL(a.href)
 }
 
-export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, onClose }) {
+export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, onClose, onNeedAuth }) {
   const [messages, setMessages] = useState([])   // [{role, content, error?, usage?}]
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -196,11 +197,18 @@ export default function ChatPanel({ taskId, videoTitle, subtitleText, cleaned, o
           )}
         </span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <Button
-            type="text" size="small" icon={<DownloadOutlined />}
-            disabled={messages.length === 0}
-            onClick={() => downloadChatMd(videoTitle, messages.filter(m => !m.error))}
-            title="导出对话为 Markdown"
+          {/* 导出对话：单按钮 hover/点击浮出「下载文件 / 转存到文件柜」（与结果页下载同款） */}
+          <VaultStoreControl
+            mode="download"
+            taskId={taskId}
+            kind="chat"
+            suffix="解读.md"
+            videoTitle={videoTitle}
+            onDownload={() => downloadChatMd(videoTitle, messages.filter(m => !m.error))}
+            buttonProps={{ type: 'text', size: 'small', icon: <DownloadOutlined />, title: '导出对话' }}
+            buttonLabel={null}
+            disabled={messages.length === 0 || cleaned}
+            onNeedAuth={onNeedAuth}
           />
           <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} title="收起" />
         </div>

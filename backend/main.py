@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import (FastAPI, UploadFile, File, HTTPException, BackgroundTasks,
@@ -48,7 +48,7 @@ from pipeline.export import (
     bilibili_subtitle_to_segments, save_exports,
 )
 
-from database import init_db, get_db
+from database import init_db, get_db, async_session
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, get_current_user_optional, get_admin_user
 from auth.models import User
@@ -174,7 +174,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.1.3-bellatrix",
+    version="1.2.0-canopus",
     lifespan=lifespan,
 )
 
@@ -1605,6 +1605,232 @@ async def admin_vault_pass_set(req: Request, current_user: User = Depends(get_ad
         return {"ok": True}
     except VaultError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+# ===== 文件柜用户版（V1.2.0 内测开放；设计定稿 tmp/collab/vault-user-beta/05_kimi.md）=====
+# 与管理员版物理隔离：独立表 vault_user_files + 用户域 CRUD 强制 owner_uid 过滤
+
+from vault_store import (  # noqa: E402
+    user_list as vault_user_list, user_get as vault_user_get,
+    user_rename as vault_user_rename, user_delete as vault_user_delete,
+    store_from_task as vault_store_from_task, user_used_bytes as vault_user_used_bytes,
+)
+from auth.utils import check_uid_rate  # noqa: E402
+from ticket_store import create_ticket  # noqa: E402
+
+
+def _vault_user_flags(u: User) -> tuple[bool, int]:
+    """（是否开通, 配额 MB）。历史行 NULL → 未开通 / 默认 5MB"""
+    return bool(u.vault_enabled), (u.vault_quota_mb if u.vault_quota_mb is not None else 5)
+
+
+async def _vault_user_guard(current_user: User) -> int:
+    """用户版文件柜守卫：登录（路由 Depends 已保证）→ 内测开通。返回配额 MB"""
+    enabled, quota = _vault_user_flags(current_user)
+    if not enabled:
+        # 区分"从未开通"与"曾被关闭"（有文件=曾开通；Minimax 07 棒 6.7 文案分支）
+        _used, files = await vault_user_used_bytes(current_user.uid)
+        if files > 0:
+            raise HTTPException(status_code=403, detail="文件柜已关闭，你的文件仍保留在服务器上，可联系开发者恢复")
+        raise HTTPException(status_code=403, detail="文件柜内测尚未对你的账号开通，可在 设置 → 关于 → 星轨实验室 申请")
+    return quota
+
+
+@app.get("/api/vault/status")
+async def vault_status(current_user: User = Depends(get_current_user)):
+    """实验室徽章状态：enabled/quota/used/apply_status（none/pending/approved/rejected）"""
+    enabled, quota = _vault_user_flags(current_user)
+    used, _count = await vault_user_used_bytes(current_user.uid)
+    # 最近一条内测申请（category=vault_apply）
+    from ticket_store import SupportTicket
+    async with async_session() as session:
+        t = (await session.execute(
+            select(SupportTicket).where(SupportTicket.user_uid == current_user.uid,
+                                        SupportTicket.category == "vault_apply")
+            .order_by(SupportTicket.id.desc()).limit(1)
+        )).scalar_one_or_none()
+    if enabled:
+        apply_status = "approved"
+    elif t is None:
+        apply_status = "none"
+    elif t.status in ("pending", "processing"):
+        apply_status = "pending"
+    else:
+        apply_status = "rejected"
+    return {"enabled": enabled, "quota_mb": quota, "used_bytes": used,
+            "apply_status": apply_status,
+            "apply_updated_at": t.updated_at.isoformat() + "Z" if t and t.updated_at else None}
+
+
+@app.post("/api/vault/apply")
+async def vault_apply(req: Request, current_user: User = Depends(get_current_user)):
+    """内测申请（幂等 + uid 限流 5/h + 被拒 7 天冷却）"""
+    enabled, _ = _vault_user_flags(current_user)
+    if enabled:
+        return {"ok": True, "msg": "你已开通文件柜"}
+    if not check_uid_rate("ticket_apply", current_user.uid, 5, 3600):
+        raise HTTPException(status_code=429, detail="申请太频繁，请稍后再试")
+    from ticket_store import SupportTicket
+    async with async_session() as session:
+        latest = (await session.execute(
+            select(SupportTicket).where(SupportTicket.user_uid == current_user.uid,
+                                        SupportTicket.category == "vault_apply")
+            .order_by(SupportTicket.id.desc()).limit(1)
+        )).scalar_one_or_none()
+    if latest and latest.status in ("pending", "processing"):
+        raise HTTPException(status_code=409, detail="你已提交过申请，开发者会尽快处理，请耐心等待")
+    if latest and latest.status in ("closed", "replied") and latest.updated_at:
+        # 库里是 naive UTC（踩坑 14 体系），统一按 naive 比较
+        days = (datetime.now(timezone.utc).replace(tzinfo=None) - latest.updated_at).days
+        if days < 7:
+            raise HTTPException(status_code=429, detail=f"上次申请未通过，{7 - days} 天后可再次申请")
+    body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
+    note = str(body.get("note", ""))[:500]
+    await create_ticket(current_user.uid, title="内测申请：文件柜",
+                        category="vault_apply",
+                        description=note or "申请开通文件柜内测权限")
+    return {"ok": True, "msg": "已提交申请，开发者会尽快处理"}
+
+
+@app.get("/api/vault")
+async def vault_user_list_route(req: Request, prefix: str = "",
+                                current_user: User = Depends(get_current_user)):
+    quota = await _vault_user_guard(current_user)
+    try:
+        r = await vault_user_list(current_user.uid, prefix)
+        r["quota_mb"] = quota
+        return r
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.get("/api/vault/file")
+async def vault_user_get_route(path: str = "", current_user: User = Depends(get_current_user)):
+    await _vault_user_guard(current_user)
+    try:
+        return await vault_user_get(current_user.uid, path)
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/vault/store")
+async def vault_user_store(req: Request, current_user: User = Depends(get_current_user)):
+    """转存 {task_id, kind, filename?, folder?}（uid 限流 10/min）"""
+    if not check_uid_rate("vault_store", current_user.uid, 10, 60):
+        raise HTTPException(status_code=429, detail="转存太频繁，请稍后再试")
+    quota = await _vault_user_guard(current_user)
+    body = await req.json()
+    try:
+        return await vault_store_from_task(
+            current_user.uid, str(body.get("task_id", "")), str(body.get("kind", "")),
+            body.get("filename") or None, body.get("folder") or None, quota)
+    except VaultError as e:
+        # 转存失败落日志（小克 08 棒：失败原因只在响应里，用户不截图就丢；诊断包 recent_logs 可定位）
+        logger.warning("[Vault] 转存失败 uid=%s task=%s kind=%s: %s",
+                       current_user.uid, body.get("task_id"), body.get("kind"), e.detail)
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/vault/rename")
+async def vault_user_rename_route(req: Request, current_user: User = Depends(get_current_user)):
+    await _vault_user_guard(current_user)
+    body = await req.json()
+    try:
+        return await vault_user_rename(current_user.uid, str(body.get("from", "")),
+                                       str(body.get("to", "")))
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.post("/api/vault/delete")
+async def vault_user_delete_route(req: Request, current_user: User = Depends(get_current_user)):
+    """删除 {path} 或 {prefix}（owner 过滤，幂等）"""
+    await _vault_user_guard(current_user)
+    body = await req.json()
+    try:
+        n = await vault_user_delete(
+            current_user.uid,
+            path=str(body.get("path", "")) if body.get("path") else None,
+            prefix=str(body.get("prefix", "")) if body.get("prefix") else None)
+        return {"deleted": n}
+    except VaultError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@app.get("/api/admin/vault/users")
+async def admin_vault_users(current_user: User = Depends(get_admin_user)):
+    """内测管理：用户列表（enabled 开关 + 配额 + 实时用量）"""
+    from auth.models import User as AuthUser
+    from vault_store import VaultUserFile
+    from sqlalchemy import func as _func, cast as _cast, LargeBinary as _LB
+    async with async_session() as session:
+        users = (await session.execute(
+            select(AuthUser).where(AuthUser.vault_enabled.is_(True))
+        )).scalars().all()
+        usage = (await session.execute(
+            select(VaultUserFile.owner_uid,
+                   _func.count(),
+                   _func.coalesce(_func.sum(_func.length(
+                       _cast(VaultUserFile.content, _LB))), 0))
+            .group_by(VaultUserFile.owner_uid)
+        )).all()
+    # 有文件但未开通的用户也列出（关闭后数据保留，管理员可见）
+    usage_map = {uid: {"files": c, "used_bytes": b} for uid, c, b in usage}
+    uids = {u.uid for u in users} | set(usage_map)
+    if uids - {u.uid for u in users}:
+        async with async_session() as session:
+            extra = (await session.execute(
+                select(AuthUser).where(AuthUser.uid.in_(uids - {u.uid for u in users}))
+            )).scalars().all()
+        users = list(users) + list(extra)
+    out = []
+    for u in users:
+        g = usage_map.get(u.uid, {"files": 0, "used_bytes": 0})
+        out.append({"uid": u.uid, "nickname": u.nickname,
+                    "enabled": bool(u.vault_enabled),
+                    "quota_mb": u.vault_quota_mb if u.vault_quota_mb is not None else 5,
+                    **g})
+    # 待审批申请（pending/processing 且尚未开通的；开通后自动从这里消失）
+    from ticket_store import SupportTicket
+    async with async_session() as session:
+        pending = (await session.execute(
+            select(SupportTicket, AuthUser.nickname)
+            .join(AuthUser, AuthUser.uid == SupportTicket.user_uid)
+            .where(SupportTicket.category == "vault_apply",
+                   SupportTicket.status.in_(["pending", "processing"]),
+                   AuthUser.vault_enabled.is_not(True))
+            .order_by(SupportTicket.id.desc())
+        )).all()
+    applies = [{"tid": t.id, "uid": t.user_uid, "nickname": nick,
+                "created_at": t.created_at.isoformat() + "Z" if t.created_at else None}
+               for t, nick in pending]
+    return {"users": sorted(out, key=lambda x: x["uid"]), "pending_applies": applies}
+
+
+@app.post("/api/admin/vault/user")
+async def admin_vault_user_set(req: Request, current_user: User = Depends(get_admin_user)):
+    """开通/关闭/调额 {pin, uid, enabled?, quota_mb?}（PIN 校验）"""
+    body = await req.json()
+    await _check_admin_pin(current_user, body)
+    from auth.models import User as AuthUser
+    uid = int(body.get("uid", 0))
+    async with async_session() as session:
+        u = (await session.execute(
+            select(AuthUser).where(AuthUser.uid == uid)
+        )).scalar_one_or_none()
+        if not u:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if "enabled" in body:
+            u.vault_enabled = bool(body["enabled"])
+        if body.get("quota_mb") is not None:
+            q = int(body["quota_mb"])
+            if q < 0:
+                raise HTTPException(status_code=400, detail="配额不能为负数")
+            u.vault_quota_mb = q
+        await session.commit()
+    logger.info("[Vault] 管理员调整用户文件柜: uid=%s enabled=%s quota=%s",
+                uid, body.get("enabled"), body.get("quota_mb"))
+    return {"ok": True}
 
 
 # ===== 管理后台：运营统计/工具 =====

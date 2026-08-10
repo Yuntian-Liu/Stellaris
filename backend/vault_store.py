@@ -37,9 +37,13 @@ class VaultFile(Base):
 
 
 # ── path 校验（小克 03 清单 2：split 逐段 + 显式禁 .. 双保险）──
-_SEGMENT_RE = re.compile(r"^[\w.-]{1,64}$")   # Python \w 含中文等 Unicode 字母数字
 _MAX_DEPTH = 5
 _MAX_PATH = 255
+
+
+# ── 时间序列化（踩坑 14：naive UTC 必须补 'Z'，否则前端按本地时区误读差 8 小时）──
+def _iso(dt) -> str | None:
+    return dt.isoformat() + "Z" if dt else None
 
 
 class VaultError(Exception):
@@ -49,20 +53,31 @@ class VaultError(Exception):
         self.status_code = status_code
 
 
+# 黑名单制（V1.2.0 起，碳碳定）：纯 DB 键不接触文件系统，只有分隔符/.. 段/不可见字符是真高危。
+# 中文括号、逗号、空格、圆括号、书名号等全部放行。
+_CTRL_ZW_RE = re.compile(r"[\x00-\x1f\x7f\u200b-\u200d\ufeff]")
+
+
 def validate_path(path: str) -> str:
-    """校验并返回规整后的 path（去首尾空白/斜杠）。不合法抛 VaultError。"""
+    """校验并返回规整后的 path（去首尾空白/斜杠、剥控制与零宽字符）。不合法抛 VaultError。"""
     p = (path or "").strip().strip("/")
+    p = _CTRL_ZW_RE.sub("", p)
     if not p or len(p) > _MAX_PATH:
         raise VaultError("路径为空或超长（≤255 字符）")
     segs = p.split("/")
     if len(segs) > _MAX_DEPTH:
         raise VaultError(f"文件夹层级最多 {_MAX_DEPTH} 层")
     for seg in segs:
-        if seg == "..":
+        s = seg.strip()
+        if not s:
+            raise VaultError("存在空的路径段")
+        if len(s) > 64:
+            raise VaultError("路径段超长（≤64 字符）")
+        if s == "..":
             raise VaultError("路径段不允许为 ..")
-        if not _SEGMENT_RE.match(seg):
-            raise VaultError(f"路径段含非法字符：{seg!r}（仅允许中英文/数字/._-）")
-    return p
+        if "\\" in s:
+            raise VaultError("路径段不允许含反斜杠")
+    return "/".join(seg.strip() for seg in segs)
 
 
 # ── 敏感文件名检测（碳碳方案：检测 + 二次确认，非硬黑名单）──
@@ -104,10 +119,18 @@ async def list_prefix(prefix: str = "") -> dict:
                 "name": rest,
                 "path": path,
                 "size": len(content.encode("utf-8")),   # UTF-8 字节数（Minimax 04 决策）
-                "updated_at": updated_at.isoformat() if updated_at else None,
+                "updated_at": _iso(updated_at),
             })
     files.sort(key=lambda f: f["name"])
-    return {"prefix": prefix.rstrip("/"), "folders": sorted(folders), "files": files}
+    # 总占用（全柜统计，碳碳 2026-08-11 要求；CAST BLOB 后 length 才是字节数，text 是字符数）
+    from sqlalchemy import LargeBinary
+    async with async_session() as session:
+        total_files, total_bytes = (await session.execute(
+            select(func.count(), func.coalesce(
+                func.sum(func.length(func.cast(VaultFile.content, LargeBinary))), 0))
+        )).one()
+    return {"prefix": prefix.rstrip("/"), "folders": sorted(folders), "files": files,
+            "total": {"files": total_files, "used_bytes": total_bytes}}
 
 
 async def get_file(path: str) -> dict:
@@ -123,7 +146,7 @@ async def get_file(path: str) -> dict:
         "path": row.path,
         "content": row.content,
         "size": len(row.content.encode("utf-8")),
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "updated_at": _iso(row.updated_at),
     }
 
 
@@ -266,3 +289,255 @@ async def verify_vault_password(uid: int, password: str) -> None:
     ok = await asyncio.to_thread(verify_password, password or "", hashed)
     if not ok:
         raise VaultError("文件柜密码错误", 401)
+
+
+# ══════════════════════════════════════════════════════════════
+# 用户版文件柜（V1.2.0 内测开放）— 与管理员版物理隔离
+# 设计定稿：tmp/collab/vault-user-beta/05_kimi.md
+# 铁律（小克 03 棒）：用户域每个 DB 查询 WHERE 必带 owner_uid，没有例外
+# ══════════════════════════════════════════════════════════════
+
+from sqlalchemy import UniqueConstraint  # noqa: E402
+
+_USER_SINGLE_FILE_MAX = 1024 * 1024     # 单文件 1MB（与管理员版一致）
+_USER_HARD_OVER_MB = 5                  # 满额才拒的硬上限：quota + 5MB
+_STORE_LOCKS: dict[int, "asyncio.Lock"] = {}   # 按 uid 串行化转存（防并发超配额）
+
+
+class VaultUserFile(Base):
+    """用户文件柜条目（owner_uid 非空；与管理员 vault_files 物理分表）"""
+    __tablename__ = "vault_user_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_uid: Mapped[int] = mapped_column(Integer, index=True)
+    path: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(),
+                                                 onupdate=func.now())
+    __table_args__ = (UniqueConstraint("owner_uid", "path", name="uq_user_vault"),)
+
+
+async def user_used_bytes(uid: int) -> tuple[int, int]:
+    """(已用字节数, 文件数)。实时 SUM（CAST BLOB 才是字节；定稿 §三.9：量小准确优先）"""
+    from sqlalchemy import LargeBinary
+    async with async_session() as session:
+        used, count = (await session.execute(
+            select(
+                func.coalesce(func.sum(func.length(func.cast(VaultUserFile.content, LargeBinary))), 0),
+                func.count(),
+            ).where(VaultUserFile.owner_uid == uid)
+        )).one()
+    return used, count
+
+
+async def user_list(uid: int, prefix: str = "") -> dict:
+    """列目录（强制 owner 过滤）+ 配额信息"""
+    prefix = (prefix or "").strip().strip("/")
+    if prefix:
+        validate_path(prefix)
+        prefix += "/"
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(VaultUserFile.path, VaultUserFile.content, VaultUserFile.updated_at)
+            .where(VaultUserFile.owner_uid == uid,
+                   VaultUserFile.path.startswith(prefix))
+        )).all()
+    folders, files = set(), []
+    for path, content, updated_at in rows:
+        rest = path[len(prefix):]
+        if "/" in rest:
+            folders.add(rest.split("/", 1)[0])
+        else:
+            files.append({
+                "name": rest, "path": path,
+                "size": len(content.encode("utf-8")),
+                "updated_at": _iso(updated_at),
+            })
+    files.sort(key=lambda f: f["name"])
+    used, count = await user_used_bytes(uid)
+    return {"prefix": prefix.rstrip("/"), "folders": sorted(folders), "files": files,
+            "total": {"files": count, "used_bytes": used}}
+
+
+async def user_get(uid: int, path: str) -> dict:
+    """读全文（path + owner 双条件，缺一不可）"""
+    p = validate_path(path)
+    async with async_session() as session:
+        row = (await session.execute(
+            select(VaultUserFile).where(VaultUserFile.owner_uid == uid,
+                                        VaultUserFile.path == p)
+        )).scalar_one_or_none()
+    if not row:
+        raise VaultError("文件不存在", 404)
+    return {"path": row.path, "content": row.content,
+            "size": len(row.content.encode("utf-8")), "updated_at": _iso(row.updated_at)}
+
+
+def _next_available_path(rows: list[str], want: str) -> str:
+    """同名追加 -2/-3…：扫已有同前缀名取最大序号 +1（后缀用连字符而非括号——
+    括号不在 path 白名单里，挂上去文件自己都不合法，测试实抓）"""
+    existing = set(rows)
+    if want not in existing:
+        return want
+    stem, dot, ext = want.rpartition(".")
+    base = stem if dot else want
+    suffix = dot + ext if dot else ""
+    n = 2
+    while f"{base}-{n}{suffix}" in existing:
+        n += 1
+    return f"{base}-{n}{suffix}"
+
+
+async def user_put(uid: int, path: str, content: str, quota_mb: int) -> dict:
+    """用户版写入（转存/内部用）：配额 check（满额才拒 + 硬上限 + 单文件 1MB）+ 撞名自动 (2)"""
+    p = validate_path(path)
+    raw = content.encode("utf-8", errors="strict")
+    size = len(raw)
+    if size > _USER_SINGLE_FILE_MAX:
+        raise VaultError("单文件超过 1MB 上限", 413)
+    used, _ = await user_used_bytes(uid)
+    quota_b = quota_mb * 1024 * 1024
+    hard_b = quota_b + _USER_HARD_OVER_MB * 1024 * 1024
+    if used >= quota_b:
+        raise VaultError(f"文件柜已满（当前用量 {used/1024/1024:.2f} MB / 配额 {quota_mb} MB），请先删除文件腾出空间", 409)
+    if used + size > hard_b:
+        raise VaultError(f"存入后将超出保留上限，请先删除文件腾出空间（当前 {used/1024/1024:.2f} MB / 配额 {quota_mb} MB）", 409)
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(VaultUserFile.path).where(VaultUserFile.owner_uid == uid)
+        )).scalars().all()
+        final = _next_available_path(list(rows), p)
+        try:
+            async with session.begin_nested():
+                session.add(VaultUserFile(owner_uid=uid, path=final, content=content))
+                await session.flush()
+        except IntegrityError:   # 极端并发双新建撞 UNIQUE：换个名字再来（定稿 §二.7）
+            final = _next_available_path(list(rows) + [final], p)
+            session.add(VaultUserFile(owner_uid=uid, path=final, content=content))
+        await session.commit()
+    logger.info("[Vault] 用户转存: uid=%s %s (%d B)", uid, final, size)
+    return {"path": final, "size": size}
+
+
+async def user_rename(uid: int, from_path: str, to_path: str) -> dict:
+    """重命名/移动（owner 过滤；to 已存在 409；敏感名校验不需要——内容全是本站产物）"""
+    src = validate_path(from_path)
+    dst = validate_path(to_path)
+    async with async_session() as session:
+        row = (await session.execute(
+            select(VaultUserFile).where(VaultUserFile.owner_uid == uid,
+                                        VaultUserFile.path == src)
+        )).scalar_one_or_none()
+        if not row:
+            raise VaultError("源文件不存在", 404)
+        exists = (await session.execute(
+            select(VaultUserFile.id).where(VaultUserFile.owner_uid == uid,
+                                           VaultUserFile.path == dst)
+        )).scalar_one_or_none()
+        if exists:
+            raise VaultError("目标路径已存在同名文件", 409)
+        try:
+            row.path = dst
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            raise VaultError("目标路径已存在同名文件", 409)
+    logger.info("[Vault] 用户重命名: uid=%s %s → %s", uid, src, dst)
+    return {"path": dst}
+
+
+async def user_delete(uid: int, path: str | None = None, prefix: str | None = None) -> int:
+    """删除（owner 过滤，幂等）。prefix 删文件夹"""
+    async with async_session() as session:
+        if prefix:
+            p = validate_path(prefix)
+            rows = (await session.execute(
+                select(VaultUserFile).where(VaultUserFile.owner_uid == uid,
+                                            VaultUserFile.path.startswith(p + "/"))
+            )).scalars().all()
+        else:
+            p = validate_path(path or "")
+            rows = (await session.execute(
+                select(VaultUserFile).where(VaultUserFile.owner_uid == uid,
+                                            VaultUserFile.path == p)
+            )).scalars().all()
+        for row in rows:
+            await session.delete(row)
+        await session.commit()
+    if rows:
+        logger.info("[Vault] 用户删除: uid=%s %s（%d 个）", uid, prefix or path, len(rows))
+    return len(rows)
+
+
+# ── 转存装配（定稿 §四）──
+
+_KIND_SUFFIX = {
+    "md": ("笔记.md", "md_content"),
+    "summary": ("概要.md", "summary_content"),
+    "txt": ("全文.txt", "raw_text"),
+    "srt": ("字幕.srt", "subtitle_srt"),
+}
+
+
+def _sanitize_title(title: str) -> str:
+    """视频标题 → 合法路径段：只剥分隔符与控制/零宽字符（其余原样保留，
+    中文括号/逗号等全保留——V1.2.0 起黑名单制）+ 连续空白压缩 + 截断"""
+    t = _CTRL_ZW_RE.sub("", title or "")
+    t = t.replace("/", " ").replace("\\", " ")
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:48]
+
+
+def _store_lock(uid: int) -> "asyncio.Lock":
+    import asyncio as _aio
+    if uid not in _STORE_LOCKS:
+        _STORE_LOCKS[uid] = _aio.Lock()
+    return _STORE_LOCKS[uid]
+
+
+async def store_from_task(uid: int, task_id: str, kind: str,
+                          filename: str | None = None, folder: str | None = None,
+                          quota_mb: int = 5) -> dict:
+    """从任务产物转存到用户文件柜。校验链顺序（定稿 §四）：
+    task 归属（403，先于一切产物读取）→ kind 合法（400）→ 产物非空（404）→ path → 配额 → 写入"""
+    from history_store import get_task_record
+    task = await get_task_record(task_id)
+    if not task or task.get("owner_uid") != uid:
+        raise VaultError("任务不存在或不属于你", 403)
+
+    title = task.get("title") or ""
+    if kind == "chat":
+        # chat 读取必须在 task 归属校验之后（chat_messages 无 owner 列，靠 task 间接保护——铁律）
+        from chat_store import get_chat_history
+        history = await get_chat_history(task_id)
+        if not history:
+            raise VaultError("该任务还没有 AI 解读对话", 404)
+        safe_title = title.replace("\\", "\\\\").replace("#", "\\#").replace("*", "\\*") or "未命名视频"
+        parts = [f"# {safe_title} · AI 解读", ""]
+        for m in history:
+            if m.get("role") == "user":
+                parts.append(f"## Q：{m.get('content', '')}")
+            else:
+                parts.append(f"A：{m.get('content', '')}")
+            parts.append("")
+        parts.append("---")
+        parts.append(f"来源：Stellaris 提取 · {datetime.now().strftime('%Y-%m-%d')} · {task_id}")
+        content = "\n".join(parts)
+        suffix = "AI解读.md"
+    elif kind in _KIND_SUFFIX:
+        suffix, column = _KIND_SUFFIX[kind]
+        content = task.get(column)
+        if not content:
+            raise VaultError("该任务还没有生成此类产物", 404)
+    else:
+        raise VaultError("不支持的转存类型", 400)
+
+    clean = _sanitize_title(title) or f"未命名-{task_id.replace('stellaris-', '')[:8]}"
+    fname = validate_path(filename) if filename else f"{clean}-{suffix}"
+    # 用户自定义 filename 也要能加上种类语义：直接用用户输入（已过白名单）
+    full = f"{validate_path(folder)}/{fname}" if folder else fname
+    full = validate_path(full)   # folder + filename 拼接后整体过白名单（小克 03 棒）
+
+    async with _store_lock(uid):   # 按 uid 串行化（防并发超配额，踩坑 19 场景）
+        return await user_put(uid, full, content, quota_mb)

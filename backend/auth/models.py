@@ -25,6 +25,8 @@ class User(Base):
     # 管理 PIN（敏感操作二次验证；bcrypt 哈希，未设置可 NULL；V0.9.0 新增列）
     admin_pin_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     vault_pass_hash: Mapped[str | None] = mapped_column(String, nullable=True)   # V1.1.3 文件柜专用密码
+    vault_enabled: Mapped[bool | None] = mapped_column(nullable=True)    # V1.2.0 文件柜内测开关（NULL/0=未开通）
+    vault_quota_mb: Mapped[int | None] = mapped_column(nullable=True)    # V1.2.0 配额 MB（NULL→默认 5）
     badge: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

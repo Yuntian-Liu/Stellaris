@@ -36,6 +36,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
+import VaultStoreControl from '../components/VaultStoreControl'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Text, Paragraph } = Typography
@@ -182,6 +183,12 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
 
   // 预览文本（后端返回的真实内容）
   const previewText = taskData.subtitle_txt || '（无文本内容）'
+
+  // 转存到文件柜配置（kind ↔ 预填文件名后缀；未登录/未开通的权限闸在 VaultStoreControl 内）
+  const videoTitle = taskData.video_title || '未知视频'
+  const vaultFor = (kind, suffix) => ({
+    taskId: taskData.task_id, kind, suffix, videoTitle, onNeedAuth,
+  })
 
   return (
     <div className="page-enter" style={{ marginTop: -36 }}>
@@ -334,6 +341,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
           cleaned={cleaned}
           onNeedAuth={() => requireAuth('内容总结', () => {})}
           chars={previewText.length}
+          vault={vaultFor('summary', '概要.md')}
         />
 
         {/* 预览区：展示真实文本内容 */}
@@ -431,6 +439,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               desc="含时间轴，可导入播放器 / 剪辑软件"
               primary
               onClick={() => handleDownload('srt', 'SRT')}
+              vault={vaultFor('srt', '字幕.srt')}
             />
 
             {/* TXT 下载（整理后） */}
@@ -439,6 +448,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               title="TXT 纯文本"
               desc="已智能分段，方便阅读 / 复制给 AI"
               onClick={() => handleDownload('txt', 'TXT')}
+              vault={vaultFor('txt', '全文.txt')}
             />
 
             {/* MD 导出（增值功能，状态机驱动） */}
@@ -450,6 +460,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               cost={mdCost}
               tokens={mdTokens}
               est={estCost(previewText.length, 500)}
+              vault={vaultFor('md', '笔记.md')}
             />
 
           </Space>
@@ -519,6 +530,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
               subtitleText={taskData.subtitle_txt || ''}
               cleaned={cleaned}
               onClose={() => toggleChat(false)}
+              onNeedAuth={onNeedAuth}
             />
           </div>
         </div>
@@ -567,7 +579,7 @@ function estCost(chars, unit) {
   const base = Math.floor(tokens / unit)
   return base + (tokens % unit > unit * 0.4 ? 1 : 0)
 }
-function DownloadRow({ icon, title, desc, primary = false, onClick }) {
+function DownloadRow({ icon, title, desc, primary = false, onClick, vault }) {
   return (
     <div className="dl-row" style={{
       display: 'flex',
@@ -586,25 +598,37 @@ function DownloadRow({ icon, title, desc, primary = false, onClick }) {
           {desc}
         </div>
       </div>
-      <Button
-        type={primary ? 'primary' : 'default'}
-        icon={<DownloadOutlined />}
-        onClick={onClick}
-        style={{
-          minWidth: 96,
-          height: 38,
-          borderRadius: 'var(--r-btn)',
-          fontWeight: 500,
-        }}
-      >
-        下载
-      </Button>
+      {vault ? (
+        /* 主按钮仍是下载，下拉项「转存到文件柜」（权限闸在控件内） */
+        <VaultStoreControl
+          mode="download"
+          {...vault}
+          onDownload={onClick}
+          buttonProps={primary
+            ? { type: 'primary', icon: <DownloadOutlined /> }
+            : { icon: <DownloadOutlined /> }}
+        />
+      ) : (
+        <Button
+          type={primary ? 'primary' : 'default'}
+          icon={<DownloadOutlined />}
+          onClick={onClick}
+          style={{
+            minWidth: 96,
+            height: 38,
+            borderRadius: 'var(--r-btn)',
+            fontWeight: 500,
+          }}
+        >
+          下载
+        </Button>
+      )}
     </div>
   )
 }
 
 /* ── 子组件：MD 导出行（状态机） ── */
-function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est }) {
+function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est, vault }) {
   return (
     <div style={{
       display: 'flex',
@@ -664,14 +688,13 @@ function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est })
       )}
 
       {status === 'ready' && (
-        <Button
-          type="primary"
-          icon={<DownloadOutlined />}
-          onClick={onDownload}
-          style={{ minWidth: 96, height: 38, borderRadius: 'var(--r-btn)', fontWeight: 500 }}
-        >
-          下载
-        </Button>
+        /* 下载按钮只出现在 ready（产物已生成），转存项天然不存在"未生成"态 */
+        <VaultStoreControl
+          mode="download"
+          {...vault}
+          onDownload={onDownload}
+          buttonProps={{ type: 'primary', icon: <DownloadOutlined /> }}
+        />
       )}
 
       {status === 'failed' && (
@@ -788,7 +811,7 @@ export const MD_COMPONENTS = {
   ),
 }
 
-function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars }) {
+function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars, vault }) {
   const { user } = useAuth()
   const [status, setStatus] = useState(initialStatus || 'idle')
   const [content, setContent] = useState(initialContent || '')
@@ -1009,11 +1032,11 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
           >
             复制
           </Button>
-          <Button
-            type="text"
-            size="small"
-            icon={<DownloadOutlined />}
-            onClick={() => {
+          {/* 主按钮仍是下载（Blob 直下），下拉项「转存到文件柜」 */}
+          <VaultStoreControl
+            mode="download"
+            {...vault}
+            onDownload={() => {
               const blob = new Blob([content + FILE_FOOTER_MD], { type: 'text/markdown;charset=utf-8' })
               const a = document.createElement('a')
               a.href = URL.createObjectURL(blob)
@@ -1022,10 +1045,8 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
               URL.revokeObjectURL(a.href)
               message.success('已下载概要 .md')
             }}
-            style={{ fontSize: 12, color: 'var(--mute)', padding: '0 4px' }}
-          >
-            下载
-          </Button>
+            buttonProps={{ type: 'text', size: 'small', icon: <DownloadOutlined /> }}
+          />
           <Button
             type="text"
             size="small"

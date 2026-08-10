@@ -155,6 +155,18 @@ export default function App() {
     return () => window.removeEventListener('stellaris:open-guide', handler)
   }, [])
 
+  // 结果页「去申请文件柜」→ 设置页星轨实验室（事件总线，同 open-guide 先例；匿名先引导登录）
+  const [labInit, setLabInit] = useState(false)
+  useEffect(() => {
+    const handler = () => {
+      if (!user) { setPage('auth'); return }
+      setLabInit(true)
+      setPage('settings')
+    }
+    window.addEventListener('stellaris:open-lab', handler)
+    return () => window.removeEventListener('stellaris:open-lab', handler)
+  }, [user])
+
   const handleSubmit = useCallback((data) => {
     setTaskId(data.task_id)
     setPage('progress')
@@ -402,6 +414,8 @@ export default function App() {
             initLedger={ledgerInit}
             onConsumeInit={() => setLedgerInit(false)}
             onOpenHistory={() => setHistoryOpen(true)}
+            initLab={labInit}
+            onLabInit={() => setLabInit(false)}
           />
         )}
         {/* 管理看板（仅 is_admin 可达；渲染守卫双保险，非 admin 直接改 state 也看不到） */}

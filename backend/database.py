@@ -51,6 +51,8 @@ _EXPECTED_COLUMNS = [
     ("billing_ledger", "from_perm", "INTEGER"),
     ("users", "admin_pin_hash", "VARCHAR"),
     ("users", "vault_pass_hash", "VARCHAR"),
+    ("users", "vault_enabled", "BOOLEAN"),
+    ("users", "vault_quota_mb", "INTEGER"),
     ("redeem_codes", "grant_mode", "VARCHAR"),
     ("redeem_codes", "quantum_grant", "INTEGER"),
     ("redeem_codes", "gravity_grant", "INTEGER"),

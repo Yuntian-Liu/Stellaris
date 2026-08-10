@@ -154,6 +154,23 @@ def check_vault_rate(ip: str) -> bool:
     return True
 
 
+# ===== uid 维度通用限流（V1.2.0 文件柜内测：转存 10/min、工单申请 5/h；IP 限流防不了换 IP 的登录账号）=====
+_uid_rate_buckets: dict[str, dict[int, list[float]]] = {}
+
+
+def check_uid_rate(scope: str, uid: int, max_times: int, window_sec: int) -> bool:
+    """uid 维度滑窗限流：scope 区分用途（'vault_store' / 'ticket_apply'）。True 允许。"""
+    now = time.time()
+    bucket = _uid_rate_buckets.setdefault(scope, {})
+    arr = [t for t in bucket.get(uid, []) if now - t < window_sec]
+    if len(arr) >= max_times:
+        bucket[uid] = arr
+        return False
+    arr.append(now)
+    bucket[uid] = arr
+    return True
+
+
 # ===== login rate limit（密码登录 IP 每分钟 10 次，P0-4 防暴力撞密码）=====
 _login_rate: dict[str, list[float]] = {}
 LOGIN_RATE_WINDOW_SEC = 60

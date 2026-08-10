@@ -4,16 +4,17 @@
  * 分区：用户信息行 / 数据统计卡 / 个人资料 / 会员权益(占位) /
  *       账号安全(修改密码双通道) / 关于(版本+协议+版本日志) / 退出登录
  */
-import { useState, useEffect, useRef } from 'react'
-import { Button, Input, Modal, Tabs, message } from 'antd'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Button, Input, Modal, Tabs, Tag, message } from 'antd'
 import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
   IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
   GiftOutlined, CreditCardOutlined, MessageOutlined,
+  ExperimentOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
-import api, { authApi, getToken, ticketApi } from '../hooks/api'
+import api, { authApi, getToken, ticketApi, vaultApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
 import TurnstileField from '../components/auth/TurnstileField'
@@ -23,6 +24,8 @@ import RedeemModal from '../components/RedeemModal'
 import MembershipHistoryModal from '../components/MembershipHistoryModal'
 import FeedbackView from '../components/FeedbackView'
 import TierBadge from '../components/TierBadge'
+import UserVaultPanel from '../components/UserVaultPanel'
+import VaultGuideModal from '../components/VaultGuideModal'
 import { clientLog } from '../utils/clientLog'
 import LedgerView from '../components/LedgerView'
 import { tierMeta } from '../utils/tier'
@@ -52,7 +55,7 @@ function fmt(n) {
   return String(n)
 }
 
-export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory }) {
+export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory, initLab, onLabInit }) {
   const { user, logout, refresh } = useAuth()
   const [stats, setStats] = useState(null)
   const [billing, setBilling] = useState(null)
@@ -70,6 +73,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const [ledgerTab, setLedgerTab] = useState('minute')  // 消耗记录初始页签
   const [feedbackOpen, setFeedbackOpen] = useState(false)   // 反馈与建议二级界面
   const [ticketUnread, setTicketUnread] = useState(false)   // 工单未读红点
+  const [labOpen, setLabOpen] = useState(false)             // 星轨实验室二级界面
 
   // 检查工单未读（反馈入口红点）
   useEffect(() => {
@@ -183,6 +187,28 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       ).catch(() => {})
     }, 320)
   }
+  // ── 星轨实验室二级界面（同款覆盖式滑入；App 下钻 initLab = 结果页「去申请」直达）──
+  const [labClosing, setLabClosing] = useState(false)
+  const openLab = () => {
+    setMemberView(false)     // overlay 互斥：关掉其他二级界面
+    setLedgerView(false)
+    setFeedbackOpen(false)
+    setLabOpen(true)
+  }
+  const closeLab = () => {
+    setLabClosing(true)
+    setTimeout(() => {
+      setLabOpen(false)
+      setLabClosing(false)
+      window.scrollTo(0, savedScroll.current)
+    }, 320)
+  }
+  // 结果页「去申请」→ App setPage('settings') + initLab → 直达实验室
+  useEffect(() => {
+    if (!initLab) return
+    openLab()
+    onLabInit?.()
+  }, [initLab])   // eslint-disable-line react-hooks/exhaustive-deps
   const overlayStyle = {
     // top -14 抵消主内容的负边距，bottom 0 拉满到容器底，确保把主界面完全盖住
     position: 'absolute', top: -14, bottom: 0, left: 0, right: 0,
@@ -192,12 +218,12 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   // 二级界面进出时的滚动位置管理：进入滚到顶，返回恢复原位置（iOS 转场惯例）
   const savedScroll = useRef(0)
   useEffect(() => {
-    if (memberView || ledgerView || feedbackOpen) {
+    if (memberView || ledgerView || feedbackOpen || labOpen) {
       savedScroll.current = window.scrollY
       // 延迟一帧：让 overlay 先盖住再置顶，避免看到主界面滚动闪烁
       requestAnimationFrame(() => window.scrollTo(0, 0))
     }
-  }, [memberView, ledgerView, feedbackOpen])
+  }, [memberView, ledgerView, feedbackOpen, labOpen])
 
   return (
     <div style={{ position: 'relative' }}>
@@ -346,6 +372,10 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
           onClick={() => setChangelogOpen(true)} />
         <Divider />
+        <RowItem icon={<ExperimentOutlined />} tint="#8b5cf6" label="星轨实验室"
+          value="文件柜 · 内测"
+          onClick={openLab} />
+        <Divider />
         <RowItem icon={<SafetyCertificateOutlined />} tint="#10b981" label="用户协议"
           onClick={() => openAgreement('agreement')} />
         <Divider />
@@ -465,6 +495,178 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <div className={feedbackClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
           <FeedbackView onBack={closeFeedback} />
         </div>
+      )}
+
+      {/* ── 星轨实验室二级界面（覆盖式滑入；含用户版文件柜）── */}
+      {(labOpen || labClosing) && (
+        <div className={labClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
+          <LabView onBack={closeLab} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── 星轨实验室二级界面（内测功能集合；第一张卡 = 文件柜）── */
+
+/** 申请被拒后的冷却天数（与后端一致） */
+const LAB_COOLDOWN_DAYS = 7
+
+function LabView({ onBack }) {
+  const [status, setStatus] = useState(undefined)   // undefined=加载中，null=查询失败
+  const [vaultOpen, setVaultOpen] = useState(false) // 已开通 → 进用户版文件柜
+  const [guideOpen, setGuideOpen] = useState(false) // 功能介绍引导页（未开通也能先看）
+
+  const loadStatus = useCallback(() => {
+    vaultApi.status().then(setStatus).catch(() => setStatus(null))
+  }, [])
+  useEffect(() => { loadStatus() }, [loadStatus])
+
+  const apply = () => {
+    Modal.confirm({
+      centered: true,
+      title: '申请文件柜内测？',
+      content: '文件柜：把你的提取结果存在云端，随时在线查看渲染版。申请由开发者人工开通，先到先得。',
+      okText: '提交申请',
+      cancelText: '再想想',
+      onOk: async () => {
+        try {
+          const r = await vaultApi.apply({})
+          message.success(r.msg || '已提交申请，等待开通')
+          loadStatus()
+        } catch (e) {
+          message.error(e.message)   // 409 已申请 / 429 冷却中
+        }
+      },
+    })
+  }
+
+  // 被拒冷却剩余天数（>0 期间不可重复申请）
+  const cooldownDays = (() => {
+    if (status?.apply_status !== 'rejected' || !status?.apply_updated_at) return 0
+    const remain = LAB_COOLDOWN_DAYS * 86400000 - (Date.now() - new Date(status.apply_updated_at).getTime())
+    return remain > 0 ? Math.ceil(remain / 86400000) : 0
+  })()
+
+  const opened = status?.apply_status === 'approved' && !!status?.enabled
+  const closed = status?.apply_status === 'approved' && !!status && !status.enabled
+
+  /* 状态徽章 + 卡片行为 */
+  let badge = null
+  let cardClick = null
+  if (status === undefined) {
+    badge = <Tag>加载中…</Tag>
+  } else if (opened) {
+    badge = <Tag color="success">已开通</Tag>
+    cardClick = () => setVaultOpen(true)
+  } else if (closed) {
+    badge = <Tag>已关闭</Tag>
+    cardClick = () => Modal.info({
+      centered: true,
+      title: '文件柜已关闭',
+      content: '你的文件柜已被关闭，文件仍保留在服务器上。如需恢复或取回文件，请联系开发者。',
+      okText: '知道了',
+    })
+  } else if (status?.apply_status === 'pending') {
+    badge = <Tag color="warning">审核中</Tag>
+  } else if (status?.apply_status === 'rejected') {
+    badge = <Tag>未通过</Tag>
+  }
+
+  /* 右侧 CTA（按状态） */
+  let cta = null
+  if (status === null) {
+    cta = <Button size="small" onClick={loadStatus}>重试</Button>
+  } else if (status?.apply_status === 'none') {
+    cta = (
+      <Button
+        size="small"
+        style={{ color: 'var(--accent)', borderColor: 'var(--accent)', borderRadius: 'var(--r-btn)' }}
+        onClick={apply}
+      >申请内测</Button>
+    )
+  } else if (status?.apply_status === 'rejected' && cooldownDays === 0) {
+    cta = (
+      <Button
+        size="small"
+        style={{ color: 'var(--accent)', borderColor: 'var(--accent)', borderRadius: 'var(--r-btn)' }}
+        onClick={apply}
+      >重新申请</Button>
+    )
+  }
+
+  return (
+    <div style={{ width: '100%', marginTop: -14 }}>
+      {/* 返回 + 标题：贴界面左上角（进文件柜后标题跟随，返回键回实验室） */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <Button
+          type="text" icon={<ArrowLeftOutlined />}
+          onClick={vaultOpen ? () => { setVaultOpen(false); loadStatus() } : onBack}
+        />
+        <h1 className="font-display font-display-sm" style={{ margin: 0 }}>
+          {vaultOpen ? '文件柜' : '星轨实验室'}
+        </h1>
+      </div>
+
+      {vaultOpen ? (
+        <div style={{ marginTop: 16 }}>
+          <UserVaultPanel />
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--mute)', margin: '10px 2px 16px', lineHeight: 1.7 }}>
+            还在打磨的新功能，先到先得。
+          </div>
+
+          {/* 功能卡片：文件柜 */}
+          <div
+            className="card"
+            onClick={cardClick || undefined}
+            style={{
+              padding: '16px 18px',
+              display: 'flex', alignItems: 'center', gap: 14,
+              cursor: cardClick ? 'pointer' : 'default',
+            }}
+          >
+            <div style={{
+              width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+              background: '#8b5cf614', color: '#8b5cf6',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
+            }}>
+              <FolderOpenOutlined />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>文件柜</span>
+                {badge}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 3, lineHeight: 1.6 }}>
+                把提取结果存进云端，随时在线查看渲染版
+                {status?.apply_status === 'rejected' && cooldownDays > 0 && (
+                  <span> · {cooldownDays} 天后可再次申请</span>
+                )}
+              </div>
+            </div>
+            {cta}
+            {!opened && (
+              <Button
+                size="small" type="text"
+                style={{ color: 'var(--accent)' }}
+                onClick={(e) => { e.stopPropagation(); setGuideOpen(true) }}
+              >功能介绍</Button>
+            )}
+            {opened && <RightOutlined style={{ fontSize: 11, color: 'var(--hairline-strong)', flexShrink: 0 }} />}
+          </div>
+
+          {/* 功能介绍引导页（申请前也能看；看过即记标记，正式进柜不重复弹） */}
+          <VaultGuideModal
+            open={guideOpen}
+            onClose={() => {
+              setGuideOpen(false)
+              try { localStorage.setItem('stellaris_vault_guide_seen', '1') } catch { /* 静默 */ }
+            }}
+          />
+        </>
       )}
     </div>
   )

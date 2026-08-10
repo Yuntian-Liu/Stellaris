@@ -1,64 +1,64 @@
 /**
- * 计费引导 — 分页沉浸式介绍（导航栏问号触发）
- * 四页：分钟 / 量子波 / 引力波 / 兑换与让利
+ * 文件柜引导 — 分页沉浸式介绍（首次进入文件柜自动弹出，可随时从工具行重开）
+ * 四页：是什么 / 怎么存 / 能做什么 / 边界与理念
  */
 import { useState, useEffect } from 'react'
 import { Modal, Button } from 'antd'
 import {
-  ClockCircleOutlined, GlobalOutlined, DotChartOutlined,
-  LeftOutlined, RightOutlined,
+  CloudOutlined, DownloadOutlined, FolderOpenOutlined,
+  SafetyOutlined, LeftOutlined, RightOutlined,
 } from '@ant-design/icons'
 
 const PAGES = [
   {
-    icon: <ClockCircleOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
-    title: '分钟 · 转写的燃料',
+    icon: <CloudOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
+    title: '文件柜 · 你的云端书架',
     body: [
-      '语音转写按视频时长计量，每天 0 点到凌晨 4 点间随时可用。',
-      '免费用户：每日 30 分钟 / 每周 120 分钟 / 每月 300 分钟。',
-      '每天凌晨 04:00（UTC+8）重置，熬夜不砍半。',
-      '未登录也能体验：每天 10 分钟免费尝一口。',
+      '把提取结果存进云端，不下载也能随时看。',
+      '字幕、全文、笔记、概要、AI 解读——提取的一切都能存。',
+      'Markdown 笔记和概要直接渲染成漂亮排版，公式、表格原样呈现。',
+      '手机、电脑、平板，打开网站就是你的书架。',
     ],
-    quote: '例：一个 16 分钟的视频，提取一次消耗 16 分钟额度，转写出约 2600 tokens 的字幕。',
+    quote: '不是每个人都装了 Markdown 编辑器。现在，不需要了。',
   },
   {
-    icon: <DotChartOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
-    title: '量子波 · 轻量 AI 货币',
+    icon: <DownloadOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
+    title: '怎么存 · 藏在下载按钮里',
     body: [
-      '驱动智能功能：字幕语义分段、内容总结概要。',
-      '汇率：1 量子波 = 100 tokens，按实际用量结算。',
-      '每周一 04:00 重新发放赠送额度（未用完的赠送部分不结转）。',
-      '做任务、清理数据可赚取永久量子波，攒着不消失。',
+      '在结果页找到任意产物的「下载」按钮。',
+      '悬浮或点击它，选「转存到文件柜」。',
+      '可以改文件名、选目标文件夹，一秒入库。',
+      '同一个视频想存几次都行，会自动编号不冲突。',
     ],
-    quote: '例：16 分钟视频约 2600 tokens 字幕，智能分段（输入+输出）约 5200 tokens，按 100:1 结算为 52 量子波。',
+    quote: '例：提取完一个视频，点「下载 → 转存到文件柜」，笔记就永久躺在你的书架上了。',
   },
   {
-    icon: <GlobalOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
-    title: '引力波 · 高级 AI 货币',
+    icon: <FolderOpenOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
+    title: '能做什么 · 不止是存',
     body: [
-      '驱动高级功能：Markdown 结构化笔记、AI 解读对话。',
-      '汇率：1 引力波 = 500 tokens，按实际用量结算。',
-      '注册即送 30 个，永不过期。',
-      '可用量子波兑换（25:1，每月限 5 次）。',
+      '在线查看：渲染排版与原文随时切换。',
+      '随时下载回本地，文件名原样奉还。',
+      '文件夹整理、重命名、移动，都像网盘一样顺手。',
+      '与提取记录互不影响：记录到期清理，柜子里的副本安然无恙。',
     ],
-    quote: '例：16 分钟视频生成 MD 笔记约消耗 5000 tokens，按 500:1 结算为 10 引力波；AI 解读每轮约 1500 tokens，结算为 3 引力波。',
+    quote: '删除文件柜里的内容不可恢复——但它也永远不会被自动清理。',
   },
   {
-    icon: <span style={{ fontSize: 22, fontFamily: "'Cormorant Garamond', serif", color: 'var(--accent)' }}>✦</span>,
-    title: '双向兑换 · 零头免单',
+    icon: <SafetyOutlined style={{ fontSize: 26, color: 'var(--accent)' }} />,
+    title: '边界 · 它不是网盘',
     body: [
-      '量子波 → 引力波：25:1，每月限 5 次。',
-      '引力波 → 量子波：1:20，随时可兑（往返有折损，想好再换）。',
-      '所有扣费都在成功后结算，失败分文不取。',
-      '结算零头不到四成都免单——这是我们的小心意。',
+      '只收本站生成的提取产物，不支持上传任意文件。',
+      '内测配额 5 MB——纯文本其实很能装，几百篇笔记不在话下。',
+      '想要更大空间，找开发者聊聊就好。',
+      '这个设计的初衷：让每一份提取结果，都有一个随时能回去的家。',
     ],
-    quote: '例：某次分段实际用了 440 tokens，只按 4 量子波结算——40 的零头免单。',
+    quote: '我们希望它做一件小事，并把这件小事做好。',
   },
 ]
 
-export default function GuideModal({ open, onClose }) {
+export default function VaultGuideModal({ open, onClose }) {
   const [page, setPage] = useState(0)
-  // 每次打开回到第一页（组件常驻挂载，useState 不会随 open 自动重置）
+  // 每次打开回到第一页
   useEffect(() => { if (open) setPage(0) }, [open])
 
   return (
@@ -74,7 +74,6 @@ export default function GuideModal({ open, onClose }) {
               {line}
             </p>
           ))}
-          {/* 灰色引用示例 */}
           <div style={{
             marginTop: 12,
             padding: '8px 12px',
@@ -90,11 +89,8 @@ export default function GuideModal({ open, onClose }) {
         </div>
       </div>
 
-      {/* 分页控制（左右等宽槽位，圆点永远居中——最后一页「开始探索」也不再挤歪） */}
-      <div style={{
-        display: 'flex', alignItems: 'center',
-        marginTop: 18,
-      }}>
+      {/* 分页控制（左右等宽槽位，圆点永远居中） */}
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 18 }}>
         <div style={{ width: 72, display: 'flex', justifyContent: 'flex-start' }}>
           <Button
             type="text" size="small" icon={<LeftOutlined />}
@@ -120,12 +116,11 @@ export default function GuideModal({ open, onClose }) {
             <Button type="text" size="small" icon={<RightOutlined />} onClick={() => setPage(p => p + 1)} />
           ) : (
             <Button type="text" size="small" onClick={onClose} style={{ color: 'var(--accent)' }}>
-              开始探索
+              开始使用
             </Button>
           )}
         </div>
       </div>
-      {/* 翻页动画 */}
       <style>{`
         @keyframes guidePageEnter {
           from { opacity: 0; transform: translateX(14px); }

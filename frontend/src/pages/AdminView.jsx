@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
-  Empty, Tooltip, message, Radio, Collapse, Switch, Upload,
+  Empty, Tooltip, message, Radio, Collapse, Switch, Upload, Segmented,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
@@ -26,6 +26,7 @@ import { adminApi } from '../hooks/api'
 import TierBadge from '../components/TierBadge'
 import PinModal from '../components/PinModal'
 import TicketStatusStamp from '../components/TicketStatusStamp'
+import QuotaBar from '../components/QuotaBar'
 import { tierMeta, GRANT_CONFIG } from '../utils/tier'
 import { MD_COMPONENTS, normalizeLatex } from './ResultPage'
 
@@ -1381,6 +1382,18 @@ function TicketsPanel() {
             {/* 非 pending 态：显示回复框 + 对应操作按钮 */}
             {(detail.status === 'processing' || detail.status === 'replied') && (
               <>
+                {/* 内测申请类工单：一键预填回复（可再编辑） */}
+                {detail.category === 'vault_apply' && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--mute)', lineHeight: '24px' }}>快速填充：</span>
+                    <Button size="small" onClick={() => setReplyText(
+                      '已为你开通文件柜内测～去 设置 → 关于 → 星轨实验室 就能看到它了。玩得开心，有建议随时来工单聊。'
+                    )}>已开通</Button>
+                    <Button size="small" onClick={() => setReplyText(
+                      '感谢你的申请！文件柜目前还在小范围内测，名额会逐步放开，这次暂时未能为你开通，还请见谅。我们会记录你的申请，扩大范围时优先联系你。'
+                    )}>未通过</Button>
+                  </div>
+                )}
                 <Input.TextArea rows={3} value={replyText} maxLength={2000}
                   placeholder="输入回复内容"
                   onChange={(e) => setReplyText(e.target.value)}
@@ -1691,13 +1704,13 @@ function isSensitiveName(path) {
 
 const fmtSize = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`)
 
-/** 文件夹名校验（镜像后端 path 段白名单 ^[\w.-]{1,64}$，Python \w 含中文；仅单级，不允许 /） */
-const FOLDER_NAME_RE = /^[一-鿿\w.-]{1,64}$/
+/** 文件夹名校验（黑名单制，镜像后端 validate_path：禁 / 和 \ 和 .. 段，其余含中文括号逗号空格都允许） */
 function folderNameError(name) {
   if (!name) return null   // 空不提示，由按钮禁用兜底
   if (name.includes('/')) return '只支持单级文件夹，名称不能包含 /'
-  if (name === '..') return '文件夹名不允许为 ..'
-  if (!FOLDER_NAME_RE.test(name)) return '仅允许中英文、数字、. _ -（≤64 字符）'
+  if (name.includes('\\')) return '名称不能包含反斜杠'
+  if (name.trim() === '..') return '文件夹名不允许为 ..'
+  if (name.trim().length > 64) return '最多 64 字符'
   return null
 }
 
@@ -1724,7 +1737,7 @@ function PassRules({ value }) {
   )
 }
 
-function VaultPanel() {
+function VaultMinePanel() {
   const { requirePin, pinModal } = usePinFlow()
   const [stage, setStage] = useState('loading')   // loading | set | unlock | main
   const [passInput, setPassInput] = useState('')
@@ -2109,6 +2122,12 @@ function VaultPanel() {
           })}
         </div>
         <span style={{ flex: 1 }} />
+        {listing?.total && (
+          <span className="font-caption" style={{ fontSize: 12, color: 'var(--mute)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            共 {listing.total.files} 个文件
+            <QuotaBar usedBytes={listing.total.used_bytes} quotaMb={null} width={110} />
+          </span>
+        )}
         <Button size="small" icon={<FolderAddOutlined />} onClick={() => setMkdirOpen(true)}>新建文件夹</Button>
         <Button size="small" icon={<ReloadOutlined />} onClick={() => load()}>刷新</Button>
         <Button size="small" type="text" onClick={() => setChangePassOpen(true)}>修改专用密码</Button>
@@ -2265,6 +2284,159 @@ function VaultPanel() {
       </Modal>
 
       {changePassModal}
+      {pinModal}
+    </div>
+  )
+}
+
+/* ── 文件柜 Tab 外壳：「我的文件」（管理端私人云柜）/「内测管理」（用户开放内测）── */
+
+function VaultPanel() {
+  const [view, setView] = useState('mine')
+  return (
+    <div>
+      <Segmented
+        value={view}
+        onChange={setView}
+        options={[
+          { value: 'mine', label: '我的文件' },
+          { value: 'beta', label: '内测管理' },
+        ]}
+        style={{ marginBottom: 12 }}
+      />
+      {view === 'mine' ? <VaultMinePanel /> : <VaultBetaPanel />}
+    </div>
+  )
+}
+
+/* ── 内测管理：用户文件柜开通/关闭 + 配额调整（改动都走 PIN）── */
+
+function VaultBetaPanel() {
+  const { requirePin, pinModal } = usePinFlow()
+  const [users, setUsers] = useState(null)
+  const [applies, setApplies] = useState([])   // 待审批申请
+  const [quotaEdits, setQuotaEdits] = useState({})   // uid → 编辑中的配额值
+
+  const load = useCallback(() => {
+    adminApi.vaultUsers()
+      .then((r) => { setUsers(r.users || []); setApplies(r.pending_applies || []) })
+      .catch((e) => message.error(e.message))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const toggleEnabled = (u, enabled) => requirePin(async (pin) => {
+    await adminApi.vaultSetUser({ pin, uid: u.uid, enabled })
+    message.success(enabled ? `已开通 ${u.nickname} 的文件柜` : `已关闭 ${u.nickname} 的文件柜`)
+    load()
+  })
+
+  // 一键开通（申请行内）：开通后该申请自动从待审批消失（enabled 后不再列入）
+  const approve = (a) => requirePin(async (pin) => {
+    await adminApi.vaultSetUser({ pin, uid: a.uid, enabled: true })
+    message.success(`已开通 ${a.nickname} 的文件柜；去「工单处理」回复一下申请单吧`)
+    load()
+  })
+
+  const saveQuota = (u) => {
+    const v = quotaEdits[u.uid]
+    if (v == null || v === u.quota_mb) return
+    requirePin(async (pin) => {
+      await adminApi.vaultSetUser({ pin, uid: u.uid, quota_mb: v })
+      message.success(`已将 ${u.nickname} 的配额调整为 ${v} MB`)
+      setQuotaEdits((m) => ({ ...m, [u.uid]: undefined }))
+      load()
+    })
+  }
+
+  const columns = [
+    {
+      title: 'UID', dataIndex: 'uid', width: 90,
+      render: (v) => <span className="font-mono" style={{ fontSize: 12 }}>{v}</span>,
+    },
+    {
+      title: '昵称', dataIndex: 'nickname',
+      render: (v) => <span style={{ fontSize: 13, color: 'var(--ink)' }}>{v}</span>,
+    },
+    {
+      title: '用量', key: 'usage', width: 190,
+      render: (_, u) => <QuotaBar usedBytes={u.used_bytes} quotaMb={u.quota_mb} width={100} />,
+    },
+    {
+      title: '文件数', dataIndex: 'files', width: 80,
+      render: (v) => <span className="font-mono" style={{ fontSize: 12 }}>{v}</span>,
+    },
+    {
+      title: '状态', key: 'enabled', width: 80,
+      render: (_, u) => (
+        <Switch size="small" checked={u.enabled} onChange={(v) => toggleEnabled(u, v)} />
+      ),
+    },
+    {
+      title: '配额 (MB)', key: 'quota', width: 200,
+      render: (_, u) => (
+        <span style={{ display: 'inline-flex', gap: 6 }}>
+          <InputNumber
+            size="small" min={0} max={1000}
+            value={quotaEdits[u.uid] ?? u.quota_mb}
+            onChange={(v) => setQuotaEdits((m) => ({ ...m, [u.uid]: v }))}
+            style={{ width: 90 }}
+          />
+          <Button
+            size="small"
+            disabled={quotaEdits[u.uid] == null || quotaEdits[u.uid] === u.quota_mb}
+            onClick={() => saveQuota(u)}
+          >确认</Button>
+        </span>
+      ),
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, color: 'var(--mute)' }}>
+          用户文件柜内测名单：开关 = 开通/关闭（关闭后文件保留），配额 0-1000 MB；改动都需 PIN。
+        </span>
+        <span style={{ flex: 1 }} />
+        <Button size="small" icon={<ReloadOutlined />} onClick={load}>刷新</Button>
+      </div>
+
+      {/* 待审批申请（一键开通；拒绝/回复去工单处理） */}
+      {applies.length > 0 && (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>
+            待审批申请（{applies.length}）
+          </div>
+          {applies.map((a) => (
+            <div key={a.tid} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 0', borderTop: '1px solid var(--hairline)',
+          }}>
+              <span style={{ fontSize: 13, color: 'var(--ink)' }}>{a.nickname}</span>
+              <span className="font-mono" style={{ fontSize: 12, color: 'var(--mute)' }}>uid {a.uid}</span>
+              <span style={{ fontSize: 12, color: 'var(--mute)' }}>
+                {a.created_at ? new Date(a.created_at).toLocaleString('zh-CN', { hour12: false }) : ''}
+              </span>
+              <span style={{ flex: 1 }} />
+              <Button
+                size="small" type="primary"
+                style={{ borderRadius: 'var(--r-btn)' }}
+                onClick={() => approve(a)}
+              >开通</Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Table
+        rowKey="uid"
+        size="small"
+        columns={columns}
+        dataSource={users || []}
+        loading={!users}
+        pagination={false}
+        locale={{ emptyText: '还没有内测用户' }}
+      />
       {pinModal}
     </div>
   )
