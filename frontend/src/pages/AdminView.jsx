@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Button, Tabs, Table, Tag, Input, InputNumber, Select, Modal, DatePicker,
   Empty, Tooltip, message, Radio, Collapse, Switch, Upload, Segmented,
+  Checkbox, Popconfirm,
 } from 'antd'
 import {
   ArrowLeftOutlined, SearchOutlined, CopyOutlined, ReloadOutlined,
@@ -1202,6 +1203,9 @@ function TicketsPanel() {
   const [detail, setDetail] = useState(null)    // 详情弹窗
   const [replyText, setReplyText] = useState('')
   const [acting, setActing] = useState(false)
+  // V1.2.1 内测申请工单：快速填充联动真操作（null/'approve'/'reject'）+ 联动开关
+  const [vaultAction, setVaultAction] = useState(null)
+  const [vaultLink, setVaultLink] = useState(true)
   const { requirePin, pinModal } = usePinFlow()
 
   const load = useCallback(async () => {
@@ -1225,6 +1229,7 @@ function TicketsPanel() {
     try {
       const t = await adminApi.getTicket(tid)
       setDetail(t); setReplyText(t.admin_reply || '')
+      setVaultAction(null); setVaultLink(true)
     } catch (e) { message.error(e.message) }
   }
 
@@ -1251,7 +1256,22 @@ function TicketsPanel() {
       // reply / reply_close 需要回复内容
       if (!replyText.trim()) { message.warning('请输入回复内容'); return }
     }
-    requirePin(async (pin) => doAction(action, pin, action === 'close' || action === 'start' || action === 'reopen' ? null : replyText.trim()))
+    requirePin(async (pin) => {
+      // V1.2.1 内测申请工单：勾选联动时先真开通/真拒绝，成功后才回复（失败则中止回复）
+      if ((action === 'reply' || action === 'reply_close') && vaultAction && vaultLink
+          && detail?.category === 'vault_apply') {
+        try {
+          await adminApi.vaultSetUser(vaultAction === 'approve'
+            ? { pin, uid: detail.user_uid, enabled: true }
+            : { pin, uid: detail.user_uid, rejected: true })
+          message.success(vaultAction === 'approve' ? '已同步开通该用户文件柜' : '已同步拒绝该申请')
+        } catch (e) {
+          message.error(`联动操作失败，工单未回复：${e.message}`)
+          return
+        }
+      }
+      await doAction(action, pin, action === 'close' || action === 'start' || action === 'reopen' ? null : replyText.trim())
+    })
   }
 
   return (
@@ -1382,22 +1402,39 @@ function TicketsPanel() {
             {/* 非 pending 态：显示回复框 + 对应操作按钮 */}
             {(detail.status === 'processing' || detail.status === 'replied') && (
               <>
-                {/* 内测申请类工单：一键预填回复（可再编辑） */}
+                {/* 内测申请类工单：一键预填回复（可再编辑）+ V1.2.1 联动真开通/真拒绝 */}
                 {detail.category === 'vault_apply' && (
                   <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <span style={{ fontSize: 12, color: 'var(--mute)', lineHeight: '24px' }}>快速填充：</span>
-                    <Button size="small" onClick={() => setReplyText(
-                      '已为你开通文件柜内测～去 设置 → 关于 → 星轨实验室 就能看到它了。玩得开心，有建议随时来工单聊。'
-                    )}>已开通</Button>
-                    <Button size="small" onClick={() => setReplyText(
-                      '感谢你的申请！文件柜目前还在小范围内测，名额会逐步放开，这次暂时未能为你开通，还请见谅。我们会记录你的申请，扩大范围时优先联系你。'
-                    )}>未通过</Button>
+                    <Button size="small" onClick={() => {
+                      setReplyText(
+                        '已为你开通文件柜内测～去 设置 → 关于 → 星轨实验室 就能看到它了。玩得开心，有建议随时来工单聊。'
+                      ); setVaultAction('approve'); setVaultLink(true)
+                    }}>已开通</Button>
+                    <Button size="small" onClick={() => {
+                      setReplyText(
+                        '感谢你的申请！文件柜目前还在小范围内测，名额会逐步放开，这次暂时未能为你开通，还请见谅。我们会记录你的申请，扩大范围时优先联系你。'
+                      ); setVaultAction('reject'); setVaultLink(true)
+                    }}>未通过</Button>
                   </div>
                 )}
                 <Input.TextArea rows={3} value={replyText} maxLength={2000}
                   placeholder="输入回复内容"
                   onChange={(e) => setReplyText(e.target.value)}
                   style={{ marginBottom: 12 }} />
+                {detail.category === 'vault_apply' && vaultAction && (
+                  <div style={{ marginBottom: 12 }}>
+                    <Checkbox
+                      checked={vaultLink}
+                      onChange={(e) => setVaultLink(e.target.checked)}
+                      style={{ fontSize: 12 }}
+                    >
+                      {vaultAction === 'approve'
+                        ? '同时开通该用户的文件柜权限'
+                        : '同时拒绝该申请（对方 7 天后才能再次申请）'}
+                    </Checkbox>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                   <Button loading={acting} onClick={() => onAction('reply')}>回复</Button>
                   <Button loading={acting} danger onClick={() => onAction('reply_close')}>回复并关闭</Button>
@@ -2315,11 +2352,16 @@ function VaultBetaPanel() {
   const { requirePin, pinModal } = usePinFlow()
   const [users, setUsers] = useState(null)
   const [applies, setApplies] = useState([])   // 待审批申请
+  const [rejected, setRejected] = useState([]) // 被拒记录（V1.2.1 审批留痕）
   const [quotaEdits, setQuotaEdits] = useState({})   // uid → 编辑中的配额值
 
   const load = useCallback(() => {
     adminApi.vaultUsers()
-      .then((r) => { setUsers(r.users || []); setApplies(r.pending_applies || []) })
+      .then((r) => {
+        setUsers(r.users || [])
+        setApplies(r.pending_applies || [])
+        setRejected(r.rejected || [])
+      })
       .catch((e) => message.error(e.message))
   }, [])
   useEffect(() => { load() }, [load])
@@ -2334,6 +2376,19 @@ function VaultBetaPanel() {
   const approve = (a) => requirePin(async (pin) => {
     await adminApi.vaultSetUser({ pin, uid: a.uid, enabled: true })
     message.success(`已开通 ${a.nickname} 的文件柜；去「工单处理」回复一下申请单吧`)
+    load()
+  })
+
+  // V1.2.1 显式拒绝（写 vault_rejected_at = 未通过 + 7 天冷却；可从「被拒记录」撤销）
+  const rejectApply = (a) => requirePin(async (pin) => {
+    await adminApi.vaultSetUser({ pin, uid: a.uid, rejected: true })
+    message.success(`已拒绝 ${a.nickname} 的申请；去「工单处理」回复一下申请单吧`)
+    load()
+  })
+
+  const clearReject = (u) => requirePin(async (pin) => {
+    await adminApi.vaultSetUser({ pin, uid: u.uid, rejected: false })
+    message.success(`已撤销对 ${u.nickname} 的拒绝`)
     load()
   })
 
@@ -2423,8 +2478,46 @@ function VaultBetaPanel() {
                 style={{ borderRadius: 'var(--r-btn)' }}
                 onClick={() => approve(a)}
               >开通</Button>
+              <Popconfirm
+                title="拒绝该申请？"
+                description="对方将看到「未通过」，7 天后才能再次申请。误操作可在下方被拒记录撤销。"
+                okText="拒绝" cancelText="再想想" okButtonProps={{ danger: true }}
+                onConfirm={() => rejectApply(a)}
+              >
+                <Button size="small" danger style={{ borderRadius: 'var(--r-btn)' }}>拒绝</Button>
+              </Popconfirm>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* V1.2.1 被拒记录：审批留痕 + 误审批可撤销（撤销后申请回到待审批） */}
+      {rejected.length > 0 && (
+        <div className="card" style={{ padding: '12px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>
+            被拒记录（{rejected.length}）
+          </div>
+          {rejected.map((u) => {
+            const daysLeft = Math.max(0, 7 - Math.floor((Date.now() - new Date(u.rejected_at).getTime()) / 86400000))
+            return (
+              <div key={u.uid} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 0', borderTop: '1px solid var(--hairline)',
+              }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>{u.nickname}</span>
+                <span className="font-mono" style={{ fontSize: 12, color: 'var(--mute)' }}>uid {u.uid}</span>
+                <span style={{ fontSize: 12, color: 'var(--mute)' }}>
+                  {new Date(u.rejected_at).toLocaleString('zh-CN', { hour12: false })} 拒绝
+                </span>
+                <span style={{ fontSize: 12, color: daysLeft > 0 ? '#d97706' : 'var(--mute)' }}>
+                  {daysLeft > 0 ? `${daysLeft} 天后可再申请` : '冷却已结束'}
+                </span>
+                <span style={{ flex: 1 }} />
+                <Button size="small" style={{ borderRadius: 'var(--r-btn)' }}
+                  onClick={() => clearReject(u)}>撤销拒绝</Button>
+              </div>
+            )
+          })}
         </div>
       )}
 

@@ -162,15 +162,21 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
                 used_b, file_n = await user_used_bytes(u.uid)
                 user_ctx["vault_used_bytes"] = used_b
                 user_ctx["vault_files"] = file_n
-            # 内测申请状态（小克 08 棒：申请类工单的定位依据；只报状态，不含内容）
-            from ticket_store import SupportTicket
-            latest_apply = (await session.execute(
-                select(SupportTicket).where(SupportTicket.user_uid == uid,
-                                            SupportTicket.category == "vault_apply")
-                .order_by(SupportTicket.id.desc()).limit(1)
-            )).scalar_one_or_none()
-            if latest_apply:
-                user_ctx["vault_apply_status"] = latest_apply.status
+            # 内测申请状态（V1.2.1 改报推导后状态，与实验室所见一致；只报状态，不含内容）
+            if u and u.vault_enabled:
+                user_ctx["vault_apply_status"] = "approved"
+            elif u and u.vault_rejected_at:
+                user_ctx["vault_apply_status"] = "rejected"
+                # 被拒时间：冷却类问题（"为什么还不能申请"）的定位依据；本人自己的时间戳，可导出
+                user_ctx["vault_rejected_at"] = u.vault_rejected_at.isoformat() + "Z"
+            else:
+                from ticket_store import SupportTicket
+                latest_apply = (await session.execute(
+                    select(SupportTicket.id).where(SupportTicket.user_uid == uid,
+                                                   SupportTicket.category == "vault_apply")
+                    .limit(1)
+                )).first()
+                user_ctx["vault_apply_status"] = "pending" if latest_apply else "none"
             b = await session.get(UserBilling, uid)
             if b:
                 tier_key = await _effective_tier_key(session, b)

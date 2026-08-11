@@ -174,7 +174,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.2.0-canopus",
+    version="1.2.1-canopus",
     lifespan=lifespan,
 )
 
@@ -1638,10 +1638,15 @@ async def _vault_user_guard(current_user: User) -> int:
 
 @app.get("/api/vault/status")
 async def vault_status(current_user: User = Depends(get_current_user)):
-    """实验室徽章状态：enabled/quota/used/apply_status（none/pending/approved/rejected）"""
+    """实验室徽章状态：enabled/quota/used/apply_status（none/pending/approved/rejected）
+
+    V1.2.1 显式推导（工单回复不再影响实验室状态）：
+    approved=已开通；rejected=显式拒绝（vault_rejected_at，7 天冷却基准）；
+    pending=申请过且未通过未被拒（无论工单是否已回复/关闭）；none=真未申请。"""
     enabled, quota = _vault_user_flags(current_user)
     used, _count = await vault_user_used_bytes(current_user.uid)
-    # 最近一条内测申请（category=vault_apply）
+    rejected_at = current_user.vault_rejected_at
+    # 是否申请过（category=vault_apply，任何工单状态都算）
     from ticket_store import SupportTicket
     async with async_session() as session:
         t = (await session.execute(
@@ -1651,44 +1656,57 @@ async def vault_status(current_user: User = Depends(get_current_user)):
         )).scalar_one_or_none()
     if enabled:
         apply_status = "approved"
-    elif t is None:
-        apply_status = "none"
-    elif t.status in ("pending", "processing"):
+    elif rejected_at:
+        apply_status = "rejected"
+    elif t is not None:
         apply_status = "pending"
     else:
-        apply_status = "rejected"
+        apply_status = "none"
     return {"enabled": enabled, "quota_mb": quota, "used_bytes": used,
             "apply_status": apply_status,
-            "apply_updated_at": t.updated_at.isoformat() + "Z" if t and t.updated_at else None}
+            "apply_updated_at": rejected_at.isoformat() + "Z" if rejected_at else (
+                t.updated_at.isoformat() + "Z" if t and t.updated_at else None)}
 
 
 @app.post("/api/vault/apply")
 async def vault_apply(req: Request, current_user: User = Depends(get_current_user)):
-    """内测申请（幂等 + uid 限流 5/h + 被拒 7 天冷却）"""
+    """内测申请（幂等 + uid 限流 5/h + 显式拒绝 7 天冷却）
+
+    V1.2.1：冷却只看显式拒绝（vault_rejected_at），工单回复不再触发冷却；
+    未被拒时只要申请过（任何工单状态）就 409——"审核中"期间不可重复申请。"""
     enabled, _ = _vault_user_flags(current_user)
     if enabled:
         return {"ok": True, "msg": "你已开通文件柜"}
     if not check_uid_rate("ticket_apply", current_user.uid, 5, 3600):
         raise HTTPException(status_code=429, detail="申请太频繁，请稍后再试")
     from ticket_store import SupportTicket
-    async with async_session() as session:
-        latest = (await session.execute(
-            select(SupportTicket).where(SupportTicket.user_uid == current_user.uid,
-                                        SupportTicket.category == "vault_apply")
-            .order_by(SupportTicket.id.desc()).limit(1)
-        )).scalar_one_or_none()
-    if latest and latest.status in ("pending", "processing"):
-        raise HTTPException(status_code=409, detail="你已提交过申请，开发者会尽快处理，请耐心等待")
-    if latest and latest.status in ("closed", "replied") and latest.updated_at:
+    rejected_at = current_user.vault_rejected_at
+    if rejected_at:
         # 库里是 naive UTC（踩坑 14 体系），统一按 naive 比较
-        days = (datetime.now(timezone.utc).replace(tzinfo=None) - latest.updated_at).days
+        days = (datetime.now(timezone.utc).replace(tzinfo=None) - rejected_at).days
         if days < 7:
             raise HTTPException(status_code=429, detail=f"上次申请未通过，{7 - days} 天后可再次申请")
+    else:
+        async with async_session() as session:
+            has_apply = (await session.execute(
+                select(SupportTicket.id).where(SupportTicket.user_uid == current_user.uid,
+                                               SupportTicket.category == "vault_apply").limit(1)
+            )).first() is not None
+        if has_apply:
+            raise HTTPException(status_code=409, detail="你已提交过申请，开发者会尽快处理，请耐心等待")
     body = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
     note = str(body.get("note", ""))[:500]
     await create_ticket(current_user.uid, title="内测申请：文件柜",
                         category="vault_apply",
                         description=note or "申请开通文件柜内测权限")
+    if rejected_at:
+        # 冷却期满后重新申请：洗白拒绝记录（状态回到"审核中"）
+        async with async_session() as session:
+            u = (await session.execute(
+                select(User).where(User.uid == current_user.uid))).scalar_one_or_none()
+            if u:
+                u.vault_rejected_at = None
+                await session.commit()
     return {"ok": True, "msg": "已提交申请，开发者会尽快处理"}
 
 
@@ -1789,27 +1807,42 @@ async def admin_vault_users(current_user: User = Depends(get_admin_user)):
         out.append({"uid": u.uid, "nickname": u.nickname,
                     "enabled": bool(u.vault_enabled),
                     "quota_mb": u.vault_quota_mb if u.vault_quota_mb is not None else 5,
+                    "rejected_at": u.vault_rejected_at.isoformat() + "Z" if u.vault_rejected_at else None,
                     **g})
-    # 待审批申请（pending/processing 且尚未开通的；开通后自动从这里消失）
+    # 待审批申请（V1.2.1 用户维度口径：申请过 + 未开通 + 未被显式拒绝；
+    # 工单回复不影响出入列，开通或拒绝后才消失）
     from ticket_store import SupportTicket
     async with async_session() as session:
+        latest_ids = (select(_func.max(SupportTicket.id))
+                      .where(SupportTicket.category == "vault_apply")
+                      .group_by(SupportTicket.user_uid).scalar_subquery())
         pending = (await session.execute(
             select(SupportTicket, AuthUser.nickname)
             .join(AuthUser, AuthUser.uid == SupportTicket.user_uid)
-            .where(SupportTicket.category == "vault_apply",
-                   SupportTicket.status.in_(["pending", "processing"]),
-                   AuthUser.vault_enabled.is_not(True))
+            .where(SupportTicket.id.in_(latest_ids),
+                   AuthUser.vault_enabled.is_not(True),
+                   AuthUser.vault_rejected_at.is_(None))
             .order_by(SupportTicket.id.desc())
         )).all()
     applies = [{"tid": t.id, "uid": t.user_uid, "nickname": nick,
                 "created_at": t.created_at.isoformat() + "Z" if t.created_at else None}
                for t, nick in pending]
-    return {"users": sorted(out, key=lambda x: x["uid"]), "pending_applies": applies}
+    # 被拒记录（V1.2.1）：显式拒绝留痕——被拒用户未开通也无文件，不在上方名单里，
+    # 单列返回给前端「被拒记录」区（审批留痕 + 撤销入口）
+    async with async_session() as session:
+        rejected_rows = (await session.execute(
+            select(AuthUser).where(AuthUser.vault_rejected_at.is_not(None))
+        )).scalars().all()
+    rejected = [{"uid": u.uid, "nickname": u.nickname,
+                 "rejected_at": u.vault_rejected_at.isoformat() + "Z"}
+                for u in rejected_rows]
+    return {"users": sorted(out, key=lambda x: x["uid"]), "pending_applies": applies,
+            "rejected": rejected}
 
 
 @app.post("/api/admin/vault/user")
 async def admin_vault_user_set(req: Request, current_user: User = Depends(get_admin_user)):
-    """开通/关闭/调额 {pin, uid, enabled?, quota_mb?}（PIN 校验）"""
+    """开通/关闭/调额/拒绝/撤销拒绝 {pin, uid, enabled?, quota_mb?, rejected?}（PIN 校验）"""
     body = await req.json()
     await _check_admin_pin(current_user, body)
     from auth.models import User as AuthUser
@@ -1822,14 +1855,19 @@ async def admin_vault_user_set(req: Request, current_user: User = Depends(get_ad
             raise HTTPException(status_code=404, detail="用户不存在")
         if "enabled" in body:
             u.vault_enabled = bool(body["enabled"])
+            if body["enabled"]:
+                u.vault_rejected_at = None   # 开通即洗白拒绝记录
+        if "rejected" in body:
+            # 显式拒绝（V1.2.1）：写拒绝时间 = 未通过 + 7 天冷却基准；False = 撤销
+            u.vault_rejected_at = datetime.now(timezone.utc).replace(tzinfo=None) if body["rejected"] else None
         if body.get("quota_mb") is not None:
             q = int(body["quota_mb"])
             if q < 0:
                 raise HTTPException(status_code=400, detail="配额不能为负数")
             u.vault_quota_mb = q
         await session.commit()
-    logger.info("[Vault] 管理员调整用户文件柜: uid=%s enabled=%s quota=%s",
-                uid, body.get("enabled"), body.get("quota_mb"))
+    logger.info("[Vault] 管理员调整用户文件柜: uid=%s enabled=%s quota=%s rejected=%s",
+                uid, body.get("enabled"), body.get("quota_mb"), body.get("rejected"))
     return {"ok": True}
 
 

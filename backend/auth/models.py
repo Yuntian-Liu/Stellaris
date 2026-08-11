@@ -27,6 +27,8 @@ class User(Base):
     vault_pass_hash: Mapped[str | None] = mapped_column(String, nullable=True)   # V1.1.3 文件柜专用密码
     vault_enabled: Mapped[bool | None] = mapped_column(nullable=True)    # V1.2.0 文件柜内测开关（NULL/0=未开通）
     vault_quota_mb: Mapped[int | None] = mapped_column(nullable=True)    # V1.2.0 配额 MB（NULL→默认 5）
+    # V1.2.1 内测申请显式拒绝时间（非空=未通过，7 天冷却基准；开通/重新申请/撤销时清空）
+    vault_rejected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     badge: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

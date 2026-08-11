@@ -53,6 +53,7 @@ _EXPECTED_COLUMNS = [
     ("users", "vault_pass_hash", "VARCHAR"),
     ("users", "vault_enabled", "BOOLEAN"),
     ("users", "vault_quota_mb", "INTEGER"),
+    ("users", "vault_rejected_at", "DATETIME"),
     ("redeem_codes", "grant_mode", "VARCHAR"),
     ("redeem_codes", "quantum_grant", "INTEGER"),
     ("redeem_codes", "gravity_grant", "INTEGER"),
