@@ -21,7 +21,7 @@ export default function AuthPage({ onSuccess }) {
   // EmailStep 回调:发码成功→进 code;密码登录成功→完成
   const handleEmailSuccess = useCallback((data) => {
     if (data.step === 'code') {
-      setFlowData({ email: data.email, turnstileToken: data.turnstileToken })
+      setFlowData({ email: data.email })
       setStep('code')
     } else if (data.step === 'done') {
       login(data.token, data.user)
@@ -67,7 +67,6 @@ export default function AuthPage({ onSuccess }) {
       {step === 'code' && (
         <CodeStep
           email={flowData.email}
-          turnstileToken={flowData.turnstileToken}
           onBack={() => setStep('email')}
           onSuccess={handleCodeSuccess}
         />

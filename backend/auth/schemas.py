@@ -25,6 +25,9 @@ class CheckEmailResponse(BaseModel):
 
 class SendCodeRequest(BaseModel):
     email: EmailStr
+    # 图形验证码（V1.2.2 自托管人机验证；生产必填，dev bypass 可空）
+    captcha_id: str | None = Field(None, max_length=64)
+    captcha_answer: str | None = Field(None, max_length=16)
 
 
 class SendCodeResponse(BaseModel):
@@ -56,6 +59,9 @@ class RegisterRequest(BaseModel):
 class LoginPasswordRequest(BaseModel):
     email_or_uid: str = Field(..., description="邮箱或 UID")
     password: str
+    # 图形验证码（V1.2.2 自托管人机验证；生产必填，dev bypass 可空）
+    captcha_id: str | None = Field(None, max_length=64)
+    captcha_answer: str | None = Field(None, max_length=16)
 
 
 class UpdateProfileRequest(BaseModel):

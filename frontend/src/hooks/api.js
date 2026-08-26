@@ -112,6 +112,8 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
+  let receivedText = false      // V1.2.2：done 但零正文的防线（后端空回答的前端保险，踩坑 25）
+  let receivedTerminal = false  // V1.2.2：EOF 前必须见过 done/error，否则视为流中断（Codex 06）
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
@@ -124,9 +126,18 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
       if (!raw.startsWith('data:')) continue
       let evt
       try { evt = JSON.parse(raw.slice(5)) } catch { continue }
-      if (evt.type === 'delta') onDelta?.(evt.text)
-      else if (evt.type === 'done') onDone?.(evt.usage, evt.charged)
+      if (evt.type === 'delta') {
+        if (evt.text && evt.text.trim()) receivedText = true
+        onDelta?.(evt.text)
+      }
+      else if (evt.type === 'done') {
+        receivedTerminal = true
+        // 后端已判空发 error（V1.2.2），这里是旧实例/回归的二次保险
+        if (!receivedText) throw new Error('AI 本次未能生成回答，请换个问法或稍后重试')
+        onDone?.(evt.usage, evt.charged)
+      }
       else if (evt.type === 'error') {
+        receivedTerminal = true
         // evt.message 可能是对象（后端 str(e) 把 SDK 异常体序列化进来），强制转可读字符串
         const msg = typeof evt.message === 'string'
           ? evt.message
@@ -135,6 +146,8 @@ export async function chatStream(taskId, message, history, { onDelta, onDone } =
       }
     }
   }
+  // V1.2.2：EOF 前没见过终止事件 = 流被中途掐断（网关/代理/网络），不得静默留下三点（Codex 06）
+  if (!receivedTerminal) throw new Error('连接中断，请重试')
 }
 export const cleanupTask = (taskId) => request(`/api/task/${taskId}`, { method: 'DELETE' })
 
@@ -150,17 +163,16 @@ export function getDownloadUrl(taskId, format) {
 
 export const authApi = {
   checkEmail: (email) => request('/api/auth/check-email', { method: 'POST', body: { email } }),
-  sendCode: (email, turnstileToken) => request('/api/auth/send-code', {
+  sendCode: (email, captcha) => request('/api/auth/send-code', {
     method: 'POST',
-    body: { email },
-    headers: { 'cf-turnstile-response': turnstileToken || '' },
+    // V1.2.2 自托管图形验证码：captcha = {captchaId, answer}（dev bypass 时 CaptchaField 会给占位值）
+    body: { email, captcha_id: captcha?.captchaId || null, captcha_answer: captcha?.answer || null },
   }),
   loginCode: (email, code) => request('/api/auth/login-code', { method: 'POST', body: { email, code } }),
   register: (payload) => request('/api/auth/register', { method: 'POST', body: payload }),
-  loginPassword: (email_or_uid, password, turnstileToken) => request('/api/auth/login-password', {
+  loginPassword: (email_or_uid, password, captcha) => request('/api/auth/login-password', {
     method: 'POST',
-    headers: { 'cf-turnstile-response': turnstileToken || '' },
-    body: { email_or_uid, password },
+    body: { email_or_uid, password, captcha_id: captcha?.captchaId || null, captcha_answer: captcha?.answer || null },
   }),
   getMe: () => request('/api/auth/me'),
   updateProfile: (payload) => request('/api/auth/profile', { method: 'PUT', body: payload }),
@@ -263,6 +275,7 @@ export const adminApi = {
   /* 文件柜用户内测管理：开通/关闭 + 配额调整（走 requirePin，PIN 放请求体） */
   vaultUsers: () => request('/api/admin/vault/users'),
   vaultSetUser: (payload) => request('/api/admin/vault/user', { method: 'POST', body: payload }),
+  llmHealth: () => request('/api/admin/llm-health'),
 }
 
 export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }

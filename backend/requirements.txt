@@ -20,9 +20,11 @@ greenlet>=3.0              # sqlalchemy async 的隐式依赖（Python 3.14 装 
 aiosqlite>=0.20.0          # SQLAlchemy 的 async sqlite driver
 bcrypt>=4.0.0              # 密码哈希（直接用,不通过 passlib——passlib 1.7.4 停更,不兼容 bcrypt 5.0）
 pyjwt>=2.8.0               # JWT 签发/校验
-httpx>=0.27.0              # Resend 邮件 + Turnstile 的 HTTP 调用
+httpx>=0.27.0              # Resend 邮件等 HTTP 调用
 email-validator>=2.0.0     # Pydantic EmailStr 依赖
 cryptography>=42.0.0       # 爱发电 webhook RSA-SHA256 验签
+captcha>=0.5.0             # 自托管图形人机验证（V1.2.2 替代 Cloudflare Turnstile）
+Pillow>=10.0.0             # captcha 的图片生成依赖（显式声明）
 
 # ===== 数据库备份（腾讯云 COS）=====
 cos-python-sdk-v5>=1.9.0   # SQLite 自动备份到对象存储

@@ -17,7 +17,7 @@ import {
 import api, { authApi, getToken, ticketApi, vaultApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
-import TurnstileField from '../components/auth/TurnstileField'
+import CaptchaField from '../components/auth/CaptchaField'
 import ExchangeModal from '../components/ExchangeModal'
 import MembershipCards from '../components/MembershipCards'
 import RedeemModal from '../components/RedeemModal'
@@ -1053,7 +1053,8 @@ function PasswordModal({ open, email, onClose }) {
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
   const [code, setCode] = useState('')
-  const [turnstileToken, setTurnstileToken] = useState(null)
+  const [captcha, setCaptcha] = useState(null)         // 图形验证码（V1.2.2）
+  const [captchaKey, setCaptchaKey] = useState(0)
   const [codeSent, setCodeSent] = useState(false)
   const [countdown, setCountdown] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -1062,6 +1063,7 @@ function PasswordModal({ open, email, onClose }) {
     if (open) {
       setTab('old'); setOldPwd(''); setNewPwd(''); setCode('')
       setCodeSent(false); setCountdown(0)
+      setCaptcha(null); setCaptchaKey(k => k + 1)   // 重开弹窗换新题（票据一次性+5 分钟过期）
     }
   }, [open])
 
@@ -1072,14 +1074,16 @@ function PasswordModal({ open, email, onClose }) {
   }, [countdown])
 
   const sendCode = async () => {
-    if (!turnstileToken) { message.warning('请完成人机验证'); return }
+    if (!captcha) { message.warning('请完成人机验证'); return }
     try {
-      await authApi.sendCode(email, turnstileToken)
+      await authApi.sendCode(email, captcha)
       setCodeSent(true)
       setCountdown(60)
+      setCaptchaKey(k => k + 1)   // 票据已消耗（一次性），立即换新题供下次重发（Codex 06）
       message.success('验证码已发送到你的邮箱')
     } catch (e) {
       message.error(e.message)
+      setCaptchaKey(k => k + 1)   // 票据一次性，失败后换新题
     }
   }
 
@@ -1120,7 +1124,7 @@ function PasswordModal({ open, email, onClose }) {
         )}
         {tab === 'code' && (
           <>
-            <TurnstileField onToken={setTurnstileToken} />
+            <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
             <div style={{ display: 'flex', gap: 8 }}>
               <Input
                 placeholder="6 位验证码" value={code} maxLength={6}

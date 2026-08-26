@@ -96,11 +96,9 @@ JWT_EXPIRE_DAYS = 30
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM = os.getenv("RESEND_FROM", "Stellaris <noreply@ytunx.com>")
 
-# Cloudflare Turnstile（人机验证；site key 给前端，secret 留后端）
-TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "")
-TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "")
+# 人机验证（V1.2.2 起）：自托管图形验证码（auth/captcha.py），无需任何外部密钥
 
-# 运行环境（true=真实发邮件+强制Turnstile；false=验证码打印日志+Turnstile bypass）
+# 运行环境（true=真实发邮件+强制人机验证；false=验证码打印日志+人机验证 bypass）
 IS_PROD = os.getenv("IS_PROD", "false").lower() == "true"
 
 # CORS 白名单（逗号分隔）。dev 默认 localhost；生产同源无需 CORS，分离部署时通过 env 设实际域名

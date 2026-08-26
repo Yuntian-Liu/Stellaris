@@ -7,7 +7,6 @@ from config import (
     ALLOWED_ORIGINS, MAX_VIDEO_SIZE_MB, JWT_EXPIRE_DAYS, JWT_SECRET,
     COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET,
     MIMO_API_KEY, LLM_API_KEY,
-    TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY,
     AFDIAN_API_TOKEN, RESEND_API_KEY,
 )
 from auth.utils import (
@@ -39,8 +38,8 @@ def get_security_status() -> dict:
             "password_complexity": ["字母", "数字", "符号"],
             "login_rate_limit": f"{LOGIN_RATE_MAX}次/{LOGIN_RATE_WINDOW_SEC}秒",
             "code_rate_limit": f"{RATE_LIMIT_MAX}次/{RATE_LIMIT_WINDOW_SEC}秒",
-            "turnstile_on_send_code": bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY),
-            "turnstile_on_login": bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY),
+            "captcha_on_send_code": True,   # V1.2.2 起自托管图形验证码，永远覆盖
+            "captcha_on_login": True,
         },
         "network": {
             "cors_origins": ALLOWED_ORIGINS,
@@ -53,7 +52,6 @@ def get_security_status() -> dict:
             "mimo_key_set": bool(MIMO_API_KEY),
             "llm_key_set": bool(LLM_API_KEY),
             "cos_configured": bool(COS_SECRET_ID and COS_SECRET_KEY and COS_BUCKET),
-            "turnstile_secret_set": bool(TURNSTILE_SECRET_KEY),
             "afdian_token_set": bool(AFDIAN_API_TOKEN),
             "resend_key_set": bool(RESEND_API_KEY),
         },

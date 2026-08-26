@@ -1,18 +1,14 @@
 /**
- * 邮箱步 — 邮箱输入 + 验证码/密码双 tab + Turnstile + 协议勾选
+ * 邮箱步 — 邮箱输入 + 验证码/密码双 tab + 图形验证码（V1.2.2 自托管）+ 协议勾选
  * 验证码 tab:发码 → 进 CodeStep
  * 密码 tab:直接登录(邮箱或 UID)
  */
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { Input, Button, Segmented, Checkbox, Tooltip } from 'antd'
 import { authApi } from '../../hooks/api'
 import AgreementModal from '../AgreementModal'
 import ForgotPasswordModal from './ForgotPasswordModal'
-
-// Turnstile 脚本就绪通知机制(由 index.html 内联壳 + api.js?onload=__turnstileReady 驱动)
-// 组件只读 window.__turnstileLoaded(脚本是否就绪)、只写 window.__turnstileOnLoad(注册自己的 render 回调)
-// __turnstileReady 壳函数由 index.html 定义,组件不动它,避免覆盖
-window.__turnstileLoaded = window.__turnstileLoaded || false
+import CaptchaField from './CaptchaField'
 
 
 export default function EmailStep({ onSuccess }) {
@@ -20,49 +16,13 @@ export default function EmailStep({ onSuccess }) {
   const [mode, setMode] = useState('code')  // 'code' | 'password'
   const [password, setPassword] = useState('')
   const [agreed, setAgreed] = useState(false)
-  const [turnstileToken, setTurnstileToken] = useState(null)
+  const [captcha, setCaptcha] = useState(null)       // {captchaId, answer} | null
+  const [captchaKey, setCaptchaKey] = useState(0)    // 提交失败后 ++，强制换新题（票据一次性）
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [agreementOpen, setAgreementOpen] = useState(false)
   const [agreementType, setAgreementType] = useState('agreement')
   const [forgotOpen, setForgotOpen] = useState(false)
-  const turnstileRef = useRef(null)
-  const widgetId = useRef(null)
-
-  const [pubConfig, setPubConfig] = useState(null)  // {turnstile_site_key, is_prod}
-
-  // 启动拿公开配置(site key 运行时拿,避免 Vite build-time env 依赖)
-  useEffect(() => {
-    fetch('/api/config').then(r => r.json()).then(c => {
-      setPubConfig(c)
-      if (!c.is_prod) setTurnstileToken('dev-bypass')  // 开发模式 bypass
-    }).catch(() => setTurnstileToken('dev-bypass'))
-  }, [])
-
-  // 生产期渲染 Turnstile widget(脚本就绪即 render,不再 200ms 轮询)
-  useEffect(() => {
-    if (!pubConfig?.is_prod) return
-    const siteKey = pubConfig.turnstile_site_key
-    if (!siteKey) return
-    let cancelled = false
-    const doRender = () => {
-      if (cancelled || !window.turnstile || !turnstileRef.current || widgetId.current !== null) return
-      widgetId.current = window.turnstile.render(turnstileRef.current, {
-        sitekey: siteKey,
-        appearance: 'always',   // 立即显示,不智能延迟
-        callback: (t) => setTurnstileToken(t),
-        'expired-callback': () => setTurnstileToken(null),
-        'error-callback': () => setTurnstileToken(null),
-      })
-    }
-    // 脚本已就绪 → 直接 render;否则注册回调,等 api.js 的 onload 触发
-    if (window.__turnstileLoaded) {
-      doRender()
-    } else {
-      window.__turnstileOnLoad = doRender
-    }
-    return () => { cancelled = true }
-  }, [pubConfig])
 
   const openAgreement = (type) => {
     setAgreementType(type)
@@ -73,13 +33,14 @@ export default function EmailStep({ onSuccess }) {
     setError('')
     if (!email) { setError('请输入邮箱地址'); return }
     if (!agreed) { setError('请先阅读并同意用户协议与隐私政策'); return }
-    if (!turnstileToken) { setError('请完成人机验证'); return }
+    if (!captcha) { setError('请完成人机验证'); return }
     setLoading(true)
     try {
-      await authApi.sendCode(email, turnstileToken)
-      onSuccess({ step: 'code', email, turnstileToken, mode })
+      await authApi.sendCode(email, captcha)
+      onSuccess({ step: 'code', email, mode })
     } catch (e) {
       setError(e.message)
+      setCaptchaKey(k => k + 1)   // 票据已消耗（一次性），换新题
     } finally {
       setLoading(false)
     }
@@ -92,10 +53,11 @@ export default function EmailStep({ onSuccess }) {
     if (!agreed) { setError('请先阅读并同意用户协议与隐私政策'); return }
     setLoading(true)
     try {
-      const res = await authApi.loginPassword(email, password, turnstileToken)
+      const res = await authApi.loginPassword(email, password, captcha)
       onSuccess({ step: 'done', token: res.token, user: res.user })
     } catch (e) {
       setError(e.message)
+      setCaptchaKey(k => k + 1)
     } finally {
       setLoading(false)
     }
@@ -146,20 +108,7 @@ export default function EmailStep({ onSuccess }) {
         </>
       )}
 
-      {pubConfig?.is_prod && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <div ref={turnstileRef} style={{ minHeight: 65 }} />
-          </div>
-          {['localhost', '127.0.0.1'].includes(window.location.hostname) && (
-            <div style={{ textAlign: 'center', marginTop: 4 }}>
-              <a style={{ fontSize: 12, color: 'var(--mute)' }} onClick={() => setTurnstileToken('dev-bypass')}>
-                开发模式：跳过验证
-              </a>
-            </div>
-          )}
-        </div>
-      )}
+      <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
 
       <div style={{ marginBottom: 16, fontSize: 13, lineHeight: 1.6 }}>
         <Checkbox checked={agreed} onChange={e => setAgreed(e.target.checked)}>
@@ -175,7 +124,7 @@ export default function EmailStep({ onSuccess }) {
       <Tooltip
         title={
           !agreed ? '请先阅读并同意用户协议与隐私政策'
-          : !turnstileToken ? '请完成人机验证'
+          : !captcha ? '请完成人机验证'
           : ''
         }
       >
@@ -184,7 +133,7 @@ export default function EmailStep({ onSuccess }) {
             type="primary"
             size="large"
             block
-            disabled={!agreed || !turnstileToken}
+            disabled={!agreed || !captcha}
             loading={loading}
             onClick={mode === 'code' ? handleSendCode : handlePasswordLogin}
           >

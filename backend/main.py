@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     # 注意：model_store 必须先 import（注册 ModelConfig 到 Base.metadata），否则 create_all 不建 model_configs
     from model_store import seed_model_configs
     import vault_store  # noqa: F401 踩坑 22 同规：先 import 注册 VaultFile 表，create_all 才会建 vault_files
+    import llm_events_store  # noqa: F401 踩坑 22 同规：注册 LlmCallEvent（V1.2.2 调用健康）
     await init_db()
     print("[Stellaris] 数据库已就绪")
     # V1.1.0: 模型仓库 seed（表为空写预置）+ 活跃配置加载进同步缓存
@@ -174,7 +175,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.2.1-canopus",
+    version="1.2.2-canopus",
     lifespan=lifespan,
 )
 
@@ -234,20 +235,33 @@ async def health_check():
 
 @app.get("/api/config")
 async def get_public_config():
-    """前端公开配置（Turnstile site key 公开,secret 不返回）。
+    """前端公开配置（仅放可公开信息，secret 不返回）。
     运行时拿,避免 Vite build-time env 依赖（Zeabur 等平台 build 阶段拿不到 runtime env）。
+    V1.2.2：人机验证改自托管图形验证码，不再需要 turnstile_site_key。
     """
-    from config import TURNSTILE_SITE_KEY, IS_PROD, AFDIAN_SHOP_URL, AFDIAN_PLAN_URLS
+    from config import IS_PROD, AFDIAN_SHOP_URL, AFDIAN_PLAN_URLS
     try:
         plan_urls = json.loads(AFDIAN_PLAN_URLS or "{}")
     except json.JSONDecodeError:
         plan_urls = {}
     return {
-        "turnstile_site_key": TURNSTILE_SITE_KEY,
         "is_prod": IS_PROD,
         "afdian_shop_url": AFDIAN_SHOP_URL,
         "afdian_plan_urls": plan_urls,
     }
+
+
+@app.get("/api/captcha")
+async def get_captcha(request: Request):
+    """图形验证码生成（V1.2.2 自托管，替代 Turnstile）。IP 限流 30/min 防刷图库。"""
+    from auth.captcha import new_captcha
+    from auth.utils import check_captcha_rate
+    if not check_captcha_rate(get_client_ip(request)):
+        raise HTTPException(status_code=429, detail="刷新太频繁，请稍后再试")
+    # PIL 渲染是同步 CPU 活，丢线程池不占事件循环（踩坑 1 红线，ZCode 05 棒发现 3）
+    # no-store：票据一次性消费，响应绝不允许被代理/浏览器缓存复用（Codex 06）
+    return JSONResponse(await asyncio.to_thread(new_captcha),
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/estimate", response_model=EstimateResponse)
@@ -818,6 +832,7 @@ async def chat_about_video(
         full_reply = None
         final_usage = None
         charged = 0
+        done_processed = False   # V1.2.2：charged==0 是免单/未结算二义哨兵，done 处理过就不再进补扣（Codex 08）
         try:
             while True:
                 item = await queue.get()
@@ -828,6 +843,18 @@ async def chat_about_video(
                     body = {"type": "delta", "text": payload}
                 elif kind == "done":
                     final_usage, full_reply = payload
+                    # V1.2.2 空回答防线（踩坑 25）：思考烧光预算/拒答 → 0 字符 done。
+                    # 不落库、不扣费、不统计，改发 error 让前端显示可读提示（永远三点绝迹）
+                    if not (full_reply or "").strip():
+                        fr = (final_usage or {}).get("finish_reason")
+                        logger.warning("[Chat] AI 解读空回答（finish=%s），未扣费 (task=%s)", fr, task_id)
+                        body = {"type": "error", "message": (
+                            "本次思考达到长度上限，未能生成回答，请缩短问题或换个问法重试"
+                            if fr == "length" else "AI 未返回有效内容，请稍后重试"
+                        )}
+                        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+                        done_processed = True   # 已处置（不扣费），finally 不再补扣
+                        continue
                     # 成功即结算（done 事件发出前完成扣费，事件里带实际扣额）
                     if full_reply:
                         await save_chat_message(task_id, "user", request.message)
@@ -838,6 +865,8 @@ async def chat_about_video(
                                 final_usage["prompt_tokens"] + final_usage["completion_tokens"],
                                 "chat", task_id, usage=final_usage,
                             )
+                        # 扣费完成即标记——stats 若失败绝不能让 finally 再扣一次（Codex 三轮）
+                        done_processed = True
                         owner_uid = (tasks.get(task_id) or {}).get("owner_uid")
                         if owner_uid and final_usage:
                             await incr_stats(
@@ -851,7 +880,10 @@ async def chat_about_video(
                 yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
         finally:
             # P1-7 SSE 断连白嫖兜底：LLM 已返回 usage 但 done 事件未处理（客户端断开），补扣
-            if final_usage is not None and charged == 0 and current_user:
+            # V1.2.2：full_reply 非空（空回答不补扣）+ done_processed（已处置/免单不重复）
+            # + charged==0（已扣过绝不重扣）三重防线（Codex 三轮）
+            if (final_usage is not None and (full_reply or "").strip()
+                    and not done_processed and charged == 0 and current_user):
                 try:
                     charged = await consume_gravity(
                         current_user.uid,
@@ -1869,6 +1901,13 @@ async def admin_vault_user_set(req: Request, current_user: User = Depends(get_ad
     logger.info("[Vault] 管理员调整用户文件柜: uid=%s enabled=%s quota=%s rejected=%s",
                 uid, body.get("enabled"), body.get("quota_mb"), body.get("rejected"))
     return {"ok": True}
+
+
+@app.get("/api/admin/llm-health")
+async def admin_llm_health(current_user: User = Depends(get_admin_user)):
+    """LLM 调用健康（V1.2.2）：24h/7d 汇总 + 最近 50 条异常事件（空回答/截断/拒答）"""
+    from llm_events_store import get_llm_health
+    return await get_llm_health()
 
 
 # ===== 管理后台：运营统计/工具 =====

@@ -14,6 +14,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from config import MIMO_API_KEY, MIMO_BASE_URL, MIMO_MODEL, FFMPEG_PATH, FFPROBE_PATH
+from pipeline.llm import _record   # V1.2.2 调用健康埋点（复用 LLM 的落库桥接）
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +109,18 @@ def transcribe_with_mimo(audio_path: Path, task_id: str) -> dict:
                 }],
                 extra_body={"asr_options": {"language": "auto"}},
             )
+            # 解析与调用同一观测边界（Codex 08：解析异常也要记事件）
+            result = _parse_mimo_response(completion, f"{task_id}_chunk{idx}")
         except Exception as e:
             logger.error("[Mimo ASR] 段 %d 识别失败 (task=%s): %s", idx + 1, task_id, e)
+            _record("asr", _active_asr_model(), None, None, True, f"{task_id}_chunk{idx}")
             raise
 
-        # 解析这段结果
-        result = _parse_mimo_response(completion, f"{task_id}_chunk{idx}")
+        # V1.2.2 调用健康埋点：ASR 也进 llm_call_events（空段按 full_text 判——空 text segment 不算有效内容）
+        _record("asr", _active_asr_model(),
+                result.get("_raw_usage") or {},
+                completion.choices[0].finish_reason if completion.choices else None,
+                not (result.get("full_text") or "").strip(), f"{task_id}_chunk{idx}")
         if result["segments"]:
             # 给每段加上时间偏移
             for seg in result["segments"]:

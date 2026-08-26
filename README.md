@@ -54,7 +54,7 @@ Built around a **three-currency billing system** and a **membership program** (v
 - **LaTeX rendering** — KaTeX everywhere: chat, summary & MD notes handle math natively
 
 ### 👤 Accounts & Billing
-- Email + UID dual login, password & code channels, Turnstile protection
+- Email + UID dual login, password & code channels, self-hosted captcha protection
 - **Three currencies** — every operation is metered, estimated, and settled honestly:
 
 | Currency | Unit | For | Cycle |
@@ -154,7 +154,7 @@ Built around a **three-currency billing system** and a **membership program** (v
 | ASR | [Xiaomi Mimo](https://platform.mimo.com.cn/) `mimo-v2.5-asr` |
 | LLM | DeepSeek (OpenAI-compatible) — segmentation / summary / markdown / chat |
 | Media | FFmpeg · yt-dlp |
-| Auth | JWT · bcrypt · Cloudflare Turnstile · Resend |
+| Auth | JWT · bcrypt · self-hosted captcha · Resend |
 | Payment | 爱发电 Webhook (RSA-SHA256) |
 | Backup | Tencent COS (daily snapshot, 7-day retention) |
 | Deploy | Single-service Dockerfile · Zeabur (Volume persistence, gzip, immutable assets) |

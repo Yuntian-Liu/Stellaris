@@ -1675,7 +1675,7 @@ function SecurityPanel() {
         {Object.entries(keys).map(([k, v]) => {
           const labels = {
             jwt_secret_set: 'JWT 密钥', mimo_key_set: 'Mimo ASR', llm_key_set: 'LLM (DeepSeek)',
-            cos_configured: 'COS 备份', turnstile_secret_set: 'Turnstile', afdian_token_set: '爱发电 Token',
+            cos_configured: 'COS 备份', afdian_token_set: '爱发电 Token',
             resend_key_set: 'Resend 邮件',
           }
           return <Row key={k} label={labels[k] || k} value={v ? '✅ 已设' : '❌ 未设'} ok={v} />
@@ -1704,8 +1704,8 @@ function SecurityPanel() {
             <Row label="密码强度" value={auth.password_complexity?.join('+')} ok />
             <Row label="登录限流阈值" value={auth.login_rate_limit} ok />
             <Row label="验证码限流阈值" value={auth.code_rate_limit} ok />
-            <Row label="Turnstile（发验证码）" value={auth.turnstile_on_send_code ? '已覆盖' : '未覆盖'} ok={auth.turnstile_on_send_code} />
-            <Row label="Turnstile（密码登录）" value={auth.turnstile_on_login ? '已覆盖' : '未覆盖'} ok={auth.turnstile_on_login} />
+            <Row label="图形验证码·发码（自托管）" value={auth.captcha_on_send_code ? '已覆盖' : '未覆盖'} ok={auth.captcha_on_send_code} />
+            <Row label="图形验证码·登录（自托管）" value={auth.captcha_on_login ? '已覆盖' : '未覆盖'} ok={auth.captcha_on_login} />
           </div>
           <div style={{ marginBottom: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309' }}>网络防御</span>
@@ -2726,6 +2726,147 @@ function ModelSlotPanel({ slot, title, desc, items, source, onRefresh, requirePi
   )
 }
 
+/* ── LLM 调用健康（V1.2.2）：模型 Tab 顶部——AI 罢工先于用户工单可见 ── */
+
+const LLM_FEATURE_LABELS = { segment: '语义分段', summary: '内容概要', md: 'MD 笔记', chat: 'AI 解读', asr: '语音转写' }
+
+function LlmHealthPanel() {
+  const [data, setData] = useState(undefined)   // undefined=加载中 / null=失败 / object=正常（Codex 08：失败不得假绿）
+  const [range, setRange] = useState('h24')   // 'h24' 近24小时 | 'd7' 近7天
+
+  const load = useCallback(() => {
+    setData(undefined)
+    adminApi.llmHealth().then(setData).catch(e => { setData(null); message.error(e.message) })
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const s = data?.[range]
+  const total = s?.total || 0
+  // 互斥口径（Codex 08）：healthy 由后端直接汇总（stop 且非空），不从重叠指标推导
+  const healthy = s?.healthy || 0
+  const normalRate = total > 0 ? (healthy / total) * 100 : 100
+  // 分档变色：100 绿 / ≥97 琥珀 / <97 红
+  const rateColor = normalRate >= 100 ? '#16a34a' : normalRate >= 97 ? '#d97706' : '#dc2626'
+
+  const finishBadge = (e) => {
+    const fr = e.finish_reason
+    const conf = fr === 'length' ? { text: '思考超限', bg: '#d9770614', color: '#d97706' }
+      : fr === 'content_filter' ? { text: '内容拒答', bg: '#dc262614', color: '#dc2626' }
+      : fr === null || fr === undefined ? { text: '调用异常', bg: '#dc262614', color: '#dc2626' }
+      : { text: fr, bg: 'var(--surface-2)', color: 'var(--mute)' }
+    return (
+      <span style={{
+        fontSize: 11, padding: '1px 8px', borderRadius: 99,
+        background: conf.bg, color: conf.color, fontWeight: 500, flexShrink: 0,
+      }}>{conf.text}</span>
+    )
+  }
+
+  const StatCard = ({ label, value, sub, color }) => (
+    <div className="card" style={{ flex: 1, padding: '12px 16px' }}>
+      <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 4 }}>{label}</div>
+      <div className="font-mono" style={{ fontSize: 22, fontWeight: 600, color: color || 'var(--ink)' }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 2 }}>{sub}</div>}
+    </div>
+  )
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>调用健康</span>
+        <span style={{ fontSize: 12, color: 'var(--mute)', marginLeft: 8 }}>
+          LLM 每次调用都落库，AI 罢工先于用户工单可见
+        </span>
+        <span style={{ flex: 1 }} />
+        <Segmented
+          size="small"
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: 'h24', label: '近 24 小时' },
+            { value: 'd7', label: '近 7 天' },
+          ]}
+        />
+        <Button size="small" icon={<ReloadOutlined />} onClick={load} style={{ marginLeft: 8 }} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+        <StatCard label="调用总数" value={data ? total : '—'}
+          sub={data ? (range === 'h24' ? `7 天 ${data?.d7?.total || 0}` : `24 小时 ${data?.h24?.total || 0}`) : undefined} />
+        <StatCard label="空回答" value={data ? (s?.empty || 0) : '—'}
+          color={data && (s?.empty || 0) > 0 ? '#dc2626' : 'var(--ink)'}
+          sub="思考烧光预算 / 拒答" />
+        <StatCard label="思考超限" value={data ? (s?.length || 0) : '—'}
+          color={data && (s?.length || 0) > 0 ? '#d97706' : 'var(--ink)'}
+          sub="finish_reason = length" />
+        <StatCard label="正常率" value={data ? `${normalRate.toFixed(1)}%` : '—'} color={data ? rateColor : 'var(--ink)'}
+          sub={data ? `正常 ${healthy} 次` : undefined} />
+      </div>
+
+      <div className="card" style={{ padding: '12px 16px' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 8 }}>
+          异常事件{data?.abnormal?.length ? `（全历史最近 ${data.abnormal.length} 条）` : ''}
+        </div>
+        {data === undefined ? (
+          <div style={{ fontSize: 12, color: 'var(--mute)' }}>加载中…</div>
+        ) : data === null ? (
+          <div style={{ fontSize: 12, color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            加载失败，监控数据不可用
+            <Button size="small" onClick={load}>重试</Button>
+          </div>
+        ) : data.abnormal.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#16a34a' }}>近期无异常，一切正常 ✦</div>
+        ) : (
+          <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+            {data.abnormal.map((e) => (
+              <div key={e.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '7px 0', borderTop: '1px solid var(--hairline)',
+              }}>
+                <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>
+                  {e.ts ? new Date(e.ts).toLocaleString('zh-CN', {
+                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+                  }) : ''}
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--ink)', flexShrink: 0 }}>
+                  {LLM_FEATURE_LABELS[e.feature] || e.feature}
+                </span>
+                {finishBadge(e)}
+                {e.is_empty === true && (
+                  <span style={{ fontSize: 11, color: '#dc2626', flexShrink: 0 }}>空回答</span>
+                )}
+                <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)' }}>
+                  {e.completion_tokens} tokens
+                  {e.reasoning_tokens > 0 && (
+                    <span style={{ color: '#8b5cf6' }}>
+                      （思考 {Math.round(e.reasoning_tokens / Math.max(e.completion_tokens, 1) * 100)}%）
+                    </span>
+                  )}
+                </span>
+                <span style={{ flex: 1 }} />
+                {e.task_id && (
+                  <span
+                    className="font-mono"
+                    title="点击复制，去「任务监控」查详情"
+                    style={{ fontSize: 11, color: 'var(--mute)', cursor: 'pointer', flexShrink: 0 }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(e.task_id)
+                        .then(() => message.success('task_id 已复制'))
+                        .catch(() => message.error('复制失败'))
+                    }}
+                  >{e.task_id}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ModelsPanel() {
   const [data, setData] = useState(null)
   const { requirePin, pinModal } = usePinFlow()
@@ -2737,6 +2878,7 @@ function ModelsPanel() {
 
   return (
     <div>
+      <LlmHealthPanel />
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
         <span style={{ fontSize: 13, color: 'var(--mute)' }}>
           添加一次永久保存，点「启用」即时切换，无需重启。密钥始终走环境变量，不会入库。

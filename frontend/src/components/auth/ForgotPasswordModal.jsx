@@ -5,13 +5,14 @@
 import { useState, useEffect } from 'react'
 import { Button, Input, Modal, message } from 'antd'
 import { authApi } from '../../hooks/api'
-import TurnstileField from './TurnstileField'
+import CaptchaField from './CaptchaField'
 
 export default function ForgotPasswordModal({ open, email: initialEmail, onClose }) {
   const [email, setEmail] = useState(initialEmail || '')
   const [code, setCode] = useState('')
   const [newPwd, setNewPwd] = useState('')
-  const [turnstileToken, setTurnstileToken] = useState(null)
+  const [captcha, setCaptcha] = useState(null)         // 图形验证码（V1.2.2）
+  const [captchaKey, setCaptchaKey] = useState(0)
   const [codeSent, setCodeSent] = useState(false)
   const [countdown, setCountdown] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -20,6 +21,7 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
     if (open) {
       setEmail(initialEmail || '')
       setCode(''); setNewPwd(''); setCodeSent(false); setCountdown(0)
+      setCaptcha(null); setCaptchaKey(k => k + 1)   // 重开弹窗换新题（票据一次性+5 分钟过期）
     }
   }, [open, initialEmail])
 
@@ -31,14 +33,16 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
 
   const sendCode = async () => {
     if (!email.trim()) { message.warning('请输入邮箱地址'); return }
-    if (!turnstileToken) { message.warning('请完成人机验证'); return }
+    if (!captcha) { message.warning('请完成人机验证'); return }
     try {
-      await authApi.sendCode(email.trim(), turnstileToken)
+      await authApi.sendCode(email.trim(), captcha)
       setCodeSent(true)
       setCountdown(60)
+      setCaptchaKey(k => k + 1)   // 票据已消耗（一次性），立即换新题供下次重发（Codex 06）
       message.success(`验证码已发送至 ${email.trim()}`)
     } catch (e) {
       message.error(e.message)
+      setCaptchaKey(k => k + 1)   // 票据一次性，失败后换新题
     }
   }
 
@@ -66,7 +70,7 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
           placeholder="邮箱地址" value={email}
           onChange={e => setEmail(e.target.value)}
         />
-        <TurnstileField onToken={setTurnstileToken} />
+        <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
         <div style={{ display: 'flex', gap: 8 }}>
           <Input
             placeholder="6 位验证码" value={code} maxLength={6}

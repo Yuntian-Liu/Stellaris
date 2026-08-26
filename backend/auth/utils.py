@@ -136,6 +136,24 @@ def check_estimate_rate(ip: str) -> bool:
     return True
 
 
+# ===== captcha rate limit（V1.2.2 自托管图形验证码：IP 每分钟 30 次，防刷图库）=====
+_captcha_rate: dict[str, list[float]] = {}
+CAPTCHA_RATE_WINDOW_SEC = 60
+CAPTCHA_RATE_MAX = 30
+
+
+def check_captcha_rate(ip: str) -> bool:
+    """验证码生成接口 IP 限流：返回 True 允许，False 超限。进程重启清空。"""
+    now = time.time()
+    arr = [t for t in _captcha_rate.get(ip, []) if now - t < CAPTCHA_RATE_WINDOW_SEC]
+    if len(arr) >= CAPTCHA_RATE_MAX:
+        _captcha_rate[ip] = arr
+        return False
+    arr.append(now)
+    _captcha_rate[ip] = arr
+    return True
+
+
 # ===== vault rate limit（V1.1.3 文件柜：IP 每分钟 30 次；防 VAULT_TOKEN 泄露后被刷的纵深防御）=====
 _vault_rate: dict[str, list[float]] = {}
 VAULT_RATE_WINDOW_SEC = 60

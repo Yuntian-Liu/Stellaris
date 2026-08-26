@@ -15,7 +15,7 @@ from collections import deque
 from sqlalchemy import select, desc
 
 from config import (
-    IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY, TURNSTILE_SITE_KEY,
+    IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY,
     RESEND_API_KEY, TMP_DIR, DATA_DIR,
     AFDIAN_USER_ID, AFDIAN_API_TOKEN, AFDIAN_SHOP_URL, AFDIAN_PLAN_MAP,
     JWT_SECRET, COS_SECRET_ID, VAULT_TOKEN,
@@ -109,7 +109,8 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "asr_model": get_asr_model(),
         "mimo_key_set": bool(MIMO_API_KEY),
         "llm_key_set": bool(LLM_API_KEY),
-        "turnstile_set": bool(TURNSTILE_SITE_KEY),
+        # V1.2.2 起人机验证自托管（auth/captcha.py），无外部密钥，turnstile_set 退役
+        "captcha": "self-hosted",
         "resend_set": bool(RESEND_API_KEY),
         # 爱发电（V0.8.0 会员支付链路）
         "afdian_user_id_set": bool(AFDIAN_USER_ID),
@@ -272,6 +273,16 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
     logs = list(LOG_BUFFER)[-300:]
     errors = [l for l in LOG_BUFFER if l["level"] in ("ERROR", "WARNING")][-50:]
 
+    # V1.2.2 LLM 调用健康（SOP ④.1）：近 24h 汇总数字——AI 罢工类问题免等用户工单
+    llm_health = None
+    try:
+        from llm_events_store import get_llm_health
+        h = await get_llm_health()
+        llm_health = {"h24": h["h24"], "d7_total": h["d7"]["total"],
+                      "d7_empty": h["d7"]["empty"], "d7_length": h["d7"]["length"]}
+    except Exception:
+        llm_health = None
+
     return {
         "meta": {
             "app": "Stellaris",
@@ -282,6 +293,7 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "config_flags": config_flags,
         "system": system,
         "backup": backup_info,
+        "llm_health": llm_health,
         "user": user_ctx,
         "tasks": task_snapshots,
         "recent_errors": errors,

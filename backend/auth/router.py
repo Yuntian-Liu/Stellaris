@@ -7,7 +7,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import select
@@ -28,7 +28,7 @@ from auth.utils import (
     hash_password, verify_password, validate_password_strength, get_next_uid,
 )
 from auth.email import send_verification_code
-from auth.turnstile import verify_turnstile
+from auth.captcha import verify_captcha
 from auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -68,12 +68,15 @@ async def send_code(
     req: SendCodeRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    cf_turnstile_response: str | None = Header(default=None, alias="cf-turnstile-response"),
 ):
-    """发送验证码:Turnstile → rate limit → 生码 → upsert → 发邮件"""
+    """发送验证码:图形验证码 → rate limit → 生码 → upsert → 发邮件"""
     client_ip = get_client_ip(request)  # P1-12: X-Forwarded-For 拿真实 IP
 
-    if not await verify_turnstile(cf_turnstile_response, client_ip):
+    # V1.2.2：自托管图形验证码（替代 Turnstile）。
+    # remote_ip 传 socket peer 而非 get_client_ip——XFF 是客户端可控头，bypass 判定
+    # 必须建立在不可伪造的值上（ZCode 05 棒发现 1）；限流才继续用 get_client_ip
+    if not await verify_captcha(req.captcha_id, req.captcha_answer,
+                                request.client.host if request.client else None):
         raise HTTPException(status_code=403, detail="人机验证失败,请重试")
     if not check_send_code_rate(client_ip):
         raise HTTPException(status_code=429, detail="发送过于频繁,请 1 分钟后再试")
@@ -180,11 +183,12 @@ async def login_password(
     req: LoginPasswordRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    cf_turnstile_response: str | None = Header(default=None, alias="cf-turnstile-response"),
 ):
     """密码登录:支持邮箱或 UID(纯数字按 UID 查)"""
-    # P1-10 安全：Turnstile 人机验证（复用 send-code 的 verify_turnstile）
-    if not await verify_turnstile(cf_turnstile_response, request.client.host or "unknown"):
+    # P1-10 安全：人机验证（V1.2.2 换自托管图形验证码）。
+    # remote_ip 传 socket peer（不可伪造）；XFF 推导值只用于限流（ZCode 05 棒发现 1）
+    if not await verify_captcha(req.captcha_id, req.captcha_answer,
+                                request.client.host if request.client else None):
         raise HTTPException(status_code=403, detail="人机验证失败，请重试")
     # P0-4 安全：IP 级限流防暴力撞密码（10 次/分钟）
     ip = get_client_ip(request)  # P1-12: X-Forwarded-For 拿真实 IP

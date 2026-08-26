@@ -1,15 +1,20 @@
 /**
  * 验证码步 — 6 格输入(自动跳焦 / 粘贴整体填入 / 60 秒倒计时重发)
+ * V1.2.2：重发需现场完成图形验证码（票据一次性，不可复用首次的）
  */
 import { useState, useEffect, useRef } from 'react'
 import { Button } from 'antd'
 import { authApi } from '../../hooks/api'
+import CaptchaField from './CaptchaField'
 
-export default function CodeStep({ email, turnstileToken, onBack, onSuccess }) {
+export default function CodeStep({ email, onBack, onSuccess }) {
   const [code, setCode] = useState(['', '', '', '', '', ''])
   const [countdown, setCountdown] = useState(60)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [captcha, setCaptcha] = useState(null)         // 重发用图形验证码
+  const [captchaKey, setCaptchaKey] = useState(0)
+  const [showCaptcha, setShowCaptcha] = useState(false)
   const inputsRef = useRef([])
 
   // 60 秒倒计时
@@ -51,11 +56,16 @@ export default function CodeStep({ email, turnstileToken, onBack, onSuccess }) {
 
   const handleResend = async () => {
     setError('')
+    // V1.2.2：图形验证码一次性，重发必须现场完成新挑战
+    if (!showCaptcha) { setShowCaptcha(true); return }
+    if (!captcha) { setError('请完成人机验证'); return }
     try {
-      await authApi.sendCode(email, turnstileToken)
+      await authApi.sendCode(email, captcha)
       setCountdown(60)
+      setShowCaptcha(false)
     } catch (e) {
       setError(e.message)
+      setCaptchaKey(k => k + 1)   // 票据已消耗，换新题
     }
   }
 
@@ -106,7 +116,16 @@ export default function CodeStep({ email, turnstileToken, onBack, onSuccess }) {
         {countdown > 0 ? (
           <span className="font-caption">{countdown} 秒后可重新发送</span>
         ) : (
-          <Button type="link" style={{ padding: 0 }} onClick={handleResend}>重新发送验证码</Button>
+          <>
+            {showCaptcha && (
+              <div style={{ marginBottom: 8, textAlign: 'left' }}>
+                <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
+              </div>
+            )}
+            <Button type="link" style={{ padding: 0 }} onClick={handleResend}>
+              {showCaptcha ? '完成验证并重发' : '重新发送验证码'}
+            </Button>
+          </>
         )}
       </div>
 

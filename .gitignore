@@ -34,6 +34,7 @@ cache/
 downloads/
 .devlogs/
 backend/data/
+videos/
 
 # ===== Local dev docs (private, not for repo) =====
 CONTEXT.md
@@ -48,4 +49,3 @@ ifadian.txt
 # ===== Local scripts =====
 *.bat
 *.sh
-

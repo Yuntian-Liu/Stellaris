@@ -8,6 +8,7 @@
 
 切换 LLM 只需改 config.py 的 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL。
 """
+import asyncio
 import logging
 import time
 
@@ -169,8 +170,24 @@ def _extract_cache_tokens(u) -> tuple[int, int]:
     return 0, 0
 
 
+def _reasoning_tokens_of(u) -> int:
+    """思考 token 数（OpenAI 标准 completion_tokens_details.reasoning_tokens；没有则 0）"""
+    details = getattr(u, "completion_tokens_details", None)
+    return (getattr(details, "reasoning_tokens", 0) or 0) if details else 0
+
+
+def _finish_reason_of(completion) -> str | None:
+    """finish_reason（stop/length/content_filter…）；取不到则 None"""
+    try:
+        return completion.choices[0].finish_reason
+    except Exception:
+        return None
+
+
 def _usage_dict(completion) -> dict:
-    """从 completion 提取 token 用量（统计/计费用）。V1.1.0 补缓存拆分（成本按命中/未命中分别计价）"""
+    """从 completion 提取 token 用量（统计/计费用）。V1.1.0 补缓存拆分（成本按命中/未命中分别计价）；
+    V1.2.2 补 finish_reason / reasoning_tokens（思考模型诊断：length 截断/拒答可见）。
+    注意：下游计费只读四个 token key，新增字段不参与计费公式。"""
     u = getattr(completion, "usage", None)
     if not u:
         return {"prompt_tokens": 0, "completion_tokens": 0,
@@ -181,7 +198,20 @@ def _usage_dict(completion) -> dict:
         "completion_tokens": u.completion_tokens or 0,
         "cache_hit_tokens": hit,
         "cache_miss_tokens": miss,
+        "finish_reason": _finish_reason_of(completion),
+        "reasoning_tokens": _reasoning_tokens_of(u),
     }
+
+
+def _record(feature: str, model: str, usage: dict | None,
+            finish_reason: str | None, is_empty: bool, task_id: str) -> None:
+    """调用健康埋点（V1.2.2）：写 llm_call_events 表。失败静默——绝不影响主流程。
+    llm.py 全是同步函数（跑在线程池），用 asyncio.run 桥接异步写库。"""
+    try:
+        from llm_events_store import record_llm_call
+        asyncio.run(record_llm_call(feature, model, usage, finish_reason, is_empty, task_id))
+    except Exception:
+        pass
 
 
 def segment_text(raw_text: str, task_id: str) -> tuple[str, dict]:
@@ -216,12 +246,25 @@ def segment_text(raw_text: str, task_id: str) -> tuple[str, dict]:
         result = completion.choices[0].message.content or ""
         result = result.strip()
 
+        if not result:
+            # V1.2.2：空内容（思考烧光预算/拒答）回退原文——与异常回退对齐：不向用户扣费
+            # （无分段产物即无服务；用户无法主动触发此路径，无白嫖面，资损对称）
+            # 服务商真实消耗只进日志，供排查
+            logger.warning("[LLM] 语义分段返回空内容（finish=%s, 真实 usage=%s），回退原文不扣费 (task=%s)",
+                           _finish_reason_of(completion), _usage_dict(completion), task_id)
+            _record("segment", model, _usage_dict(completion),
+                    _finish_reason_of(completion), True, task_id)
+            return raw_text, {"prompt_tokens": 0, "completion_tokens": 0}
+
         logger.info("[LLM] 语义分段完成: %d → %d 字符 (task=%s)",
                     len(raw_text), len(result), task_id)
+        _record("segment", model, _usage_dict(completion),
+                _finish_reason_of(completion), False, task_id)
         return result, _usage_dict(completion)
 
     except Exception as e:
         logger.error("[LLM] 语义分段失败，回退原文 (task=%s): %s", task_id, e)
+        _record("segment", model, None, None, True, task_id)
         # 失败时回退到原文，不阻断主管线
         return raw_text, {"prompt_tokens": 0, "completion_tokens": 0}
 
@@ -243,16 +286,25 @@ def text_to_markdown(raw_text: str, task_id: str) -> tuple[str, dict]:
     model = _active_model()
     logger.info("[LLM] Markdown 转写开始: %d 字符 (task=%s)", len(raw_text), task_id)
 
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _MD_SYSTEM},
-            {"role": "user", "content": raw_text},
-        ],
-        temperature=0.5,   # 略高温度，允许少量结构化创造
-        stream=False,
-    )
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _MD_SYSTEM},
+                {"role": "user", "content": raw_text},
+            ],
+            temperature=0.5,   # 略高温度，允许少量结构化创造
+            stream=False,
+        )
+    except Exception:
+        _record("md", model, None, None, True, task_id)
+        raise
     result = (completion.choices[0].message.content or "").strip()
+
+    if not result:
+        # V1.2.2：空内容（思考烧光预算/拒答）抛错——增值功能不得空内容标 ready 还扣费
+        _record("md", model, _usage_dict(completion), _finish_reason_of(completion), True, task_id)
+        raise RuntimeError(f"模型返回空内容（finish_reason={_finish_reason_of(completion)}）")
 
     # 防止模型用代码块包裹整个输出
     if result.startswith("```markdown"):
@@ -261,6 +313,7 @@ def text_to_markdown(raw_text: str, task_id: str) -> tuple[str, dict]:
             result = result[:-3].rstrip("\n")
 
     logger.info("[LLM] Markdown 转写完成: %d 字符 (task=%s)", len(result), task_id)
+    _record("md", model, _usage_dict(completion), _finish_reason_of(completion), False, task_id)
     return result, _usage_dict(completion)
 
 
@@ -281,16 +334,25 @@ def summarize_text(raw_text: str, task_id: str) -> tuple[str, dict]:
     model = _active_model()
     logger.info("[LLM] 总结概要开始: %d 字符 (task=%s)", len(raw_text), task_id)
 
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SUMMARY_SYSTEM},
-            {"role": "user", "content": raw_text},
-        ],
-        temperature=0.4,   # 总结需要一定概括创造，但不宜过高以免偏离原文
-        stream=False,
-    )
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SUMMARY_SYSTEM},
+                {"role": "user", "content": raw_text},
+            ],
+            temperature=0.4,   # 总结需要一定概括创造，但不宜过高以免偏离原文
+            stream=False,
+        )
+    except Exception:
+        _record("summary", model, None, None, True, task_id)
+        raise
     result = (completion.choices[0].message.content or "").strip()
+
+    if not result:
+        # V1.2.2：空内容（思考烧光预算/拒答）抛错——增值功能不得空内容标 ready 还扣费
+        _record("summary", model, _usage_dict(completion), _finish_reason_of(completion), True, task_id)
+        raise RuntimeError(f"模型返回空内容（finish_reason={_finish_reason_of(completion)}）")
 
     # 防止模型用代码块包裹整个输出
     if result.startswith("```markdown"):
@@ -299,6 +361,7 @@ def summarize_text(raw_text: str, task_id: str) -> tuple[str, dict]:
             result = result[:-3].rstrip("\n")
 
     logger.info("[LLM] 总结概要完成: %d 字符 (task=%s)", len(result), task_id)
+    _record("summary", model, _usage_dict(completion), _finish_reason_of(completion), False, task_id)
     return result, _usage_dict(completion)
 
 
@@ -341,44 +404,63 @@ def chat_with_subtitle_stream(
     logger.info("[LLM] AI 对话开始(流式): 字幕 %d 字符, 历史 %d 轮 (task=%s)",
                 len(raw_text), len(history), task_id)
 
-    stream = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=0.5,
-        max_tokens=2500,   # 回复长度硬限，控制输出成本
-        stream=True,
-        stream_options={"include_usage": True},   # 末 chunk 带 usage（含缓存命中明细）
-        # 分相超时（V1.0.4，碳碳定稿）：read 是"等下一个数据块"的超时而非全程——
-        # 思考阶段 120s 无首字节才判卡死；流式开始后块间 120s 无数据才掐断。
-        # 判据是"块间隔"而非"总时长"：AI 回答再长再慢都不会被腰斩。
-        timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=60.0),
-    )
-
     t_start = time.time()   # 首包耗时统计（诊断用）
     ttft_logged = False
     total_chars = 0
-    for chunk in stream:
-        # 正文片段
-        if chunk.choices and chunk.choices[0].delta.content:
-            piece = chunk.choices[0].delta.content
-            if not ttft_logged:
-                ttft_logged = True
-                logger.info("[LLM] 首包: %.1fs (task=%s)", time.time() - t_start, task_id)
-            total_chars += len(piece)
-            yield ("delta", piece)
-        # usage 在最后一个 chunk（choices 为空）
-        if getattr(chunk, "usage", None):
-            u = chunk.usage
-            hit, miss = _extract_cache_tokens(u)   # 双字段兼容（DeepSeek/OpenAI 标准）
-            usage = {
-                "prompt_tokens": u.prompt_tokens,
-                "completion_tokens": u.completion_tokens,
-                "cache_hit_tokens": hit,
-                "cache_miss_tokens": miss,
-            }
-            logger.info(
-                "[LLM] AI 对话完成: %d 字符, prompt=%d(命中缓存 %d), completion=%d (task=%s)",
-                total_chars, usage["prompt_tokens"], usage["cache_hit_tokens"],
-                usage["completion_tokens"], task_id,
-            )
-            yield ("done", usage)
+    finish_reason = None
+    usage_seen = False
+    try:
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=8192,   # V1.2.2：思考+正文总预算。原 2500 会被长思考烧光 → 0 字符空回答（踩坑 25）
+            stream=True,
+            stream_options={"include_usage": True},   # 末 chunk 带 usage（含缓存命中明细）
+            # 分相超时（V1.0.4，碳碳定稿）：read 是"等下一个数据块"的超时而非全程——
+            # 思考阶段 120s 无首字节才判卡死；流式开始后块间 120s 无数据才掐断。
+            # 判据是"块间隔"而非"总时长"：AI 回答再长再慢都不会被腰斩。
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=60.0),
+        )
+        for chunk in stream:
+            if chunk.choices:
+                # finish_reason 挂在最后一个有 choices 的 chunk 上（stop/length/content_filter）
+                fr = chunk.choices[0].finish_reason
+                if fr:
+                    finish_reason = fr
+                # 正文片段（reasoning_content 不转发——思考过程不进回复）
+                piece = chunk.choices[0].delta.content
+                if piece:
+                    if not ttft_logged:
+                        ttft_logged = True
+                        logger.info("[LLM] 首包: %.1fs (task=%s)", time.time() - t_start, task_id)
+                    total_chars += len(piece)
+                    yield ("delta", piece)
+            # usage 搭在末尾 chunk（choices 可能非空——官方现行行为已演进，独立检查不假定 choices 为空）
+            if getattr(chunk, "usage", None):
+                usage_seen = True
+                u = chunk.usage
+                hit, miss = _extract_cache_tokens(u)   # 双字段兼容（DeepSeek/OpenAI 标准）
+                usage = {
+                    "prompt_tokens": u.prompt_tokens,
+                    "completion_tokens": u.completion_tokens,
+                    "cache_hit_tokens": hit,
+                    "cache_miss_tokens": miss,
+                    # V1.2.2 诊断增强：截断/拒答/思考占比可直接从日志区分（不计费）
+                    "finish_reason": finish_reason,
+                    "reasoning_tokens": _reasoning_tokens_of(u),
+                }
+                logger.info(
+                    "[LLM] AI 对话完成: %d 字符, prompt=%d(命中缓存 %d), completion=%d(思考 %s), finish=%s (task=%s)",
+                    total_chars, usage["prompt_tokens"], usage["cache_hit_tokens"],
+                    usage["completion_tokens"], usage["reasoning_tokens"], finish_reason, task_id,
+                )
+                _record("chat", model, usage, finish_reason, total_chars == 0, task_id)
+                yield ("done", usage)
+        if not usage_seen:
+            # 流 EOF 但没有 usage（异常断流，前端永远收不到 done）——记为调用异常，
+            # finish_reason 置 None（否则带部分正文的 stop 会被健康面板误算进正常率，Codex 三轮）
+            _record("chat", model, None, None, total_chars == 0, task_id)
+    except Exception:
+        _record("chat", model, None, None, True, task_id)
+        raise
