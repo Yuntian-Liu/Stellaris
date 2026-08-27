@@ -67,18 +67,19 @@ def _is_safe_url(url: str) -> bool:
             _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：无法解析 host"})
             return False
         if host.lower() == "localhost":
-            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：localhost → {url[:80]}"})
+            # V1.3.0 脱敏（Codex 02 棒）：事件只记 host，不记 path/query（源链接可能含私密参数）
+            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": "SSRF 拦截：localhost"})
             return False
         try:
             ip = ipaddress.ip_address(host)
         except ValueError:
             return True
         if any(ip in net for net in _PRIVATE_NETWORKS):
-            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：{host} → {url[:80]}"})
+            _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：私网地址 host {host}"})
             return False
         return True
     except Exception:
-        _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：解析异常 {url[:80]}"})
+        _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": "SSRF 拦截：URL 解析异常"})
         return False
 
 

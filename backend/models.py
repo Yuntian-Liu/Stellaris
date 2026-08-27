@@ -56,6 +56,7 @@ class TaskResponse(BaseModel):
     summary_content: Optional[str] = None   # 总结正文（ready 时带回前端展示）
     cleaned: Optional[bool] = None          # 用户已主动清理数据，下载按钮应禁用
     source_platform: Optional[str] = None   # 来源平台（哔哩哔哩/小红书/本地上传/域名）
+    source_url: Optional[str] = None        # 源视频链接（V1.3.0；本地上传为 None 不显示）
     # 计费实际消耗（V0.7.0，完成后回显）
     charged_minutes: Optional[int] = None   # 提取实际扣分钟
     charged_quantum: Optional[int] = None   # 分段实际扣量子波

@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.2.2 Canopus'
+export const APP_VERSION = 'V1.3.0 Fomalhaut'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-08-26'
+export const AGREEMENT_VERSION = '2026-08-27'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,18 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V1.3.0', codename: 'Fomalhaut', date: '2026-08-27',
+    items: [
+      '视觉动效全面焕新：会员权益、消耗记录、反馈与建议、星轨实验室四大二级界面架构重构——进入行云流水，返回精准落在原位置，彻底告别闪跳、残影与卡顿',
+      '会员界面打开与收起全程卡片布局稳定，不再有忽明忽闪的重排',
+      '登录更顺手：验证码登录支持直接输入 UID，不必翻邮箱；密码登录同样支持（提示文案名实相符）',
+      '历史记录新增源链接：链接提取的任务可一键回源站回顾、复制链接，长链接自动优雅截断',
+      '隐私再加固：源链接仅你本人可见、管理员不可见；登录防枚举与认证链路全面硬化',
+      '幕后：开发者完成了成本核算体系升级与一系列稳定性加固',
+    ],
+    patches: [],
+  },
   {
     version: 'V1.2.0', codename: 'Canopus', date: '2026-08-11',
     // 开发者寄语（碳碳亲笔）

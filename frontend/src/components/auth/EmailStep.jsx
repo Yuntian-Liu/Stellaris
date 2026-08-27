@@ -85,7 +85,7 @@ export default function EmailStep({ onSuccess }) {
 
       <Input
         size="large"
-        placeholder="邮箱地址"
+        placeholder="邮箱地址或 UID"
         value={email}
         onChange={e => setEmail(e.target.value)}
         style={{ marginBottom: 12 }}

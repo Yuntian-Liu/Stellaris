@@ -123,7 +123,17 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       })
       if (!res.ok) throw new Error(`导出失败 (${res.status})`)
       const data = await res.json()
-      data.client_events = clientLog.dump()   // 注入前端操作日志
+      // 注入前端操作日志；V1.3.0（Codex 04/05 棒）：导出前递归 URL 脱敏——
+      // 嵌套对象/数组全形态，这份包会发给开发者（工单附件）
+      const maskUrls = (s) => String(s ?? '').replace(/https?:\/\/\S+/gi, '[链接已脱敏]')
+      const wash = (o) => {
+        if (Array.isArray(o)) return o.map(wash)
+        if (o && typeof o === 'object') {
+          return Object.fromEntries(Object.entries(o).map(([k, v]) => [maskUrls(k), wash(v)]))
+        }
+        return typeof o === 'string' ? maskUrls(o) : o
+      }
+      data.client_events = wash(clientLog.dump())
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
@@ -148,26 +158,21 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     })
   }
 
-  // ── 二级界面关闭（覆盖式：先滑出再卸载，主界面始终挂载在底层）──
+  // ── 二级界面关闭（V1.3.0 新架构：SubviewShell 固定不透明外壳 + 两段退出；
+  // 底层 window.scrollY 全程不动，不再需要保存/恢复滚动）──
+  // closeWith 触发关闭：reduced-motion 立即完成；closing 中防重入
+  const _isReducedMotion = () =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const closeWith = (closing, setOpen, setClosing) => {
+    if (closing) return   // 防重入：关闭动画进行中忽略重复点击
+    if (_isReducedMotion()) { setOpen(false); return }
+    setClosing(true)
+  }
+
   const [memberClosing, setMemberClosing] = useState(false)
   const [ledgerClosing, setLedgerClosing] = useState(false)
-  const closeMember = () => {
-    // 滑出与容器收缩并行（AI 解读收起同款节奏）：立即触发收缩，滑出动画跑完再卸载
-    setMemberClosing(true)
-    setMemberView(false)
-    setTimeout(() => {
-      setMemberClosing(false)
-      window.scrollTo(0, savedScroll.current)   // 回到设置页原滚动位置
-    }, 320)
-  }
-  const closeLedger = () => {
-    setLedgerClosing(true)
-    setTimeout(() => {
-      setLedgerView(false)
-      setLedgerClosing(false)
-      window.scrollTo(0, savedScroll.current)
-    }, 320)
-  }
+  const closeMember = () => closeWith(memberClosing, setMemberView, setMemberClosing)
+  const closeLedger = () => closeWith(ledgerClosing, setLedgerView, setLedgerClosing)
   const [feedbackClosing, setFeedbackClosing] = useState(false)
   const openFeedback = () => {
     setMemberView(false)     // overlay 互斥：关掉其他二级界面
@@ -176,18 +181,13 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     setTicketUnread(false)
   }
   const closeFeedback = () => {
-    setFeedbackClosing(true)
-    setTimeout(() => {
-      setFeedbackOpen(false)
-      setFeedbackClosing(false)
-      window.scrollTo(0, savedScroll.current)   // 回到设置页原滚动位置
-      // 返回后刷新红点（用户可能在反馈页读了工单）
-      ticketApi.listMine().then((r) =>
-        setTicketUnread((r.items || []).some((t) => t.unread))
-      ).catch(() => {})
-    }, 320)
+    closeWith(feedbackClosing, setFeedbackOpen, setFeedbackClosing)
+    // 返回后刷新红点（用户可能在反馈页读了工单）
+    ticketApi.listMine().then((r) =>
+      setTicketUnread((r.items || []).some((t) => t.unread))
+    ).catch(() => {})
   }
-  // ── 星轨实验室二级界面（同款覆盖式滑入；App 下钻 initLab = 结果页「去申请」直达）──
+  // ── 星轨实验室二级界面（同款固定 shell；App 下钻 initLab = 结果页「去申请」直达）──
   const [labClosing, setLabClosing] = useState(false)
   const openLab = () => {
     setMemberView(false)     // overlay 互斥：关掉其他二级界面
@@ -195,35 +195,23 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     setFeedbackOpen(false)
     setLabOpen(true)
   }
-  const closeLab = () => {
-    setLabClosing(true)
-    setTimeout(() => {
-      setLabOpen(false)
-      setLabClosing(false)
-      window.scrollTo(0, savedScroll.current)
-    }, 320)
-  }
+  const closeLab = () => closeWith(labClosing, setLabOpen, setLabClosing)
   // 结果页「去申请」→ App setPage('settings') + initLab → 直达实验室
   useEffect(() => {
     if (!initLab) return
     openLab()
     onLabInit?.()
   }, [initLab])   // eslint-disable-line react-hooks/exhaustive-deps
-  const overlayStyle = {
-    // top -14 抵消主内容的负边距，bottom 0 拉满到容器底，确保把主界面完全盖住
-    position: 'absolute', top: -14, bottom: 0, left: 0, right: 0,
-    minHeight: '85vh', background: 'var(--canvas)', zIndex: 5,
-  }
 
-  // 二级界面进出时的滚动位置管理：进入滚到顶，返回恢复原位置（iOS 转场惯例）
-  const savedScroll = useRef(0)
+  // V1.3.0：二级界面打开期间锁死底层 body 滚动——否则 shell 内容不满屏时
+  // 滚轮会穿透滚动底层设置页（碳碳实测）
+  const anySubviewOpen = memberView || ledgerView || feedbackOpen || labOpen
   useEffect(() => {
-    if (memberView || ledgerView || feedbackOpen || labOpen) {
-      savedScroll.current = window.scrollY
-      // 延迟一帧：让 overlay 先盖住再置顶，避免看到主界面滚动闪烁
-      requestAnimationFrame(() => window.scrollTo(0, 0))
+    if (anySubviewOpen) {
+      document.body.style.overflow = 'hidden'
+      return () => { document.body.style.overflow = '' }
     }
-  }, [memberView, ledgerView, feedbackOpen, labOpen])
+  }, [anySubviewOpen])
 
   return (
     <div style={{ position: 'relative' }}>
@@ -446,10 +434,14 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <MembershipHistoryModal open={memHistoryOpen} onClose={() => setMemHistoryOpen(false)} />
       </div>
 
-      {/* ── 会员权益二级界面（覆盖式滑入，主界面在底层不卸载）── */}
-      {(memberView || memberClosing) && (
-        <div className={memberClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
-          <div style={{ width: '100%', marginTop: -14 }}>
+      {/* ── 会员权益二级界面（固定不透明 shell + 两段退出，V1.3.0）── */}
+      <SubviewShell
+        open={memberView}
+        closing={memberClosing}
+        wide
+        onAnimDone={() => { setMemberView(false); setMemberClosing(false) }}
+      >
+        <div style={{ width: '100%', marginTop: 0 }}>
             {/* 返回 + 标题：贴界面左上角 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <Button type="text" icon={<ArrowLeftOutlined />} onClick={closeMember} />
@@ -480,29 +472,63 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
               引力波永不过期 · 分钟与量子波按自然周期重置
             </div>
           </div>
-        </div>
-      )}
+      </SubviewShell>
 
-      {/* ── 消耗记录二级界面（覆盖式滑入）── */}
-      {(ledgerView || ledgerClosing) && (
-        <div className={ledgerClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
-          <LedgerView onBack={closeLedger} initialTab={ledgerTab} />
-        </div>
-      )}
+      {/* ── 消耗记录二级界面（同款 shell）── */}
+      <SubviewShell
+        open={ledgerView}
+        closing={ledgerClosing}
+        onAnimDone={() => { setLedgerView(false); setLedgerClosing(false) }}
+      >
+        <LedgerView onBack={closeLedger} initialTab={ledgerTab} />
+      </SubviewShell>
 
-      {/* ── 反馈与建议二级界面（覆盖式滑入，与会员/消耗记录同款 overlay）── */}
-      {(feedbackOpen || feedbackClosing) && (
-        <div className={feedbackClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
-          <FeedbackView onBack={closeFeedback} />
-        </div>
-      )}
+      {/* ── 反馈与建议二级界面（同款 shell）── */}
+      <SubviewShell
+        open={feedbackOpen}
+        closing={feedbackClosing}
+        onAnimDone={() => { setFeedbackOpen(false); setFeedbackClosing(false) }}
+      >
+        <FeedbackView onBack={closeFeedback} />
+      </SubviewShell>
 
-      {/* ── 星轨实验室二级界面（覆盖式滑入；含用户版文件柜）── */}
-      {(labOpen || labClosing) && (
-        <div className={labClosing ? 'subview-exit' : 'subview-enter'} style={overlayStyle}>
-          <LabView onBack={closeLab} />
-        </div>
-      )}
+      {/* ── 星轨实验室二级界面（同款 shell；含用户版文件柜）── */}
+      <SubviewShell
+        open={labOpen}
+        closing={labClosing}
+        onAnimDone={() => { setLabOpen(false); setLabClosing(false) }}
+      >
+        <LabView onBack={closeLab} />
+      </SubviewShell>
+    </div>
+  )
+}
+
+/* ── 二级界面外壳（V1.3.0）：固定不透明 shell 管遮挡与滚动，frame 管进出动画；
+   两段退出——frame 滑出(0.32s) → shell 淡出(0.15s) → 卸载（停滞藏在淡出里）── */
+
+function SubviewShell({ open, closing, wide = false, onAnimDone, children }) {
+  const [fading, setFading] = useState(false)
+  if (!open && !closing) return null
+  return (
+    <div
+      className={`settings-subview-shell${fading ? ' settings-subview-shell--fade' : ''}`}
+      onAnimationEnd={(e) => {
+        // fade 结束 → 重置 fading（组件常驻不卸载，不重置会导致下次打开全透明）+ 通知父级卸载
+        if (e.target === e.currentTarget && fading) {
+          setFading(false)
+          onAnimDone()
+        }
+      }}
+    >
+      <div
+        className={`settings-subview-frame${wide ? ' settings-subview-frame--wide' : ''} ${closing ? 'subview-exit' : 'subview-enter'}`}
+        onAnimationEnd={(e) => {
+          if (e.target === e.currentTarget && closing && !fading) setFading(true)
+        }}
+      >
+        {children}
+      </div>
     </div>
   )
 }
@@ -596,7 +622,7 @@ function LabView({ onBack }) {
   }
 
   return (
-    <div style={{ width: '100%', marginTop: -14 }}>
+    <div style={{ width: '100%', marginTop: 0 }}>
       {/* 返回 + 标题：贴界面左上角（进文件柜后标题跟随，返回键回实验室） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <Button

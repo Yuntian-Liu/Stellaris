@@ -169,6 +169,8 @@ class BillingLedger(Base):
     price_output: Mapped[float | None] = mapped_column(nullable=True)
     price_cache_hit: Mapped[float | None] = mapped_column(nullable=True)
     price_per_hour: Mapped[float | None] = mapped_column(nullable=True)
+    # 峰谷标记（V1.3.0：这笔按峰价还是谷价算的；NULL=峰谷体系前的老发票）
+    price_tier: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -360,8 +362,10 @@ async def _record(session, uid: int, feature: str, currency: str,
                   from_gift: int | None = None, from_perm: int | None = None,
                   note: str | None = None,
                   model: str | None = None, usage: dict | None = None,
-                  cost_yuan: float | None = None, prices: dict | None = None):
-    """写流水。V1.1.0：可附带 model + usage + cost_yuan + prices（价签快照，账单公式用）"""
+                  cost_yuan: float | None = None, prices: dict | None = None,
+                  price_tier: str | None = None):
+    """写流水。V1.1.0：可附带 model + usage + cost_yuan + prices（价签快照，账单公式用）；
+    V1.3.0：price_tier 记峰谷标记（prices 快照存的是当时实际生效价）"""
     session.add(BillingLedger(
         user_uid=uid, feature=feature, currency=currency,
         amount=amount, balance_after=balance_after, task_id=task_id,
@@ -376,6 +380,7 @@ async def _record(session, uid: int, feature: str, currency: str,
         price_output=(prices or {}).get("price_output"),
         price_cache_hit=(prices or {}).get("price_cache_hit"),
         price_per_hour=(prices or {}).get("price_per_hour"),
+        price_tier=price_tier,
     ))
 
 
@@ -389,6 +394,16 @@ def _llm_cost(usage: dict, prices: dict) -> float:
     comp = usage.get("completion_tokens") or 0
     return round((miss * prices["price_input"] + hit * prices["price_cache_hit"]
                   + comp * prices["price_output"]) / 1e6, 6)
+
+
+async def _llm_prices_now() -> tuple[dict, str]:
+    """取当前生效 LLM 价签并按结算时刻（UTC+8）判峰谷（V1.3.0）。
+    返回（有效价签, "peak"|"offpeak"）——有效价签已按峰谷替换，直接喂 _llm_cost 与发票快照。"""
+    from model_store import get_model_prices, price_tier_at, apply_tier
+    prices = await get_model_prices("llm")
+    tier = price_tier_at(datetime.now(timezone.utc),
+                         prices.get("peak_windows"), prices.get("weekend_rule"))
+    return apply_tier(prices, tier), tier
 
 
 class InsufficientError(Exception):
@@ -437,10 +452,9 @@ async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | No
     cost = round_tokens(tokens, QUANTUM_PER_TOKEN_UNIT)
     if cost <= 0:
         return 0
-    model, cost_yuan, prices = None, None, None
+    model, cost_yuan, prices, price_tier = None, None, None, None
     if usage is not None:
-        from model_store import get_model_prices
-        prices = await get_model_prices("llm")
+        prices, price_tier = await _llm_prices_now()   # V1.3.0：结算时刻判峰谷
         model = prices["model"]
         cost_yuan = _llm_cost(usage, prices)
     async with async_session() as session:
@@ -474,7 +488,8 @@ async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | No
             await _record(session, uid, feature, "quantum", -cost,
                           old_row.quantum_gift + old_row.quantum_perm, task_id,
                           from_gift=-fg, from_perm=-fp,
-                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices,
+                          price_tier=price_tier)
             await session.commit()
             return cost
         # 第二段：0 < 总额 < cost → 扣光（不倒债）
@@ -498,7 +513,8 @@ async def consume_quantum(uid: int, tokens: int, feature: str, task_id: str | No
             logger.warning("[Billing] 量子波竞态不足: uid=%s 需 %d 有 %d,扣到 0", uid, cost, total_old)
             await _record(session, uid, feature, "quantum", -total_old, 0, task_id,
                           from_gift=-cur_gift, from_perm=-cur_perm,
-                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices,
+                          price_tier=price_tier)
             await session.commit()
             return total_old
         await session.commit()
@@ -513,10 +529,9 @@ async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | No
     cost = round_tokens(tokens, GRAVITY_PER_TOKEN_UNIT)
     if cost <= 0:
         return 0
-    model, cost_yuan, prices = None, None, None
+    model, cost_yuan, prices, price_tier = None, None, None, None
     if usage is not None:
-        from model_store import get_model_prices
-        prices = await get_model_prices("llm")
+        prices, price_tier = await _llm_prices_now()   # V1.3.0：结算时刻判峰谷
         model = prices["model"]
         cost_yuan = _llm_cost(usage, prices)
     async with async_session() as session:
@@ -533,7 +548,8 @@ async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | No
         if r.rowcount == 1:
             new_bal = (await session.get(UserBilling, uid)).gravity
             await _record(session, uid, feature, "gravity", -cost, new_bal, task_id,
-                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices,
+                          price_tier=price_tier)
             await session.commit()
             return cost
         # 第二段：0 < 余额 < cost → 扣光（不倒债）
@@ -548,7 +564,8 @@ async def consume_gravity(uid: int, tokens: int, feature: str, task_id: str | No
         if r2.rowcount == 1:
             logger.warning("[Billing] 引力波竞态不足: uid=%s 需 %d 有 %d,扣到 0", uid, cost, old)
             await _record(session, uid, feature, "gravity", -old, 0, task_id,
-                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices)
+                          model=model, usage=usage, cost_yuan=cost_yuan, prices=prices,
+                          price_tier=price_tier)
             await session.commit()
             return old
         await session.commit()

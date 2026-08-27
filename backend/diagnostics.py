@@ -8,11 +8,14 @@
 import logging
 import os
 import platform
+import re
 import shutil
 import time
 from collections import deque
 
 from sqlalchemy import select, desc
+
+from utils import mask_urls as _mask_urls
 
 from config import (
     IS_PROD, LLM_MODEL, MIMO_API_KEY, LLM_API_KEY,
@@ -102,6 +105,15 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
     # V1.1.0：模型仓库生效值（排障关键——模型可能已被后台切换，env 默认值不再代表实际）
     from model_store import get_llm_active, get_asr_model
     llm_provider, llm_model_active = get_llm_active()
+
+    async def _llm_has_peak_offpeak() -> bool:
+        """生效 LLM 是否启用峰谷定价（有峰时段配置即视为启用；V1.3.0）"""
+        try:
+            from model_store import get_model_prices, _parse_windows
+            p = await get_model_prices("llm")
+            return bool(_parse_windows(p.get("peak_windows")))
+        except Exception:
+            return False
     config_flags = {
         "is_prod": IS_PROD,
         "llm_model": llm_model_active,
@@ -111,6 +123,8 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "llm_key_set": bool(LLM_API_KEY),
         # V1.2.2 起人机验证自托管（auth/captcha.py），无外部密钥，turnstile_set 退役
         "captcha": "self-hosted",
+        # V1.3.0 峰谷定价：生效 LLM 是否启用峰谷（判 False 时成本可能按单一价）
+        "llm_peak_offpeak": await _llm_has_peak_offpeak(),
         "resend_set": bool(RESEND_API_KEY),
         # 爱发电（V0.8.0 会员支付链路）
         "afdian_user_id_set": bool(AFDIAN_USER_ID),
@@ -256,6 +270,8 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         user_ctx["billing_error"] = str(e)
 
     # ── 任务快照（不含内容，只含状态）──
+    # V1.3.0（Codex 02 棒）：按 uid 过滤——不再把他人任务的 error（可能含源链接）带进诊断包；
+    # error 字段统一 URL 脱敏
     task_snapshots = [
         {
             "task_id": t.get("task_id"),
@@ -264,14 +280,16 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
             "source_platform": t.get("source_platform"),
             "owner_uid": t.get("owner_uid"),
             "rehydrated": bool(t.get("rehydrated")),   # 冷启动重建标记（V0.8.0）
-            "error": (t.get("error") or "")[:300] or None,
+            "error": _mask_urls((t.get("error") or "")[:300]) or None,
         }
         for t in list(tasks.values())[-20:]
+        if t.get("owner_uid") == uid   # 严格仅本人（匿名任务也不进他人诊断包，Codex 03 棒）
     ]
 
-    # ── 日志（最近 300 条 + 错误精选）──
-    logs = list(LOG_BUFFER)[-300:]
-    errors = [l for l in LOG_BUFFER if l["level"] in ("ERROR", "WARNING")][-50:]
+    # ── 日志（最近 300 条 + 错误精选；V1.3.0：msg 统一 URL 脱敏）──
+    logs = [{**l, "msg": _mask_urls(l["msg"])} for l in list(LOG_BUFFER)[-300:]]
+    errors = [{**l, "msg": _mask_urls(l["msg"])}
+              for l in logs if l["level"] in ("ERROR", "WARNING")][-50:]
 
     # V1.2.2 LLM 调用健康（SOP ④.1）：近 24h 汇总数字——AI 罢工类问题免等用户工单
     llm_health = None

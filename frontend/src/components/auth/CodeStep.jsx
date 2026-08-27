@@ -87,7 +87,10 @@ export default function CodeStep({ email, onBack, onSuccess }) {
     <div className="page-enter" style={{ maxWidth: 380, margin: '0 auto' }}>
       <h2 className="font-display font-display-sm" style={{ marginBottom: 8 }}>输入验证码</h2>
       <p className="font-caption" style={{ marginBottom: 24 }}>
-        验证码已发送至 <strong style={{ color: 'var(--ink)' }}>{email}</strong>
+        {/* UID 输入只提示"绑定邮箱"（防枚举，后端不回传邮箱）；邮箱输入回显原文 */}
+        验证码已发送至 <strong style={{ color: 'var(--ink)' }}>
+          {/^\d+$/.test(email) ? '该账号绑定的邮箱' : email}
+        </strong>
       </p>
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, justifyContent: 'center' }} onPaste={handlePaste}>

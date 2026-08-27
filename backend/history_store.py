@@ -22,6 +22,8 @@ class TaskRecord(Base):
     owner_uid: Mapped[int] = mapped_column(Integer, index=True)
     title: Mapped[str] = mapped_column(String(256), default="未知视频")
     source_platform: Mapped[str] = mapped_column(String(32), default="")
+    # 源视频链接（V1.3.0：历史记录可回顾跳转；本地上传为 NULL 不显示；完整保存不截断）
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="completed")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
@@ -52,14 +54,16 @@ async def save_task_runtime(task_id: str, **fields) -> None:
 
 
 async def save_task_record(task_id: str, owner_uid: int | None,
-                           title: str, source_platform: str) -> None:
-    """管线完成时写入记录（未登录不记）"""
+                           title: str, source_platform: str,
+                           source_url: str | None = None) -> None:
+    """管线完成时写入记录（未登录不记）。V1.3.0：source_url 源链接（上传为 None）"""
     if not owner_uid:
         return
     async with async_session() as session:
         await session.merge(TaskRecord(
             task_id=task_id, owner_uid=owner_uid,
             title=(title or "未知视频")[:256], source_platform=source_platform,
+            source_url=source_url or None,   # 完整保存（静默截断会让冷重载后链接失效）
         ))
         await session.commit()
 
@@ -78,6 +82,7 @@ async def list_task_records(uid: int) -> list[dict]:
                 "task_id": r.task_id,
                 "title": r.title,
                 "source_platform": r.source_platform,
+                "source_url": r.source_url,
                 "created_at": (r.created_at.isoformat() + "Z") if r.created_at else None,
                 "has_content": bool(r.raw_text),
             }
@@ -112,7 +117,7 @@ async def get_task_record(task_id: str) -> dict | None:
         if not r:
             return None
         return {"title": r.title, "source_platform": r.source_platform,
-                "owner_uid": r.owner_uid,
+                "owner_uid": r.owner_uid, "source_url": r.source_url,
                 "raw_text": r.raw_text, "subtitle_srt": r.subtitle_srt,
                 "md_content": r.md_content, "summary_content": r.summary_content}
 
@@ -153,6 +158,7 @@ async def nullify_task_content(task_id: str) -> None:
         r.subtitle_srt = None
         r.md_content = None
         r.summary_content = None
+        r.source_url = None   # V1.3.0：源链接与任务数据同周期清理（协议承诺）
         await session.commit()
 
 

@@ -63,11 +63,11 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
   return (
     <Modal open={open} onCancel={onClose} title="忘记密码" footer={null} width={400} centered>
       <p style={{ fontSize: 13, color: 'var(--mute)', marginTop: 0 }}>
-        输入注册时使用的邮箱，我们会把验证码发给你
+        输入注册时使用的邮箱或 UID，我们会把验证码发到账号绑定的邮箱
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Input
-          placeholder="邮箱地址" value={email}
+          placeholder="邮箱地址或 UID" value={email}
           onChange={e => setEmail(e.target.value)}
         />
         <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />

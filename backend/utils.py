@@ -2,10 +2,36 @@
 工具函数 — 清理、监控、ID 生成
 """
 import uuid
+import re
 import shutil
 from pathlib import Path
 
 from config import TMP_DIR, MIN_DISK_SPACE_MB
+
+_URL_RE = re.compile(r"https?://\S+", re.I)
+
+
+def mask_urls(s: str) -> str:
+    """URL 脱敏（V1.3.0 Codex 03 棒）：日志/错误/诊断包不携带完整源链接；
+    大小写不敏感（HTTPS:// 也覆盖）。"""
+    return _URL_RE.sub("[链接已脱敏]", s or "")
+
+
+def wash_json_urls(obj):
+    """递归 URL 脱敏（V1.3.0 Codex 05 棒）：dict（含 key）/list/嵌套结构全形态。
+    用于工单 client_events 等用户可控 JSON 入库前的清洗。"""
+    if isinstance(obj, dict):
+        return {(mask_urls(str(k)) if isinstance(k, str) else k):
+                (wash_json_urls(v) if isinstance(v, (dict, list))
+                 else mask_urls(v) if isinstance(v, str) else v)
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [wash_json_urls(i) if isinstance(i, (dict, list))
+                else mask_urls(i) if isinstance(i, str) else i
+                for i in obj]
+    if isinstance(obj, str):
+        return mask_urls(obj)
+    return obj
 
 
 def generate_task_id() -> str:

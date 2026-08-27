@@ -680,6 +680,7 @@ async def get_task_detail(task_id: str) -> dict | None:
                 "price_output": r.price_output,
                 "price_cache_hit": r.price_cache_hit,
                 "price_per_hour": r.price_per_hour,
+                "price_tier": r.price_tier,   # V1.3.0 峰谷标记（老行 None）
             }
             for r in ledger_rows
         ],

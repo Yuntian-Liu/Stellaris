@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Typography, Button, Space, Tag,
-  message, Spin, Popconfirm, Modal,
+  message, Spin, Popconfirm, Modal, Tooltip,
 } from 'antd'
 import {
   DownloadOutlined,
@@ -40,6 +40,16 @@ import VaultStoreControl from '../components/VaultStoreControl'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Text, Paragraph } = Typography
+
+/** 源链接前端防线（V1.3.0）：仅 http/https 且有 hostname——旧库坏值也进不了 href */
+function isSafeHttpUrl(u) {
+  try {
+    const p = new URL(u)
+    return (p.protocol === 'http:' || p.protocol === 'https:') && !!p.hostname
+  } catch {
+    return false
+  }
+}
 
 export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNeedAuth }) {
   const { user } = useAuth()
@@ -312,6 +322,34 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
                 onClick={() => { navigator.clipboard.writeText(taskData.task_id); message.success('已复制任务 ID') }} />
             </span>
           </code>
+          {/* 源视频链接（V1.3.0：链接提取才显示；可点击跳转 + 复制；长链接截断，移动端自适应；
+              协议+hostname 双校验——旧库坏值也进不了 href，Codex 03 棒） */}
+          {taskData.source_url && isSafeHttpUrl(taskData.source_url) && (
+            <>
+              <span style={{ fontSize: 13, color: 'var(--mute)' }}>源链接</span>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                minWidth: 0, maxWidth: '100%', justifySelf: 'start',
+              }}>
+                <Tooltip title={taskData.source_url} placement="bottomLeft">
+                  <a
+                    href={taskData.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="source-url-link"
+                    style={{
+                      fontSize: 12.5, color: 'var(--accent)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      display: 'inline-block', maxWidth: '100%', verticalAlign: 'bottom',
+                    }}
+                  >{taskData.source_url}</a>
+                </Tooltip>
+                <CopyOutlined
+                  style={{ fontSize: 11, color: 'var(--mute)', cursor: 'pointer', flexShrink: 0 }}
+                  onClick={() => { navigator.clipboard.writeText(taskData.source_url); message.success('已复制源链接') }} />
+              </span>
+            </>
+          )}
           {(taskData.actual_chars > 0 || taskData.charged_minutes > 0) && (
             <>
               <span style={{ fontSize: 13, color: 'var(--mute)' }}>本次消耗</span>

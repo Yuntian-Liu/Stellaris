@@ -826,13 +826,45 @@ export default function App() {
           from { opacity: 0; transform: translateX(28px); }
           to   { opacity: 1; transform: translateX(0); }
         }
-        .subview-enter { animation: subviewEnter 0.38s cubic-bezier(0.4, 0, 0.2, 1) both; }
+        .subview-enter { animation: subviewEnter 0.3s cubic-bezier(0.4, 0, 0.2, 1) both; }
         /* 二级界面退出（右滑出 + 淡出；覆盖式结构，主界面始终在底下不卸载） */
         @keyframes subviewExit {
           from { opacity: 1; transform: translateX(0); }
           to   { opacity: 0; transform: translateX(28px); }
         }
-        .subview-exit { animation: subviewExit 0.32s cubic-bezier(0.4, 0, 0.2, 1) both; }
+        .subview-exit { animation: subviewExit 0.26s cubic-bezier(0.4, 0, 0.2, 1) both; }
+
+        /* 两段退出第二阶段：frame 滑出结束后 shell 快速淡出——
+           卸载全屏 shell 的重绘停滞藏在淡出里（V1.3.0，碳碳实测"动画结束到出现之间的停滞"） */
+        @keyframes subviewShellFade {
+          from { opacity: 1; }
+          to   { opacity: 0; }
+        }
+        .settings-subview-shell--fade { animation: subviewShellFade 0.15s ease-out both; }
+
+        /* V1.3.0 二级界面架构（返回闪顶/会员残影修复）：
+           固定视口全不透明 shell 管遮挡与自身滚动（底层 window.scrollY 全程不动），
+           动画只施给内层 frame（shell 不参与透明度过渡，消灭双层残影） */
+        :root { --subview-top: 61px; }
+        @media (max-width: 768px) { :root { --subview-top: 57px; } }
+        .settings-subview-shell {
+          position: fixed;
+          top: var(--subview-top);
+          bottom: 0; left: 0; right: 0;
+          background: var(--canvas);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          z-index: 50;   /* nav(z100) 之下、页面内容之上 */
+        }
+        .settings-subview-frame {
+          max-width: 712px;
+          margin: 0 auto;
+          padding: 20px 24px 0;
+        }
+        .settings-subview-frame--wide { max-width: 1264px; }
+        @media (max-width: 768px) {
+          .settings-subview-frame { padding: 14px 14px 0; }
+        }
 
         /* 会员卡 hover：克制的浮起（抬离桌面感，非弹跳） */
         .member-card {

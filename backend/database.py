@@ -85,6 +85,15 @@ _EXPECTED_COLUMNS = [
     ("task_records", "subtitle_source", "VARCHAR(32)"),
     ("task_records", "md_status", "VARCHAR(16)"),
     ("task_records", "summary_status", "VARCHAR(16)"),
+    # V1.3.0 峰谷定价：model_configs 峰谷配置 + 发票峰谷标记
+    ("model_configs", "peak_windows", "VARCHAR"),
+    ("model_configs", "weekend_rule", "VARCHAR"),
+    ("model_configs", "off_price_input", "FLOAT"),
+    ("model_configs", "off_price_output", "FLOAT"),
+    ("model_configs", "off_price_cache_hit", "FLOAT"),
+    ("billing_ledger", "price_tier", "VARCHAR"),
+    # V1.3.0 历史记录源视频链接（本地上传为 NULL；TEXT 完整保存不截断）
+    ("task_records", "source_url", "TEXT"),
 ]
 
 

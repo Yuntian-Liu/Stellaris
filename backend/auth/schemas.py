@@ -24,7 +24,8 @@ class CheckEmailResponse(BaseModel):
 
 
 class SendCodeRequest(BaseModel):
-    email: EmailStr
+    # V1.3.0：邮箱或 UID（后端分流：含 @ 按邮箱，纯数字按 UID 查绑定邮箱）
+    email: str = Field(..., min_length=1, max_length=128)
     # 图形验证码（V1.2.2 自托管人机验证；生产必填，dev bypass 可空）
     captcha_id: str | None = Field(None, max_length=64)
     captcha_answer: str | None = Field(None, max_length=16)
@@ -36,7 +37,8 @@ class SendCodeResponse(BaseModel):
 
 
 class LoginCodeRequest(BaseModel):
-    email: EmailStr
+    # V1.3.0：邮箱或 UID（后端分流，同 send-code）
+    email: str = Field(..., min_length=1, max_length=128)
     code: str = Field(..., min_length=6, max_length=6)
 
 
@@ -57,7 +59,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginPasswordRequest(BaseModel):
-    email_or_uid: str = Field(..., description="邮箱或 UID")
+    email_or_uid: str = Field(..., max_length=128, description="邮箱或 UID")
     password: str
     # 图形验证码（V1.2.2 自托管人机验证；生产必填，dev bypass 可空）
     captcha_id: str | None = Field(None, max_length=64)
@@ -77,7 +79,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    """忘记密码(免登录,验证码通道)"""
-    email: EmailStr
+    """忘记密码(免登录,验证码通道)。V1.3.0：email 兼容邮箱或 UID"""
+    email: str = Field(..., min_length=1, max_length=128)
     code: str = Field(..., min_length=6, max_length=6)
     new_password: str = Field(..., min_length=8)

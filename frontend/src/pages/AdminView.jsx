@@ -1127,6 +1127,14 @@ function TasksPanel() {
                       {l.currency === 'minute'
                         ? `${l.feature}   ${Math.abs(l.amount).toFixed(1)} 分钟 × ¥${l.price_per_hour}/h = ¥${l.cost_yuan}`
                         : `${l.feature}   ${l.cache_miss_tokens ?? l.prompt_tokens}×${l.price_input} + ${l.cache_hit_tokens ?? 0}×${l.price_cache_hit} + ${l.completion_tokens}×${l.price_output}（¥/M）= ¥${l.cost_yuan}`}
+                      {/* V1.3.0 峰谷徽章：这笔按峰价还是谷价结算的（老发票无标记） */}
+                      {l.price_tier && l.currency !== 'minute' && (
+                        <span style={{
+                          marginLeft: 6, fontSize: 10, padding: '0 5px', borderRadius: 99,
+                          background: l.price_tier === 'offpeak' ? '#16a34a14' : '#d9770614',
+                          color: l.price_tier === 'offpeak' ? '#16a34a' : '#d97706',
+                        }}>{l.price_tier === 'offpeak' ? '谷' : '峰'}</span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2588,16 +2596,71 @@ function ModelSlotPanel({ slot, title, desc, items, source, onRefresh, requirePi
 
   const openPricing = (m) => {
     setPricingFor(m)
+    let windows = []
+    try { windows = m.peak_windows ? JSON.parse(m.peak_windows) : [] } catch { windows = [] }
     setPriceForm({
       price_input: m.price_input ?? '',
       price_output: m.price_output ?? '',
       price_cache_hit: m.price_cache_hit ?? '',
       price_per_hour: m.price_per_hour ?? '',
+      // V1.3.0 峰谷：时段列表 + 周末规则 + 谷价三格
+      peak_windows: windows,
+      weekend_rule: m.weekend_rule || 'all_offpeak',
+      off_price_input: m.off_price_input ?? '',
+      off_price_output: m.off_price_output ?? '',
+      off_price_cache_hit: m.off_price_cache_hit ?? '',
     })
   }
+
+  // 峰谷前端校验（后端 update_pricing 还有一道）：格式 HH:MM、时间有效、不重叠
+  const validateWindows = (windows) => {
+    const spans = []
+    for (const [s, e] of windows) {
+      const m1 = /^(\d{1,2}):(\d{2})$/.exec(s || '')
+      const m2 = /^(\d{1,2}):(\d{2})$/.exec(e || '')
+      if (!m1 || !m2) return '时段格式应为 HH:MM（如 09:00）'
+      const sv = (+m1[1]) * 60 + (+m1[2])
+      const ev = (+m2[1]) * 60 + (+m2[2])
+      if (sv >= 1440 || ev > 1440 || sv === ev) return `时段无效：${s}-${e}`
+      spans.push(...(sv < ev ? [[sv, ev]] : [[sv, 1440], [0, ev]]))   // 跨午夜展开
+    }
+    spans.sort((a, b) => a[0] - b[0])
+    for (let i = 1; i < spans.length; i++) {
+      if (spans[i][0] < spans[i - 1][1]) return '峰时段存在重叠，请调整'
+    }
+    return null
+  }
+
   const savePricing = () => {
+    if (pricingFor.slot === 'llm') {
+      const err = validateWindows(priceForm.peak_windows || [])
+      if (err) { message.error(err); return }
+    }
+    const num = (v) => (v === '' || v == null ? null : Number(v))
+    for (const k of ['price_input', 'price_output', 'price_cache_hit', 'price_per_hour',
+                     'off_price_input', 'off_price_output', 'off_price_cache_hit']) {
+      const n = num(priceForm[k])
+      if (n != null && (Number.isNaN(n) || n < 0)) { message.error('价格必须是非负数字'); return }
+    }
+    const payload = {
+      price_input: num(priceForm.price_input),
+      price_output: num(priceForm.price_output),
+      price_cache_hit: num(priceForm.price_cache_hit),
+      price_per_hour: num(priceForm.price_per_hour),
+    }
+    // 峰谷五字段仅 LLM 槽位（Codex 02 棒二轮：ASR 带上会被后端 400，导致 ASR 定价保存不了）
+    if (pricingFor.slot === 'llm') {
+      Object.assign(payload, {
+        off_price_input: num(priceForm.off_price_input),
+        off_price_output: num(priceForm.off_price_output),
+        off_price_cache_hit: num(priceForm.off_price_cache_hit),
+        weekend_rule: priceForm.weekend_rule,
+        peak_windows: (priceForm.peak_windows || []).length
+          ? JSON.stringify(priceForm.peak_windows) : null,
+      })
+    }
     requirePin(async (pin) => {
-      await adminApi.updatePricing(pricingFor.id, { ...priceForm, pin })
+      await adminApi.updatePricing(pricingFor.id, { ...payload, pin })
       message.success('价签已更新（之后的消费按新价计）')
       setPricingFor(null)
       onRefresh()
@@ -2673,33 +2736,96 @@ function ModelSlotPanel({ slot, title, desc, items, source, onRefresh, requirePi
         </div>
       ))}
 
-      {/* 定价编辑弹窗（留空 = 按厂商默认价；PIN 保存） */}
+      {/* 定价编辑弹窗（留空 = 按厂商默认价；PIN 保存；V1.3.0 峰谷两区） */}
       <Modal
         open={!!pricingFor}
         onCancel={() => setPricingFor(null)}
         onOk={savePricing}
         okText="保存"
         cancelText="取消"
-        width={420}
+        width={pricingFor?.slot === 'llm' ? 560 : 420}
         centered
+        styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
         title={pricingFor ? `定价 · ${pricingFor.label}` : ''}
       >
         {pricingFor && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
             <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
               留空则按厂商默认价计算；修改只影响之后的消费，历史流水不变。
+              结算时按当时时刻（UTC+8）判定峰谷，发票会记录峰/谷标记。
             </div>
             {pricingFor.slot === 'llm' ? (
               <>
-                <Input addonBefore="输入价（元/百万 tokens）" value={priceForm.price_input}
-                  placeholder="默认 4"
-                  onChange={e => setPriceForm(f => ({ ...f, price_input: e.target.value }))} />
-                <Input addonBefore="输出价（元/百万 tokens）" value={priceForm.price_output}
-                  placeholder="默认 12"
-                  onChange={e => setPriceForm(f => ({ ...f, price_output: e.target.value }))} />
-                <Input addonBefore="缓存命中价（元/百万 tokens）" value={priceForm.price_cache_hit}
-                  placeholder="默认 0.5"
-                  onChange={e => setPriceForm(f => ({ ...f, price_cache_hit: e.target.value }))} />
+                {/* ── 峰区：峰时段列表 + 峰价 ── */}
+                <div style={{ border: '1px solid var(--hairline)', borderRadius: 'var(--r-input)', padding: '12px 14px' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#d97706', marginBottom: 8 }}>
+                    峰 · 高峰时段与峰价
+                  </div>
+                  {(priceForm.peak_windows || []).map((w, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                      <Input size="small" placeholder="09:00" value={w[0]} style={{ width: 90 }}
+                        onChange={e => setPriceForm(f => {
+                          const ws = [...f.peak_windows]; ws[i] = [e.target.value, ws[i][1]]
+                          return { ...f, peak_windows: ws }
+                        })} />
+                      <span style={{ color: 'var(--mute)' }}>至</span>
+                      <Input size="small" placeholder="12:00" value={w[1]} style={{ width: 90 }}
+                        onChange={e => setPriceForm(f => {
+                          const ws = [...f.peak_windows]; ws[i] = [ws[i][0], e.target.value]
+                          return { ...f, peak_windows: ws }
+                        })} />
+                      <Button size="small" type="text" danger
+                        onClick={() => setPriceForm(f => ({
+                          ...f, peak_windows: f.peak_windows.filter((_, j) => j !== i),
+                        }))}>删除</Button>
+                    </div>
+                  ))}
+                  <Button size="small" type="dashed" style={{ marginBottom: 10 }}
+                    onClick={() => setPriceForm(f => ({
+                      ...f, peak_windows: [...(f.peak_windows || []), ['', '']],
+                    }))}>+ 添加时段</Button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <Input addonBefore="峰·输入价（元/百万 tokens）" value={priceForm.price_input}
+                      placeholder="默认 4"
+                      onChange={e => setPriceForm(f => ({ ...f, price_input: e.target.value }))} />
+                    <Input addonBefore="峰·输出价（元/百万 tokens）" value={priceForm.price_output}
+                      placeholder="默认 12"
+                      onChange={e => setPriceForm(f => ({ ...f, price_output: e.target.value }))} />
+                    <Input addonBefore="峰·缓存命中价（元/百万 tokens）" value={priceForm.price_cache_hit}
+                      placeholder="默认 0.5"
+                      onChange={e => setPriceForm(f => ({ ...f, price_cache_hit: e.target.value }))} />
+                  </div>
+                </div>
+
+                {/* ── 谷区：补集说明 + 周末规则 + 谷价 ── */}
+                <div style={{ border: '1px solid var(--hairline)', borderRadius: 'var(--r-input)', padding: '12px 14px' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>
+                    谷 · 其余时间与谷价
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 8, lineHeight: 1.7 }}>
+                    谷时段 = 峰时段之外的时间，无需填写。谷价留空 = 与峰同价（无峰谷差异）。
+                  </div>
+                  <Radio.Group
+                    value={priceForm.weekend_rule}
+                    onChange={e => setPriceForm(f => ({ ...f, weekend_rule: e.target.value }))}
+                    style={{ marginBottom: 10 }}
+                    options={[
+                      { value: 'all_offpeak', label: '周末全部按谷价' },
+                      { value: 'same', label: '周末与工作日一致' },
+                    ]}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <Input addonBefore="谷·输入价（元/百万 tokens）" value={priceForm.off_price_input}
+                      placeholder="默认 1"
+                      onChange={e => setPriceForm(f => ({ ...f, off_price_input: e.target.value }))} />
+                    <Input addonBefore="谷·输出价（元/百万 tokens）" value={priceForm.off_price_output}
+                      placeholder="默认 4"
+                      onChange={e => setPriceForm(f => ({ ...f, off_price_output: e.target.value }))} />
+                    <Input addonBefore="谷·缓存命中价（元/百万 tokens）" value={priceForm.off_price_cache_hit}
+                      placeholder="默认 0.25"
+                      onChange={e => setPriceForm(f => ({ ...f, off_price_cache_hit: e.target.value }))} />
+                  </div>
+                </div>
               </>
             ) : (
               <Input addonBefore="每小时价格（元）" value={priceForm.price_per_hour}

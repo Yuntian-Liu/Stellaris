@@ -5,6 +5,7 @@ Stellaris 后端入口 — FastAPI 应用
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from contextlib import asynccontextmanager
@@ -23,7 +24,7 @@ from config import (
     SPEECH_CHARS_PER_MIN, CHARS_PER_TOKEN, LLM_TOKEN_ROUNDTRIP_FACTOR,
     TMP_DIR,
 )
-from utils import generate_task_id, cleanup_temp_files, check_disk_space, platform_label
+from utils import generate_task_id, cleanup_temp_files, check_disk_space, platform_label, mask_urls as _mask_urls, wash_json_urls as _wash_json_urls
 from models import (
     SubmitRequest, TaskResponse, TaskStatus,
     HealthResponse, TaskSource,
@@ -175,7 +176,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.2.2-canopus",
+    version="1.3.0-fomalhaut",
     lifespan=lifespan,
 )
 
@@ -327,6 +328,24 @@ async def estimate_cost(
     return resp
 
 
+def _normalize_source_url(text: str) -> str | None:
+    """源链接规范化（V1.3.0 Codex 02/03 棒）：抽取第一条 URL + 仅 http/https 且有
+    真实 hostname（非仅 netloc）+ 无用户信息 + 无控制字符；
+    不满足返回 None——javascript:/data: 等危险协议永不进库、永不进 href。"""
+    from pipeline.download import _extract_url
+    from urllib.parse import urlparse
+    u = _extract_url(text or "")
+    try:
+        p = urlparse(u)
+    except Exception:
+        return None
+    if (p.scheme.lower() in ("http", "https") and p.hostname
+            and not p.username and not p.password
+            and all(ord(c) > 31 and c != "\x7f" for c in u)):
+        return u
+    return None
+
+
 @app.post("/api/submit", response_model=TaskResponse)
 async def submit_task(
     request: SubmitRequest,
@@ -367,7 +386,7 @@ async def submit_task(
         "status": TaskStatus.PENDING,
         "progress": 0,
         "source": request.source.value,
-        "url": request.url,
+        "url": _normalize_source_url(request.url),   # V1.3.0：规范化后才入库/响应（Codex 02 棒）
         "sessdata": request.sessdata,
         "source_platform": platform_label(request.url),
         "owner_uid": current_user.uid if current_user else None,
@@ -518,7 +537,8 @@ async def get_task_status(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _authorize_task(task, current_user)
-    return TaskResponse(**task)
+    # V1.3.0：task dict 的 url 键映射为响应的 source_url（本地上传为 None）
+    return TaskResponse(**task, source_url=task.get("url"))
 
 
 async def _rehydrate_task(task_id: str) -> dict | None:
@@ -564,6 +584,7 @@ async def _rehydrate_task(task_id: str) -> dict | None:
         "progress": 100,
         "video_title": (record or {}).get("title"),
         "source_platform": (record or {}).get("source_platform"),
+        "url": (record or {}).get("source_url"),   # V1.3.0：重建也带源链接
         "owner_uid": (record or {}).get("owner_uid"),
         "subtitle_srt": "available" if srt_available else None,
         "subtitle_txt": text,
@@ -1237,21 +1258,32 @@ async def admin_update_pricing(
     req: Request,
     current_user: User = Depends(get_admin_user),
 ):
-    """更新模型价签（PIN；空值=回默认）"""
+    """更新模型价签（PIN；空值=回默认）。V1.3.0：透传峰谷五字段 + 非负有限校验"""
     body = await req.json()
     await _check_admin_pin(current_user, body)
     from model_store import update_pricing
     pricing = {}
-    for k in ("price_input", "price_output", "price_cache_hit", "price_per_hour"):
+    for k in ("price_input", "price_output", "price_cache_hit", "price_per_hour",
+              "off_price_input", "off_price_output", "off_price_cache_hit"):
         if k in body:
             v = body[k]
             if v in (None, ""):
                 pricing[k] = None
                 continue
+            if isinstance(v, bool):
+                # Codex 02 棒二轮：JSON true → float(1.0) 会绕过下游布尔拒绝
+                raise HTTPException(status_code=400, detail=f"{k} 必须是数字")
             try:
-                pricing[k] = float(v)
+                f = float(v)
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail=f"{k} 必须是数字")
+            if not math.isfinite(f) or f < 0:
+                raise HTTPException(status_code=400, detail=f"{k} 必须是非负有限数字")
+            pricing[k] = f
+    if "weekend_rule" in body:
+        pricing["weekend_rule"] = body["weekend_rule"]
+    if "peak_windows" in body:
+        pricing["peak_windows"] = body["peak_windows"]
     try:
         row = await update_pricing(model_id, pricing)
     except ValueError as e:
@@ -1961,7 +1993,8 @@ async def admin_task_detail(task_id: str, current_user: User = Depends(get_admin
             "charged_quantum": charged_q,
             "actual_seg_tokens": _pf("actual_seg_tokens"),
             "actual_chars": _pf("actual_chars"),
-            "error": t.get("error"),
+            # V1.3.0（Codex 03 棒）：错误串可能携源链接，管理端同样脱敏
+            "error": _mask_urls(t.get("error") or "") or None,
         }
     return detail
 
@@ -2068,7 +2101,9 @@ async def submit_ticket(
         try:
             diag = await build_diagnostics(current_user.uid, app.version, tasks)
             if req.client_events:
-                diag["client_events"] = req.client_events   # V0.10.1：前端操作日志
+                # V0.10.1：前端操作日志；V1.3.0（Codex 03/04/05 棒）：入库前递归 URL 脱敏——
+                # 嵌套 dict/list、URL-in-key、字符串元素全形态覆盖，工单最终由管理员读取
+                diag["client_events"] = _wash_json_urls(req.client_events)
             log_path = write_log_file(ticket["id"], diag)
             await update_ticket_log_path(ticket["id"], log_path)
             ticket["has_log"] = True
@@ -2196,6 +2231,7 @@ def _run_pipeline_sync(
                 asyncio.run(save_task_record(
                     task_id, task["owner_uid"], video_title,
                     task.get("source_platform") or "",
+                    source_url=task.get("url"),
                 ))
                 # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
                 asyncio.run(save_task_runtime(
@@ -2227,7 +2263,7 @@ def _run_pipeline_sync(
         })
 
     except Exception as e:
-        _update_status(task_id, TaskStatus.FAILED, error=str(e))
+        _update_status(task_id, TaskStatus.FAILED, error=_mask_urls(str(e)))
         cleanup_temp_files(task_id)
         # R3：匿名任务失败退还预占的当日体验额度（upload 管线无预占，见 fix_prompt 出入 1）
         task = tasks.get(task_id) or {}
@@ -2331,6 +2367,7 @@ def _run_pipeline_from_file_sync(
                 asyncio.run(save_task_record(
                     task_id, task["owner_uid"], video_title,
                     task.get("source_platform") or "",
+                    source_url=task.get("url"),
                 ))
                 # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
                 asyncio.run(save_task_runtime(
@@ -2361,7 +2398,7 @@ def _run_pipeline_from_file_sync(
         })
 
     except Exception as e:
-        _update_status(task_id, TaskStatus.FAILED, error=str(e))
+        _update_status(task_id, TaskStatus.FAILED, error=_mask_urls(str(e)))
         cleanup_temp_files(task_id)
         # R3：匿名任务失败退还预占的当日体验额度（与 submit 管线一致）
         task = tasks.get(task_id) or {}
@@ -2462,7 +2499,7 @@ def _generate_summary_impl(task_id: str):
 
     except Exception as e:
         task["summary_status"] = "failed"
-        task["summary_error"] = str(e)
+        task["summary_error"] = _mask_urls(str(e))
         logger.error("[Summary] 总结失败: %s - %s", task_id, e)
 
 
@@ -2515,7 +2552,7 @@ def _generate_md_impl(task_id: str):
 
     except Exception as e:
         task["md_status"] = "failed"
-        task["md_error"] = str(e)
+        task["md_error"] = _mask_urls(str(e))
         logger.error("[MD] 导出失败: %s - %s", task_id, e)
 
 
