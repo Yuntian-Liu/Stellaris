@@ -22,7 +22,7 @@ import AgreementModal from './components/AgreementModal'
 import MeteorShower from './components/MeteorShower'
 import BillingPills from './components/BillingPills'
 import Confetti from './components/Confetti'
-import GuideModal from './components/GuideModal'
+import { HelpCenterModal } from './components/HelpCenter'
 import HistoryModal from './components/HistoryModal'
 import TierBadge from './components/TierBadge'
 import { tierMeta } from './utils/tier'
@@ -60,16 +60,19 @@ export default function App() {
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
   const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
-  const [guideOpen, setGuideOpen] = useState(false) // 计费引导
+  const [helpOpen, setHelpOpen] = useState(false)   // 帮助中心弹窗（导航栏问号）
+  const [helpSection, setHelpSection] = useState('start') // 帮助中心初始板块
   const [historyOpen, setHistoryOpen] = useState(false) // 历史记录
   const [meteorOn, setMeteorOn] = useState(false)   // 流星雨彩蛋
   const [balances, setBalances] = useState(null)    // 头像下拉双货币余额
   const [dropOpen, setDropOpen] = useState(false)   // 头像下拉开合（点菜单后需手动收起）
   const [memberOpen, setMemberOpen] = useState(false) // 会员权益二级界面（标题栏随其展开）
+  const [helpWide, setHelpWide] = useState(false)     // 帮助中心二级界面（宽版，标题栏同步扩宽）
   const adminOpen = page === 'admin' // 管理看板独立页面（派生态，page 变化即自动复位）
   const [ledgerInit, setLedgerInit] = useState(false) // 余额区「消耗记录 →」下钻设置页
   const [celebrateTier, setCelebrateTier] = useState(null) // 会员开通欢迎弹窗（档位跃迁检测）
   const clickRef = useRef({ count: 0, timer: null })
+  const navRef = useRef(null)   // 导航栏容器：头像下拉浮层挂载点（挂 body 会在收窄动画时钉死旧坐标闪现）
   const { user, loading, logout } = useAuth()
   const isMobile = useMobile()
 
@@ -95,7 +98,7 @@ export default function App() {
 
   // 离开设置页即复位会员二级界面态（防展开态泄漏到其他页面：品牌点击/历史回看等路径）
   useEffect(() => {
-    if (page !== 'settings') setMemberOpen(false)
+    if (page !== 'settings') { setMemberOpen(false); setHelpWide(false) }
   }, [page])
 
   // 管理看板防呆：非 admin 进入 admin 页（如登录态切换）弹回首页
@@ -141,6 +144,10 @@ export default function App() {
     goHome()
   }
 
+  // 切页即回顶：主页面切换（品牌点击/返回键/登录成功等）统一从顶部开始；
+  // 二级界面的返回落位不受影响（SubviewShell 期间 page 不变、window.scrollY 全程未动）
+  useEffect(() => { window.scrollTo(0, 0) }, [page])
+
   // 401(token 失效)→ 跳登录页
   useEffect(() => {
     const handler = () => setPage('auth')
@@ -148,11 +155,18 @@ export default function App() {
     return () => window.removeEventListener('stellaris:unauthorized', handler)
   }, [])
 
-  // 首页匿名提示条「了解权益」→ 开计费引导（事件总线，同 stellaris:open-exchange 先例）
+  // 首页匿名提示条「了解权益」→ 帮助中心计费板块（事件总线，同 stellaris:open-exchange 先例）
   useEffect(() => {
-    const handler = () => setGuideOpen(true)
+    const handler = () => { setHelpSection('billing'); setHelpOpen(true) }
     window.addEventListener('stellaris:open-guide', handler)
     return () => window.removeEventListener('stellaris:open-guide', handler)
+  }, [])
+
+  // 货币胶囊等处「了解计费规则 →」→ 帮助中心指定板块（detail = 板块 key）
+  useEffect(() => {
+    const handler = (e) => { setHelpSection(e.detail || 'start'); setHelpOpen(true) }
+    window.addEventListener('stellaris:open-help', handler)
+    return () => window.removeEventListener('stellaris:open-help', handler)
   }, [])
 
   // 结果页「去申请文件柜」→ 设置页星轨实验室（事件总线，同 open-guide 先例；匿名先引导登录）
@@ -203,8 +217,9 @@ export default function App() {
         WebkitBackdropFilter: 'blur(12px)',
         borderBottom: '1px solid var(--hairline)',
       }}>
-      <div className="app-shell-nav" style={{
-        maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
+      <div className="app-shell-nav" ref={navRef} style={{
+        position: 'relative',
+        maxWidth: (chatOpen || memberOpen || adminOpen || helpWide) ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
         padding: '14px 24px 12px',
@@ -228,13 +243,13 @@ export default function App() {
         </div>
         {/* 右侧入口位:loading 占位;已登录→三胶囊+头像 Dropdown;未登录→登录按钮 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* 计费引导问号（所有状态可见） */}
+          {/* 帮助中心问号（所有状态可见） */}
           <Popover
             placement="bottomRight"
-            content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>计费与额度说明</div>}
+            content={<div style={{ fontSize: 12, color: 'var(--mute)' }}>帮助中心</div>}
           >
             <QuestionCircleOutlined
-              onClick={() => setGuideOpen(true)}
+              onClick={() => { setHelpSection('start'); setHelpOpen(true) }}
               style={{ fontSize: 15, color: 'var(--mute)', cursor: 'pointer' }}
             />
           </Popover>
@@ -258,6 +273,8 @@ export default function App() {
               <Dropdown
                 open={dropOpen}
                 onOpenChange={setDropOpen}
+                destroyOnHidden
+                getPopupContainer={() => navRef.current || document.body}
                 dropdownRender={() => (
                   <div style={{
                     width: 240,
@@ -353,7 +370,12 @@ export default function App() {
                       )}
                       <div
                         className="dropdown-item"
-                        onClick={() => { setDropOpen(false); setPage('settings') }}
+                        onClick={() => {
+                          setDropOpen(false)
+                          setPage('settings')
+                          // 点设置 = 新意图：已在设置页时秒清二级界面回根（事件总线，同 open-lab 先例）
+                          window.dispatchEvent(new CustomEvent('stellaris:settings-root'))
+                        }}
                       >
                         <SettingOutlined style={{ marginRight: 8 }} />设置
                       </div>
@@ -391,7 +413,7 @@ export default function App() {
       </div>
 
       <Content className="app-shell-content" style={{
-        maxWidth: (chatOpen || memberOpen || adminOpen) ? 1312 : 760,
+        maxWidth: (chatOpen || memberOpen || adminOpen || helpWide) ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
         width: '100%',
@@ -416,6 +438,7 @@ export default function App() {
             onOpenHistory={() => setHistoryOpen(true)}
             initLab={labInit}
             onLabInit={() => setLabInit(false)}
+            onWideSubview={setHelpWide}
           />
         )}
         {/* 管理看板（仅 is_admin 可达；渲染守卫双保险，非 admin 直接改 state 也看不到） */}
@@ -456,8 +479,8 @@ export default function App() {
         onClose={() => setAgreementView(null)}
       />
 
-      {/* 计费引导（问号触发） */}
-      <GuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+      {/* 帮助中心（问号触发；计费详细说明已并入「货币与计费」板块） */}
+      <HelpCenterModal open={helpOpen} initialSection={helpSection} onClose={() => setHelpOpen(false)} />
 
       {/* 提取进行中点品牌 → 确认离开（登录/匿名文案区分；「返回主页」保留防卡死关机键） */}
       <Modal

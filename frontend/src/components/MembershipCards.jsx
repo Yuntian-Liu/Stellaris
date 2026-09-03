@@ -247,19 +247,21 @@ export default function MembershipCards({ billing }) {
 
     {/* 赞赏入口（爱发电自选金额；也是支付链路的生产冒烟通道） */}
     <div style={{
-      textAlign: 'center', marginTop: 4, marginBottom: 16,
+      textAlign: 'center', marginTop: 4, marginBottom: 6,
       paddingTop: 14, borderTop: '1px dashed var(--hairline)',
     }}>
       <span style={{ fontSize: 12, color: 'var(--mute)', marginRight: 10 }}>
         星轨漫长，若这里曾照亮你 ✦
       </span>
-      <Button
-        size="small" type="text" icon={<HeartOutlined />}
-        style={{ color: 'var(--accent)' }}
+      <span
         onClick={openShop}
+        style={{
+          fontSize: 12, color: 'var(--accent)', cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}
       >
-        赞赏支持
-      </Button>
+        <HeartOutlined style={{ fontSize: 12 }} />赞赏支持
+      </span>
     </div>
 
     {/* 开通/赞赏前的会员协议有感确认 */}

@@ -10,17 +10,18 @@
 import { useEffect, useState } from 'react'
 import {
   Input, Button, Upload, Typography,
-  Collapse, Tag, Tooltip, Modal,
+  Collapse, Tag, Tooltip, Modal, Popover,
 } from 'antd'
 import {
   LinkOutlined, UploadOutlined, RocketOutlined,
   InfoCircleOutlined, ClockCircleOutlined,
   FileTextOutlined, ThunderboltOutlined, CloseOutlined,
-  LoadingOutlined,
+  LoadingOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
 import useClipboardLink from '../hooks/useClipboardLink'
 import { useAuth } from '../contexts/AuthContext'
+import { GroupQrCard, GroupQrModal } from '../components/GroupQrModal'
 
 const { Text } = Typography
 
@@ -67,7 +68,9 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   const [uploadEstimate, setUploadEstimate] = useState(null) // 上传预估（选文件后填充，确认后清空）
   const [skipSegment, setSkipSegment] = useState(false)  // 降级：跳过智能分段（量子波不足时可选）
   const [error, setError] = useState(null)
-  const [poem] = useState(() => STAR_POEMS[Math.floor(Math.random() * STAR_POEMS.length)])
+  // 彩蛋诗按天轮换（同一天所有人看到同一句，与设置页星语同款机制；原为随机抽取，不会"每日更新"）
+  const [poem] = useState(() => STAR_POEMS[Math.floor(Date.now() / 86400000) % STAR_POEMS.length])
+  const [groupOpen, setGroupOpen] = useState(false)   // 页脚用户交流群二维码弹层
 
   // ── 剪贴板链接自动检测（V1.2.0；定稿 tmp/collab/clipboard-autofill/05_kimi.md）──
   // 切回页面时若剪贴板里有新的视频链接 → 弹窗（询问 + 预估）。候选人出现即探测，
@@ -270,6 +273,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
           }}>
             Subtitle Extractor
           </span>
+          <span style={{ color: 'var(--accent)', fontSize: 13, lineHeight: 1, fontFamily: "'Cormorant Garamond', serif" }}>✦</span>
         </div>
 
         <h1 className="font-display font-display-lg" style={{ marginBottom: 12 }}>
@@ -614,8 +618,20 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
         </div>
       )}
 
-      {/* ── 底部版本标签 ── */}
-      <div style={{ textAlign: 'center', marginTop: 32 }}>
+      {/* ── 页脚彩蛋（观星小诗）── */}
+      <div className="footer-sig" style={{ textAlign: 'center', marginTop: 32 }}>
+        <div className="footer-poem" style={{
+          fontSize: 12,
+          color: 'var(--accent)',
+          fontFamily: "'Cormorant Garamond', serif",
+          letterSpacing: '0.08em',
+        }}>
+          {poem}
+        </div>
+      </div>
+
+      {/* ── 底部版本标签（含用户交流群入口：仅该段可交互，PC 悬浮出码/移动端点开）── */}
+      <div style={{ textAlign: 'center', marginTop: 14 }}>
         <Tag style={{
           background: 'transparent',
           color: 'var(--mute)',
@@ -626,24 +642,24 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
           fontWeight: 500,
         }}>
           Stellaris · 多平台视频字幕提取
+          <span style={{ margin: '0 2px', color: 'var(--hairline-strong)' }}>·</span>
+          <Popover
+            content={<GroupQrCard />}
+            trigger="hover"
+            placement="top"
+            styles={{ body: { padding: 12 } }}
+          >
+            <span
+              onClick={() => setGroupOpen(true)}
+              style={{ color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <TeamOutlined style={{ fontSize: 11 }} />
+              用户交流群
+            </span>
+          </Popover>
         </Tag>
       </div>
-
-      {/* ── 页脚签名（悬停浮现观星小诗，与结果页同款彩蛋）── */}
-      <div className="footer-sig" style={{ textAlign: 'center', marginTop: 14 }}>
-        <div className="footer-poem" style={{
-          fontSize: 12,
-          color: 'var(--accent)',
-          fontFamily: "'Cormorant Garamond', serif",
-          letterSpacing: '0.08em',
-          marginBottom: 4,
-        }}>
-          {poem}
-        </div>
-        <Text className="font-caption" style={{ color: 'var(--hairline-strong)' }}>
-          Stellaris · Made with care
-        </Text>
-      </div>
+      <GroupQrModal open={groupOpen} onClose={() => setGroupOpen(false)} />
 
       {/* ── 剪贴板链接检测弹窗（信息层级：弹窗负责"问"，预估区负责"帮你决定"）── */}
       <Modal

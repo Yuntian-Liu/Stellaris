@@ -37,6 +37,8 @@ import rehypeKatex from 'rehype-katex'
 import ChatPanel from '../components/ChatPanel'
 import Confetti from '../components/Confetti'
 import VaultStoreControl from '../components/VaultStoreControl'
+import InfoTip from '../components/InfoTip'
+import { GLOSSARY } from '../utils/glossary'
 import { useAuth } from '../contexts/AuthContext'
 
 const { Text, Paragraph } = Typography
@@ -473,7 +475,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
             {/* SRT 主下载 */}
             <DownloadRow
               icon={<FileOutlined />}
-              title="SRT 字幕文件"
+              title={<>SRT 字幕文件<InfoTip text={GLOSSARY.srt} /></>}
               desc="含时间轴，可导入播放器 / 剪辑软件"
               primary
               onClick={() => handleDownload('srt', 'SRT')}
@@ -681,6 +683,7 @@ function MdExportRow({ status, error, onExport, onDownload, cost, tokens, est, v
         <div style={{ fontWeight: 500, color: 'var(--ink)', fontSize: 14, marginBottom: 2 }}>
           <FileMarkdownOutlined style={{ marginRight: 8 }} />
           Markdown 结构化笔记
+          <InfoTip text={GLOSSARY.md} />
           <Tag style={{
             marginLeft: 8,
             background: 'var(--accent-light)',

@@ -29,6 +29,13 @@ export default function BillingPills({ onOpenLedger }) {
   const [data, setData] = useState(null)
   const [exchangeOpen, setExchangeOpen] = useState(false)
   const [exchangeTab, setExchangeTab] = useState('q2g')
+  // 受控开合：点开任何弹层/二级界面时立即收起悬浮层（弹出的窗口才是主角，
+  // 不该等用户移开鼠标才消失——碳碳 UX 定稿）
+  const [openPill, setOpenPill] = useState(null)
+  const pillProps = (key) => ({
+    open: openPill === key,
+    onOpenChange: (v) => setOpenPill(v ? key : null),
+  })
 
   const load = () => api.getBilling().then(setData).catch(() => {})
   useEffect(() => {
@@ -60,13 +67,17 @@ export default function BillingPills({ onOpenLedger }) {
     .find(v => v !== null)
   const dayLeft = pillLeft ?? INF
   const quantumTotal = quantum_gift + quantum_perm
-  const openExchange = (tab) => { setExchangeTab(tab); setExchangeOpen(true) }
+  const openExchange = (tab) => { setOpenPill(null); setExchangeTab(tab); setExchangeOpen(true) }
+  // 「了解计费规则 →」→ 帮助中心计费板块（事件总线，同 open-exchange 先例）
+  const openHelp = () => { setOpenPill(null); window.dispatchEvent(new CustomEvent('stellaris:open-help', { detail: 'billing' })) }
+  const openLedger = (c) => { setOpenPill(null); onOpenLedger?.(c) }
 
   return (
     <>
       {/* ── 分钟胶囊 ── */}
       <Popover
         placement="bottomRight"
+        {...pillProps('minute')}
         content={
           <div style={{ width: 230, padding: '2px 0' }}>
             {[['日', minutes.day], ['周', minutes.week], ['月', minutes.month]].map(([label, m]) => {
@@ -100,8 +111,9 @@ export default function BillingPills({ onOpenLedger }) {
                 ? '分钟不限量 · 消耗照常记账'
                 : '每日 04:00 / 每周一 04:00 / 每月 1 日 04:00 重置（UTC+8）'}
             </div>
-            <div style={{ marginTop: 6, textAlign: 'right' }}>
-              <a onClick={() => onOpenLedger?.('minute')} style={{ fontSize: 11 }}>消耗记录 →</a>
+            <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <a onClick={openHelp} style={{ fontSize: 11 }}>了解计费规则 →</a>
+              <a onClick={() => openLedger('minute')} style={{ fontSize: 11 }}>消耗记录 →</a>
             </div>
           </div>
         }
@@ -116,6 +128,7 @@ export default function BillingPills({ onOpenLedger }) {
       {/* ── 引力波胶囊（点击可反向兑换）── */}
       <Popover
         placement="bottomRight"
+        {...pillProps('gravity')}
         content={
           <div style={{ width: 200, fontSize: 12, color: 'var(--mute)', lineHeight: 1.7 }}>
             高级功能货币 · 永不过期
@@ -123,7 +136,10 @@ export default function BillingPills({ onOpenLedger }) {
               <a onClick={() => openExchange('g2q')} style={{ fontSize: 12 }}>兑换量子波（1:20）→</a>
             </div>
             <div style={{ marginTop: 4 }}>
-              <a onClick={() => onOpenLedger?.('gravity')} style={{ fontSize: 12 }}>消耗记录 →</a>
+              <a onClick={() => openLedger('gravity')} style={{ fontSize: 12 }}>消耗记录 →</a>
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <a onClick={openHelp} style={{ fontSize: 12 }}>了解计费规则 →</a>
             </div>
           </div>
         }
@@ -138,6 +154,7 @@ export default function BillingPills({ onOpenLedger }) {
       {/* ── 量子波胶囊 ── */}
       <Popover
         placement="bottomRight"
+        {...pillProps('quantum')}
         content={
           <div style={{ width: 240 }}>
             <div style={{
@@ -167,8 +184,9 @@ export default function BillingPills({ onOpenLedger }) {
                 兑换
               </Button>
             </div>
-            <div style={{ marginTop: 6, textAlign: 'right' }}>
-              <a onClick={() => onOpenLedger?.('quantum')} style={{ fontSize: 11 }}>消耗记录 →</a>
+            <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <a onClick={openHelp} style={{ fontSize: 11 }}>了解计费规则 →</a>
+              <a onClick={() => openLedger('quantum')} style={{ fontSize: 11 }}>消耗记录 →</a>
             </div>
           </div>
         }

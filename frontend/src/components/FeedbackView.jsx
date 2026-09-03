@@ -1,19 +1,21 @@
 /**
  * 反馈与建议（V0.9.4）— 设置页二级界面（overlay 滑入）
- * 四个并列入口卡片：提交工单 / 我的工单 / 发送邮件 / GitHub Issues
- * - 提交工单 / 我的工单：点开都是弹窗（语义统一）
+ * 五个并列入口卡片：提交工单 / 我的工单 / 用户交流群 / 发送邮件 / GitHub Issues
+ * - 提交工单 / 我的工单：点开都是弹窗（语义统一）；用户交流群：群二维码弹层
  * - 邮件：mailto 外链；GitHub：新窗口打开 Issues
  * 主次区分：提交工单高亮（accent 边框 + 推荐 胶囊），其余常规卡片
+ * 定位边界：报障统一引导工单（带诊断日志）；交流群只承载讨论与动态，不作报障通道
  */
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from 'antd'
 import {
   ArrowLeftOutlined, EditOutlined, UnorderedListOutlined,
-  MailOutlined, GithubOutlined,
+  MailOutlined, GithubOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import { ticketApi } from '../hooks/api'
 import TicketSubmitModal from './TicketSubmitModal'
 import TicketListModal from './TicketListModal'
+import { GroupQrModal } from './GroupQrModal'
 
 const GITHUB_ISSUES = 'https://github.com/Yuntian-Liu/stellaris/issues/new'
 const CONTACT_EMAIL = 'liuyuntian@ytunx.com'   // TODO: 碳碳确认公开反馈邮箱
@@ -23,6 +25,7 @@ export default function FeedbackView({ onBack }) {
   const [listOpen, setListOpen] = useState(false)
   const [listRefreshKey, setListRefreshKey] = useState(0)
   const [hasUnread, setHasUnread] = useState(false)
+  const [groupOpen, setGroupOpen] = useState(false)   // 用户交流群二维码弹层
 
   // 检查是否有未读回复（「我的工单」卡片红点）
   const checkUnread = useCallback(async () => {
@@ -59,6 +62,13 @@ export default function FeedbackView({ onBack }) {
       desc: '查看你提交过的工单与开发者回复',
       badge: hasUnread,
       onClick: () => { setListRefreshKey((k) => k + 1); setListOpen(true); checkUnread() },
+    },
+    {
+      key: 'group',
+      icon: <TeamOutlined />,
+      title: '用户交流群',
+      desc: '飞书群：新功能动态抢先看，和开发者与同好随时交流',
+      onClick: () => setGroupOpen(true),
     },
     {
       key: 'mail',
@@ -178,6 +188,7 @@ export default function FeedbackView({ onBack }) {
         refreshKey={listRefreshKey}
         onTicketRead={() => checkUnread()}
       />
+      <GroupQrModal open={groupOpen} onClose={() => setGroupOpen(false)} />
     </div>
   )
 }

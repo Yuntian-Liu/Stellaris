@@ -12,7 +12,8 @@ import {
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
   GiftOutlined, CreditCardOutlined, MessageOutlined,
-  ExperimentOutlined, FolderOpenOutlined,
+  ExperimentOutlined, FolderOpenOutlined, TeamOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons'
 import api, { authApi, getToken, ticketApi, vaultApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
@@ -28,6 +29,8 @@ import UserVaultPanel from '../components/UserVaultPanel'
 import VaultGuideModal from '../components/VaultGuideModal'
 import { clientLog } from '../utils/clientLog'
 import LedgerView from '../components/LedgerView'
+import { GroupQrModal } from '../components/GroupQrModal'
+import { HelpCenterView } from '../components/HelpCenter'
 import { tierMeta } from '../utils/tier'
 import { avatarUrl } from '../utils/avatar'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
@@ -55,7 +58,7 @@ function fmt(n) {
   return String(n)
 }
 
-export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory, initLab, onLabInit }) {
+export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory, initLab, onLabInit, onWideSubview }) {
   const { user, logout, refresh } = useAuth()
   const [stats, setStats] = useState(null)
   const [billing, setBilling] = useState(null)
@@ -74,6 +77,8 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const [feedbackOpen, setFeedbackOpen] = useState(false)   // 反馈与建议二级界面
   const [ticketUnread, setTicketUnread] = useState(false)   // 工单未读红点
   const [labOpen, setLabOpen] = useState(false)             // 星轨实验室二级界面
+  const [groupOpen, setGroupOpen] = useState(false)         // 用户交流群二维码弹层
+  const [helpOpen, setHelpOpen] = useState(false)           // 帮助中心二级界面
 
   // 检查工单未读（反馈入口红点）
   useEffect(() => {
@@ -177,6 +182,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const openFeedback = () => {
     setMemberView(false)     // overlay 互斥：关掉其他二级界面
     setLedgerView(false)
+    setHelpOpen(false)
     setFeedbackOpen(true)
     setTicketUnread(false)
   }
@@ -193,9 +199,40 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     setMemberView(false)     // overlay 互斥：关掉其他二级界面
     setLedgerView(false)
     setFeedbackOpen(false)
+    setHelpOpen(false)
     setLabOpen(true)
   }
   const closeLab = () => closeWith(labClosing, setLabOpen, setLabClosing)
+  // ── 帮助中心二级界面（同款固定 shell；overlay 互斥同上）──
+  const [helpClosing, setHelpClosing] = useState(false)
+  const openHelp = () => {
+    setMemberView(false)
+    setLedgerView(false)
+    setFeedbackOpen(false)
+    setLabOpen(false)
+    setHelpOpen(true)
+  }
+  const closeHelp = () => closeWith(helpClosing, setHelpOpen, setHelpClosing)
+  // 帮助中心是宽版二级界面：同步 App 导航栏/内容容器扩宽（与会员权益同款展开动画）
+  useEffect(() => {
+    onWideSubview?.(helpOpen)
+    return () => onWideSubview?.(false)
+  }, [helpOpen])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 头像菜单「设置」= 回到设置根（新意图：秒清所有二级界面 + 滚顶；
+  // 区别于二级界面内「← 返回」的落位恢复，那套不动）
+  useEffect(() => {
+    const handler = () => {
+      setMemberView(false)
+      setLedgerView(false)
+      setFeedbackOpen(false)
+      setLabOpen(false)
+      setHelpOpen(false)
+      window.scrollTo(0, 0)
+    }
+    window.addEventListener('stellaris:settings-root', handler)
+    return () => window.removeEventListener('stellaris:settings-root', handler)
+  }, [setMemberView])
+
   // 结果页「去申请」→ App setPage('settings') + initLab → 直达实验室
   useEffect(() => {
     if (!initLab) return
@@ -205,7 +242,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
 
   // V1.3.0：二级界面打开期间锁死底层 body 滚动——否则 shell 内容不满屏时
   // 滚轮会穿透滚动底层设置页（碳碳实测）
-  const anySubviewOpen = memberView || ledgerView || feedbackOpen || labOpen
+  const anySubviewOpen = memberView || ledgerView || feedbackOpen || labOpen || helpOpen
   useEffect(() => {
     if (anySubviewOpen) {
       document.body.style.overflow = 'hidden'
@@ -360,6 +397,10 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
           onClick={() => setChangelogOpen(true)} />
         <Divider />
+        <RowItem icon={<QuestionCircleOutlined />} tint="#f43f5e" label="帮助中心"
+          value="使用教程 · 功能文档 · 常见问题"
+          onClick={openHelp} />
+        <Divider />
         <RowItem icon={<ExperimentOutlined />} tint="#8b5cf6" label="星轨实验室"
           value="文件柜 · 内测"
           onClick={openLab} />
@@ -384,6 +425,10 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
             )}
           </span>}
           onClick={() => { openFeedback() }} />
+        <Divider />
+        <RowItem icon={<TeamOutlined />} tint="#3370ff" label="用户交流群"
+          value="飞书扫码加入"
+          onClick={() => setGroupOpen(true)} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
           value="排查问题用"
@@ -432,6 +477,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         onDone={() => api.getBilling().then(setBilling).catch(() => {})}
       />
       <MembershipHistoryModal open={memHistoryOpen} onClose={() => setMemHistoryOpen(false)} />
+      <GroupQrModal open={groupOpen} onClose={() => setGroupOpen(false)} />
       </div>
 
       {/* ── 会员权益二级界面（固定不透明 shell + 两段退出，V1.3.0）── */}
@@ -467,6 +513,32 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
 
             <MembershipCards billing={billing} />
 
+            {/* 第二行入口（第一行赞赏支持在 MembershipCards 内）：纯文字链接 + 图标，与设置页对应项同款 */}
+            <div style={{
+              display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16,
+              marginTop: 6, marginBottom: 8,
+            }}>
+              <span
+                onClick={() => openAgreement('membership')}
+                style={{
+                  fontSize: 12, color: 'var(--accent)', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <SafetyCertificateOutlined style={{ fontSize: 12 }} />会员协议
+              </span>
+              <span style={{ color: 'var(--hairline-strong)', fontSize: 11 }}>·</span>
+              <span
+                onClick={() => setRedeemOpen(true)}
+                style={{
+                  fontSize: 12, color: 'var(--accent)', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <GiftOutlined style={{ fontSize: 12 }} />兑换码开通
+              </span>
+            </div>
+
             <div style={{ fontSize: 12, color: 'var(--mute)', textAlign: 'center', lineHeight: 1.8, marginTop: 4 }}>
               会员周期自开通时刻起 30 天 · 支付由爱发电提供支持<br />
               引力波永不过期 · 分钟与量子波按自然周期重置
@@ -499,6 +571,24 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         onAnimDone={() => { setLabOpen(false); setLabClosing(false) }}
       >
         <LabView onBack={closeLab} />
+      </SubviewShell>
+
+      {/* ── 帮助中心二级界面（同款宽版 shell；内容与 App 弹窗壳共用 HelpCenterView）── */}
+      <SubviewShell
+        open={helpOpen}
+        closing={helpClosing}
+        wide
+        onAnimDone={() => { setHelpOpen(false); setHelpClosing(false) }}
+      >
+        <div style={{ width: '100%', marginTop: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Button type="text" icon={<ArrowLeftOutlined />} onClick={closeHelp} />
+            <h1 className="font-display font-display-sm" style={{ margin: 0 }}>帮助中心</h1>
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <HelpCenterView height="calc(100vh - 190px)" />
+          </div>
+        </div>
       </SubviewShell>
     </div>
   )

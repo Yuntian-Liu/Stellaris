@@ -46,7 +46,8 @@ def platform_label(url: str | None) -> str:
     u = url.lower()
     if "bilibili.com" in u or "b23.tv" in u:
         return "哔哩哔哩"
-    if "xiaohongshu.com" in u or "xhslink.com" in u:
+    # 小红书长短链（短链域名 .com/.cn 都出现过，前缀匹配两种都覆盖）
+    if "xiaohongshu.com" in u or "xhslink." in u:
         return "小红书"
     # 其他平台：展示域名（如 youtube.com）
     import re
