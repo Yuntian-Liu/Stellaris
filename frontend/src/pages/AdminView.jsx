@@ -67,7 +67,7 @@ const copyCode = (code) => {
 /** 功能名 / 图标映射（与 LedgerView 同源 + 管理员调整） */
 const FEATURE_LABELS = {
   extract: '字幕提取', segment: '智能分段', summary: '总结概要', md: 'MD 笔记',
-  chat: 'AI 解读', exchange: '货币兑换', signup_gift: '注册赠送',
+  chat: 'AI 解读', search: 'AI 语义搜索', exchange: '货币兑换', signup_gift: '注册赠送',
   membership_gift: '会员赠送', admin_adjust: '管理员调整', redeem_gift: '兑换码会员赠送',
 }
 const FEATURE_ICONS = {
@@ -414,7 +414,7 @@ function OverviewPanel({ onGoOrders }) {
               {!showFeatures && (
                 <span style={{ marginLeft: 8, color: 'var(--ink)' }}>
                   {Object.entries(featureUsage.features).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, c]) => {
-                    const names = { extract: '提取', segment: '分段', summary: '概要', md: 'MD', chat: '解读', exchange: '兑换' }
+                    const names = { extract: '提取', segment: '分段', summary: '概要', md: 'MD', chat: '解读', search: '搜索', exchange: '兑换' }
                     return <span key={f} style={{ marginLeft: 8 }}>{names[f] || f}: {c}</span>
                   })}
                 </span>
@@ -428,7 +428,7 @@ function OverviewPanel({ onGoOrders }) {
                 .map(([f, c]) => {
                   const names = {
                     extract: '字幕提取', segment: '智能分段', summary: '内容概要',
-                    md: 'MD 笔记', chat: 'AI 解读', exchange: '货币兑换',
+                    md: 'MD 笔记', chat: 'AI 解读', search: 'AI 语义搜索', exchange: '货币兑换',
                     admin_adjust: '管理员调整', signup_gift: '注册礼',
                     membership_gift: '会员发放', redeem_gift: '兑换发放',
                   }
@@ -573,22 +573,29 @@ function UserCard({ u, onChanged }) {
     const delta = field === 'quantum' ? qDelta : gDelta
     if (!delta) return message.warning('调整量不能为 0')
     let noteInput = { value: '' }
+    let highlightInput = { value: false }
     Modal.confirm({
       centered: true,
       title: `${field === 'quantum' ? '量子波' : '引力波'} ${delta > 0 ? '+' : ''}${delta}`,
       content: (
-        <Input
-          placeholder="备注（可选，64 字内）"
-          maxLength={64}
-          onChange={(e) => { noteInput.value = e.target.value }}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Input
+            placeholder="备注（可选，64 字内）"
+            maxLength={64}
+            onChange={(e) => { noteInput.value = e.target.value }}
+          />
+          {/* 高亮：用户端消耗记录里金色突出（纪念赠礼等场景，V1.4.0） */}
+          <Checkbox onChange={(e) => { highlightInput.value = e.target.checked }}>
+            高亮显示（用户端记录金色突出）
+          </Checkbox>
+        </div>
       ),
       okText: '确认调整',
       cancelText: '取消',
       onOk: () => requirePin(async (pin) => {
         setBusy(true)
         try {
-          const payload = { uid: u.uid, pin, note: noteInput.value || '' }
+          const payload = { uid: u.uid, pin, note: noteInput.value || '', highlight: highlightInput.value }
           if (field === 'quantum') payload.quantum_delta = delta
           else payload.gravity_delta = delta
           const r = await adminApi.adjustBalance(payload)
@@ -2854,7 +2861,7 @@ function ModelSlotPanel({ slot, title, desc, items, source, onRefresh, requirePi
 
 /* ── LLM 调用健康（V1.2.2）：模型 Tab 顶部——AI 罢工先于用户工单可见 ── */
 
-const LLM_FEATURE_LABELS = { segment: '语义分段', summary: '内容概要', md: 'MD 笔记', chat: 'AI 解读', asr: '语音转写' }
+const LLM_FEATURE_LABELS = { segment: '语义分段', summary: '内容概要', md: 'MD 笔记', chat: 'AI 解读', search: 'AI 语义搜索', asr: '语音转写' }
 
 function LlmHealthPanel() {
   const [data, setData] = useState(undefined)   // undefined=加载中 / null=失败 / object=正常（Codex 08：失败不得假绿）
@@ -3014,7 +3021,7 @@ function ModelsPanel() {
       </div>
       {data && (
         <>
-          <ModelSlotPanel slot="llm" title="LLM 模型" desc="驱动语义分段 / 内容概要 / MD 笔记 / AI 解读"
+          <ModelSlotPanel slot="llm" title="LLM 模型" desc="驱动语义分段 / 内容概要 / MD 笔记 / AI 解读 / AI 语义搜索"
             items={data.models.llm || []} source={data.source?.llm} onRefresh={load} requirePin={requirePin} />
           <ModelSlotPanel slot="asr" title="ASR 模型" desc="驱动语音转写（厂商固定 Xiaomi Mimo）"
             items={data.models.asr || []} source={data.source?.asr} onRefresh={load} requirePin={requirePin} />

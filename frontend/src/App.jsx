@@ -6,6 +6,7 @@
  *   暖白底 / Indigo 品牌色 / 零装饰性渐变 / 堆叠微投影
  */
 import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react'
+import { Routes, Route, useNavigate, useMatch, Navigate } from 'react-router-dom'
 import { Layout, Tooltip, Button, Dropdown, Avatar, Popover, Modal, Spin, Progress } from 'antd'
 import { WalletOutlined, LogoutOutlined, LoginOutlined, SettingOutlined, QuestionCircleOutlined, GlobalOutlined, DotChartOutlined, HistoryOutlined, DashboardOutlined } from '@ant-design/icons'
 import api from './hooks/api'
@@ -46,17 +47,114 @@ function useMobile() {
   return m
 }
 
+/**
+ * 结果页冷启动闸（V1.4.0 路由化）：URL 直达/刷新时内存无数据，用 taskId 自拉
+ * getTask 恢复；站内跳转（taskData 缓存命中 task_id）直接渲染零闪烁。
+ * 404 = 后端 _authorize_task 掩藏存在性（不存在/已过期/非本人统一 404）→ 优雅错误态而非白屏。
+ * 渲染三分支：缓存命中 → ResultPage；有错 → 错误态；其余（拉取中）→ Spin。永不白屏。
+ */
+function ResultGate({ taskId, cachedData, onLoaded, onBack, onNew, onChatToggle, onNeedAuth }) {
+  const { user } = useAuth()
+  const cached = cachedData && cachedData.task_id === taskId
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    if (cached || !taskId) return
+    let cancelled = false
+    setErr(null)
+    api.getTask(taskId)
+      .then((d) => { if (!cancelled) onLoaded(d) })
+      .catch((e) => { if (!cancelled) setErr(e) })
+    return () => { cancelled = true }
+  }, [taskId, cached, onLoaded])
+
+  if (cached) {
+    return (
+      <ResultPage
+        key={cachedData.task_id}
+        taskData={cachedData}
+        onBack={onBack}
+        onNew={onNew}
+        onChatToggle={onChatToggle}
+        onNeedAuth={onNeedAuth}
+      />
+    )
+  }
+  if (!taskId) return <Navigate to="/" replace />
+  if (err) {
+    return (
+      <div className="page-enter" style={{ paddingTop: 8 }}>
+        <div className="card card--elevated" style={{ padding: '48px 28px', textAlign: 'center' }}>
+          <div className="font-display font-display-sm" style={{ marginBottom: 10 }}>任务不存在或已过期</div>
+          <div style={{ fontSize: 13, color: 'var(--mute)', lineHeight: 1.9, marginBottom: 24 }}>
+            {err.status === 404 || err.status === 401
+              ? '记录可能已按保留期限自动清理，或该链接与当前账号不匹配。'
+              : (err.message || '加载失败，请稍后重试。')}
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            {!user && (
+              <Button type="primary" icon={<LoginOutlined />} onClick={onNeedAuth}>登录查看我的记录</Button>
+            )}
+            <Button onClick={onBack}>返回首页</Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+      <Spin />
+    </div>
+  )
+}
+
+/** 管理看板路由守卫（V1.4.0）：loading 占位 / 未登录→登录页 / 非 admin→首页；过闸才渲染 */
+function AdminGate({ loading, user, children }) {
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+        <Spin />
+      </div>
+    )
+  }
+  if (!user) return <Navigate to="/auth" replace />
+  if (!user.is_admin) return <Navigate to="/" replace />
+  return children
+}
+
 export default function App() {
-  const [page, setPage] = useState('home')
+  // ── 路由化（V1.4.0 Phase 1）：URL 为真源 ──
+  // page 不再是独立 state，从网址派生（HashRouter：#/task/:id 等）；
+  // 站内跳转统一走 go()（navigate 封装），浏览器后退/刷新/深链由 Router 承接
+  const navigate = useNavigate()
+  const progressMatch = useMatch('/task/:taskId/progress')
+  const resultMatch = useMatch('/task/:taskId')
+  const settingsMatch = useMatch('/settings')
+  const settingsSubMatch = useMatch('/settings/:sub')   // Phase 2：二级界面 URL 镜像（member/ledger/feedback/lab/help）
+  const adminMatch = useMatch('/admin')
+  const authMatch = useMatch('/auth')
+  const page = progressMatch ? 'progress'
+    : resultMatch ? 'result'
+    : adminMatch ? 'admin'
+    : (settingsMatch || settingsSubMatch) ? 'settings'
+    : authMatch ? 'auth'
+    : 'home'
+  // 宽窄联动（导航栏/内容容器 760↔1312）：会员权益与帮助中心是宽版二级界面（V1.3.0 同规则，改从 URL 派生）
+  const settingsSub = settingsSubMatch?.params.sub
+  const wideSubview = settingsSub === 'member' || settingsSub === 'help' || settingsSub === 'stars'
+  const go = useCallback((p, taskId) => {
+    if (p === 'progress') navigate(`/task/${taskId}/progress`)
+    else if (p === 'result') navigate(`/task/${taskId}`)
+    else navigate({ home: '/', auth: '/auth', settings: '/settings', admin: '/admin' }[p] ?? '/')
+  }, [navigate])
   const prevPage = useRef('home')
-  // 导航埋点（V0.10.1）：监听 page 变化自动记录，覆盖所有 setPage 调用点
+  // 导航埋点（V0.10.1）：监听 page（V1.4.0 起为 URL 派生值）变化自动记录，覆盖所有 go() 导航
   useEffect(() => {
     if (page !== prevPage.current) {
       clientLog.add('nav', `${prevPage.current} → ${page}`)
       prevPage.current = page
     }
   }, [page])
-  const [taskId, setTaskId] = useState(null)
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
   const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
@@ -66,10 +164,7 @@ export default function App() {
   const [meteorOn, setMeteorOn] = useState(false)   // 流星雨彩蛋
   const [balances, setBalances] = useState(null)    // 头像下拉双货币余额
   const [dropOpen, setDropOpen] = useState(false)   // 头像下拉开合（点菜单后需手动收起）
-  const [memberOpen, setMemberOpen] = useState(false) // 会员权益二级界面（标题栏随其展开）
-  const [helpWide, setHelpWide] = useState(false)     // 帮助中心二级界面（宽版，标题栏同步扩宽）
   const adminOpen = page === 'admin' // 管理看板独立页面（派生态，page 变化即自动复位）
-  const [ledgerInit, setLedgerInit] = useState(false) // 余额区「消耗记录 →」下钻设置页
   const [celebrateTier, setCelebrateTier] = useState(null) // 会员开通欢迎弹窗（档位跃迁检测）
   const clickRef = useRef({ count: 0, timer: null })
   const navRef = useRef(null)   // 导航栏容器：头像下拉浮层挂载点（挂 body 会在收窄动画时钉死旧坐标闪现）
@@ -96,15 +191,12 @@ export default function App() {
     }
   }, [user])
 
-  // 离开设置页即复位会员二级界面态（防展开态泄漏到其他页面：品牌点击/历史回看等路径）
-  useEffect(() => {
-    if (page !== 'settings') { setMemberOpen(false); setHelpWide(false) }
-  }, [page])
+  // （离开设置页复位二级界面：Phase 2 起二级界面随路由卸载自动清态，无需手动复位）
 
-  // 管理看板防呆：非 admin 进入 admin 页（如登录态切换）弹回首页
+  // 管理看板防呆：非 admin 进入 admin 页（如登录态切换）弹回首页（直达 #/admin 的第二道防线，第一道是 AdminGate）
   useEffect(() => {
-    if (page === 'admin' && user && !user.is_admin) setPage('home')
-  }, [page, user])
+    if (page === 'admin' && user && !user.is_admin) go('home')
+  }, [page, user, go])
 
   // 会员开通检测：爱发电付款在站外完成，webhook 发货后用户回站时档位跃迁 → 撒花欢迎
   useEffect(() => {
@@ -128,7 +220,7 @@ export default function App() {
   // 提取进行中点品牌先弹确认（防误点前功尽弃；不导航、不计流星雨）——确认后仍是"防卡死关机键"
   const [leaveConfirm, setLeaveConfirm] = useState(false)
   const goHome = () => {
-    setPage('home')
+    go('home')
     const c = clickRef.current
     c.count += 1
     clearTimeout(c.timer)
@@ -150,10 +242,10 @@ export default function App() {
 
   // 401(token 失效)→ 跳登录页
   useEffect(() => {
-    const handler = () => setPage('auth')
+    const handler = () => go('auth')
     window.addEventListener('stellaris:unauthorized', handler)
     return () => window.removeEventListener('stellaris:unauthorized', handler)
-  }, [])
+  }, [go])
 
   // 首页匿名提示条「了解权益」→ 帮助中心计费板块（事件总线，同 stellaris:open-exchange 先例）
   useEffect(() => {
@@ -169,22 +261,19 @@ export default function App() {
     return () => window.removeEventListener('stellaris:open-help', handler)
   }, [])
 
-  // 结果页「去申请文件柜」→ 设置页星轨实验室（事件总线，同 open-guide 先例；匿名先引导登录）
-  const [labInit, setLabInit] = useState(false)
+  // 结果页「去申请文件柜」→ 设置页星轨实验室（Phase 2 起 URL 下钻直达；匿名先引导登录）
   useEffect(() => {
     const handler = () => {
-      if (!user) { setPage('auth'); return }
-      setLabInit(true)
-      setPage('settings')
+      if (!user) { go('auth'); return }
+      navigate('/settings/lab')
     }
     window.addEventListener('stellaris:open-lab', handler)
     return () => window.removeEventListener('stellaris:open-lab', handler)
-  }, [user])
+  }, [user, go, navigate])
 
   const handleSubmit = useCallback((data) => {
-    setTaskId(data.task_id)
-    setPage('progress')
-  }, [])
+    go('progress', data.task_id)
+  }, [go])
 
   const handleComplete = useCallback((data) => {
     // 匿名历史：服务端不为匿名建记录，完成时记进浏览器 localStorage（见 utils/anonHistory.js）
@@ -196,14 +285,13 @@ export default function App() {
       })
     }
     setTaskData(data)
-    setPage('result')
-  }, [user])
+    go('result', data.task_id)
+  }, [user, go])
 
   const handleBack = useCallback(() => {
-    setPage('home')
-    setTaskId(null)
+    go('home')
     setTaskData(null)
-  }, [])
+  }, [go])
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'var(--canvas)' }}>
@@ -219,7 +307,7 @@ export default function App() {
       }}>
       <div className="app-shell-nav" ref={navRef} style={{
         position: 'relative',
-        maxWidth: (chatOpen || memberOpen || adminOpen || helpWide) ? 1312 : 760,
+        maxWidth: (chatOpen || wideSubview || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         width: '100%',
         padding: '14px 24px 12px',
@@ -269,7 +357,7 @@ export default function App() {
             <div style={{ width: 64, height: 30 }} />
           ) : user ? (
             <>
-              <BillingPills onOpenLedger={(c) => { setLedgerInit(c); setMemberOpen(false); setPage('settings') }} />
+              <BillingPills onOpenLedger={(c) => { setDropOpen(false); navigate(`/settings/ledger?tab=${c}`) }} />
               <Dropdown
                 open={dropOpen}
                 onOpenChange={setDropOpen}
@@ -363,7 +451,7 @@ export default function App() {
                       {user.is_admin && (
                         <div
                           className="dropdown-item"
-                          onClick={() => { setDropOpen(false); setMemberOpen(false); setPage('admin') }}
+                          onClick={() => { setDropOpen(false); go('admin') }}
                         >
                           <DashboardOutlined style={{ marginRight: 8 }} />管理后台
                         </div>
@@ -372,16 +460,16 @@ export default function App() {
                         className="dropdown-item"
                         onClick={() => {
                           setDropOpen(false)
-                          setPage('settings')
-                          // 点设置 = 新意图：已在设置页时秒清二级界面回根（事件总线，同 open-lab 先例）
-                          window.dispatchEvent(new CustomEvent('stellaris:settings-root'))
+                          // 点设置 = 新意图：回设置根（Phase 2：URL 化后 sub 消失即触发二级界面动画关闭）
+                          navigate('/settings')
+                          window.scrollTo(0, 0)
                         }}
                       >
                         <SettingOutlined style={{ marginRight: 8 }} />设置
                       </div>
                       <div
                         className="dropdown-item dropdown-item--danger"
-                        onClick={() => { setDropOpen(false); logout(); setPage('home') }}
+                        onClick={() => { setDropOpen(false); logout(); go('home') }}
                       >
                         <LogoutOutlined style={{ marginRight: 8 }} />退出登录
                       </div>
@@ -404,7 +492,7 @@ export default function App() {
               </Dropdown>
             </>
           ) : (
-            <Button type="primary" icon={<LoginOutlined />} onClick={() => setPage('auth')}>
+            <Button type="primary" icon={<LoginOutlined />} onClick={() => go('auth')}>
               登录
             </Button>
           )}
@@ -413,62 +501,83 @@ export default function App() {
       </div>
 
       <Content className="app-shell-content" style={{
-        maxWidth: (chatOpen || memberOpen || adminOpen || helpWide) ? 1312 : 760,
+        maxWidth: (chatOpen || wideSubview || adminOpen) ? 1312 : 760,
         margin: '0 auto',
         padding: '48px 24px 96px',
         width: '100%',
         transition: 'max-width 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
       }}>
-        {page === 'auth' && (
-          <AuthPage
-            onSuccess={() => setPage('home')}
-            onBack={() => setPage('home')}
-          />
-        )}
-        {page === 'home' && (
-          <HomePage onSubmit={handleSubmit} onNeedAuth={() => setPage('auth')} />
-        )}
-        {page === 'settings' && (
-          <SettingsView
-            onBack={() => { setMemberOpen(false); setPage('home') }}
-            memberView={memberOpen}
-            setMemberView={setMemberOpen}
-            initLedger={ledgerInit}
-            onConsumeInit={() => setLedgerInit(false)}
-            onOpenHistory={() => setHistoryOpen(true)}
-            initLab={labInit}
-            onLabInit={() => setLabInit(false)}
-            onWideSubview={setHelpWide}
-          />
-        )}
-        {/* 管理看板（仅 is_admin 可达；渲染守卫双保险，非 admin 直接改 state 也看不到） */}
-        {page === 'admin' && user?.is_admin && (
-          <Suspense fallback={
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
-              <Spin />
-            </div>
-          }>
-            <AdminView onBack={() => setPage('home')} />
-          </Suspense>
-        )}
-        {page === 'progress' && taskId && (
-          <ProgressPage
-            taskId={taskId}
-            onComplete={handleComplete}
-            onBack={handleBack}
-            onBackGuarded={() => setLeaveConfirm(true)}
-          />
-        )}
-        {page === 'result' && taskData && (
-          <ResultPage
-            key={taskData.task_id}
-            taskData={taskData}
-            onBack={handleBack}
-            onNew={() => handleBack()}
-            onChatToggle={setChatOpen}
-            onNeedAuth={() => setPage('auth')}
-          />
-        )}
+        <Routes>
+          <Route path="/" element={<HomePage onSubmit={handleSubmit} onNeedAuth={() => go('auth')} />} />
+          <Route path="/auth" element={<AuthPage onSuccess={() => go('home')} onBack={() => go('home')} />} />
+          {/* 设置页守卫：SettingsView 隐含"已登录"前提（user.avatar_seed 等），深链直达时必须过闸——
+              loading 占位防 getMe 未完成被误踢，未登录导向登录页（返回后落 / 不回深链，可接受）。
+              Phase 2：/settings/:sub 是二级界面 URL 镜像（member/ledger/feedback/lab/help），
+              渲染仍由 SettingsView 内部 state 驱动（保住 SubviewShell 两段退出动画），URL 只做栈与深链 */}
+          <Route path="/settings" element={
+            loading
+              ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+                  <Spin />
+                </div>
+              )
+              : user ? (
+                <SettingsView
+                  onBack={() => go('home')}
+                  onOpenHistory={() => setHistoryOpen(true)}
+                />
+              ) : <Navigate to="/auth" replace />
+          } />
+          <Route path="/settings/:sub" element={
+            loading
+              ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+                  <Spin />
+                </div>
+              )
+              : user ? (
+                <SettingsView
+                  onBack={() => go('home')}
+                  onOpenHistory={() => setHistoryOpen(true)}
+                />
+              ) : <Navigate to="/auth" replace />
+          } />
+          {/* 管理看板：AdminGate 路由守卫 + is_admin 渲染守卫双保险；含 recharts 代码分割 */}
+          <Route path="/admin" element={
+            <AdminGate loading={loading} user={user}>
+              <Suspense fallback={
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '120px 0' }}>
+                  <Spin />
+                </div>
+              }>
+                <AdminView onBack={() => go('home')} />
+              </Suspense>
+            </AdminGate>
+          } />
+          {/* 进度页：taskId 从 URL 拿——刷新/直达自动恢复轮询（页面本身自轮询，天然冷启动） */}
+          <Route path="/task/:taskId/progress" element={
+            <ProgressPage
+              taskId={progressMatch?.params.taskId}
+              onComplete={handleComplete}
+              onBack={handleBack}
+              onBackGuarded={() => setLeaveConfirm(true)}
+            />
+          } />
+          {/* 结果页：ResultGate 冷启动闸（内存缓存命中零闪烁，URL 直达自拉） */}
+          <Route path="/task/:taskId" element={
+            <ResultGate
+              taskId={resultMatch?.params.taskId}
+              cachedData={taskData}
+              onLoaded={setTaskData}
+              onBack={handleBack}
+              onNew={handleBack}
+              onChatToggle={setChatOpen}
+              onNeedAuth={() => go('auth')}
+            />
+          } />
+          {/* 未知路径兜底回首页 */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </Content>
 
       {/* 更新提醒（版本 + 协议，每版本只弹一次） */}
@@ -514,7 +623,7 @@ export default function App() {
       <HistoryModal
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        onOpenRecord={(data) => { setChatOpen(false); setTaskData(data); setPage('result') }}
+        onOpenRecord={(data) => { setChatOpen(false); setTaskData(data); go('result', data.task_id) }}
       />
 
       {/* 会员开通欢迎（webhook 发货后回站，档位跃迁触发撒花） */}

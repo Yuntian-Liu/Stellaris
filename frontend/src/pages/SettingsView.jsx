@@ -5,6 +5,7 @@
  *       账号安全(修改密码双通道) / 关于(版本+协议+版本日志) / 退出登录
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate, useMatch, useSearchParams } from 'react-router-dom'
 import { Button, Input, Modal, Tabs, Tag, message } from 'antd'
 import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
@@ -13,7 +14,7 @@ import {
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
   GiftOutlined, CreditCardOutlined, MessageOutlined,
   ExperimentOutlined, FolderOpenOutlined, TeamOutlined,
-  QuestionCircleOutlined,
+  QuestionCircleOutlined, StarOutlined,
 } from '@ant-design/icons'
 import api, { authApi, getToken, ticketApi, vaultApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
@@ -31,6 +32,7 @@ import { clientLog } from '../utils/clientLog'
 import LedgerView from '../components/LedgerView'
 import { GroupQrModal } from '../components/GroupQrModal'
 import { HelpCenterView } from '../components/HelpCenter'
+import StarMapView from '../components/StarMapView'
 import { tierMeta } from '../utils/tier'
 import { avatarUrl } from '../utils/avatar'
 import { APP_VERSION, CHANGELOG } from '../utils/changelog'
@@ -58,8 +60,29 @@ function fmt(n) {
   return String(n)
 }
 
-export default function SettingsView({ onBack, memberView, setMemberView, initLedger, onConsumeInit, onOpenHistory, initLab, onLabInit, onWideSubview }) {
+export default function SettingsView({ onBack, onOpenHistory }) {
   const { user, logout, refresh } = useAuth()
+  // ── Phase 2 二级界面 URL 镜像 ──
+  // 渲染真源仍是内部 state（保住 SubviewShell 两段退出动画）；URL 只做两件事：
+  //   ① 栈管理：打开 push /settings/:sub → 浏览器后退可逐级退；② 深链：刷新直达对应二级界面。
+  // 三个方向的全在这一个 sync effect（下方 [urlSub] effect）：
+  //   URL 出现 sub → 打开（深链/前进/下钻）；URL sub 消失但 state 开着 → 走 closeWith 两段动画（后退）；
+  //   按钮关闭走原路（动画 → onAnimDone 里回根导航），URL 已回根时 sync 自然跳过。
+  const navigate = useNavigate()
+  const settingsSubMatch = useMatch('/settings/:sub')
+  const [searchParams] = useSearchParams()
+  const SUBVIEW_KEYS = ['member', 'ledger', 'feedback', 'lab', 'help', 'stars']
+  const urlSub = SUBVIEW_KEYS.includes(settingsSubMatch?.params.sub)
+    ? settingsSubMatch.params.sub : null
+  const pushSub = (key) => {
+    // 打开 = 自己 setState（openX 里）+ 推 URL（栈管理/深链）。禁止在这里 scrollTo：
+    // 底层 scrollY 全程不动是 V1.3.1 特性（关闭二级界面落回原滚动位置），且整页跳动重绘
+    // 叠加毛玻璃/宽度动画同帧合成是 Edge 渲染进程崩溃（错误码5）的最大嫌疑人
+    if (urlSub === key) return
+    navigate(`/settings/${key}`)
+  }
+  const goSettingsRoot = () => { if (urlSub) navigate('/settings', { replace: true }) }
+
   const [stats, setStats] = useState(null)
   const [billing, setBilling] = useState(null)
   const [agreementOpen, setAgreementOpen] = useState(false)
@@ -74,6 +97,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const [memHistoryOpen, setMemHistoryOpen] = useState(false) // 开通记录弹窗
   const [ledgerView, setLedgerView] = useState(false)   // 消耗记录二级界面
   const [ledgerTab, setLedgerTab] = useState('minute')  // 消耗记录初始页签
+  const [memberView, setMemberView] = useState(false)   // 会员权益二级界面（Phase 2 起内部 state，原 App 传入）
   const [feedbackOpen, setFeedbackOpen] = useState(false)   // 反馈与建议二级界面
   const [ticketUnread, setTicketUnread] = useState(false)   // 工单未读红点
   const [labOpen, setLabOpen] = useState(false)             // 星轨实验室二级界面
@@ -86,17 +110,6 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       setTicketUnread((r.items || []).some((t) => t.unread))
     ).catch(() => {})
   }, [])
-
-  // 标题栏余额区「消耗记录 →」入口联动（App 下钻，带货币页签）
-  useEffect(() => {
-    if (initLedger) {
-      setFeedbackOpen(false)   // 关掉反馈页，防止 overlay 遮住消耗记录
-      setMemberView(false)
-      setLedgerTab(initLedger)
-      setLedgerView(true)
-      onConsumeInit?.()
-    }
-  }, [initLedger])
 
   useEffect(() => {
     api.getStats().then(setStats).catch(() => setStats(null))
@@ -178,14 +191,33 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
   const [ledgerClosing, setLedgerClosing] = useState(false)
   const closeMember = () => closeWith(memberClosing, setMemberView, setMemberClosing)
   const closeLedger = () => closeWith(ledgerClosing, setLedgerView, setLedgerClosing)
-  const [feedbackClosing, setFeedbackClosing] = useState(false)
+  // 打开动作 = 立即 setState + pushSub 推 URL；互斥关闭保留立即 set（原本就开着的其他 subview 无动画直关）。
+  // setState 与 navigate 同帧无害（sync effect 带 !xxxView 判断，不会重复打开）
+  const openMember = () => {
+    setFeedbackOpen(false)
+    setLedgerView(false)
+    setStarsOpen(false)
+    setMemberView(true)
+    pushSub('member')
+  }
+  const openLedger = (tab) => {
+    setFeedbackOpen(false)
+    setMemberView(false)
+    setStarsOpen(false)
+    if (tab) setLedgerTab(tab)
+    setLedgerView(true)
+    pushSub('ledger')
+  }
   const openFeedback = () => {
-    setMemberView(false)     // overlay 互斥：关掉其他二级界面
+    setMemberView(false)
     setLedgerView(false)
     setHelpOpen(false)
-    setFeedbackOpen(true)
+    setStarsOpen(false)
     setTicketUnread(false)
+    setFeedbackOpen(true)
+    pushSub('feedback')
   }
+  const [feedbackClosing, setFeedbackClosing] = useState(false)
   const closeFeedback = () => {
     closeWith(feedbackClosing, setFeedbackOpen, setFeedbackClosing)
     // 返回后刷新红点（用户可能在反馈页读了工单）
@@ -193,14 +225,16 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       setTicketUnread((r.items || []).some((t) => t.unread))
     ).catch(() => {})
   }
-  // ── 星轨实验室二级界面（同款固定 shell；App 下钻 initLab = 结果页「去申请」直达）──
+  // ── 星轨实验室二级界面（同款固定 shell；结果页「去申请」经 /settings/lab 深链直达）──
   const [labClosing, setLabClosing] = useState(false)
   const openLab = () => {
-    setMemberView(false)     // overlay 互斥：关掉其他二级界面
+    setMemberView(false)
     setLedgerView(false)
     setFeedbackOpen(false)
     setHelpOpen(false)
+    setStarsOpen(false)
     setLabOpen(true)
+    pushSub('lab')
   }
   const closeLab = () => closeWith(labClosing, setLabOpen, setLabClosing)
   // ── 帮助中心二级界面（同款固定 shell；overlay 互斥同上）──
@@ -210,35 +244,48 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
     setLedgerView(false)
     setFeedbackOpen(false)
     setLabOpen(false)
+    setStarsOpen(false)
     setHelpOpen(true)
+    pushSub('help')
   }
   const closeHelp = () => closeWith(helpClosing, setHelpOpen, setHelpClosing)
-  // 帮助中心是宽版二级界面：同步 App 导航栏/内容容器扩宽（与会员权益同款展开动画）
-  useEffect(() => {
-    onWideSubview?.(helpOpen)
-    return () => onWideSubview?.(false)
-  }, [helpOpen])   // eslint-disable-line react-hooks/exhaustive-deps
-  // 头像菜单「设置」= 回到设置根（新意图：秒清所有二级界面 + 滚顶；
-  // 区别于二级界面内「← 返回」的落位恢复，那套不动）
-  useEffect(() => {
-    const handler = () => {
-      setMemberView(false)
-      setLedgerView(false)
-      setFeedbackOpen(false)
-      setLabOpen(false)
-      setHelpOpen(false)
-      window.scrollTo(0, 0)
-    }
-    window.addEventListener('stellaris:settings-root', handler)
-    return () => window.removeEventListener('stellaris:settings-root', handler)
-  }, [setMemberView])
+  // ── 版本星图二级界面（V1.4.0 · 第 60 版纪念；同款宽版 shell）──
+  const [starsOpen, setStarsOpen] = useState(false)
+  const [starsClosing, setStarsClosing] = useState(false)
+  const openStars = () => {
+    setMemberView(false)
+    setLedgerView(false)
+    setFeedbackOpen(false)
+    setLabOpen(false)
+    setHelpOpen(false)
+    setStarsOpen(true)
+    pushSub('stars')
+  }
+  const closeStars = () => closeWith(starsClosing, setStarsOpen, setStarsClosing)
+  // （帮助中心宽版联动：Phase 2 起 App 从 URL 派生宽窄，onWideSubview 回调废止）
 
-  // 结果页「去申请」→ App setPage('settings') + initLab → 直达实验室
+  // ── URL ⇄ state 同步（Phase 2 核心，三个方向一个 effect）──
+  // 打开方向：URL 出现 sub（深链刷新/浏览器前进/下钻事件）且对应 state 还没开 → 打开
+  // 关闭方向：URL sub 消失/换人（浏览器后退、设置根导航）但 state 还开着 → 走 closeWith 两段动画
+  // 按钮关闭不经过这里：closeWith 动画 → onAnimDone 里回根导航，届时 state 已关、sync 自然跳过
   useEffect(() => {
-    if (!initLab) return
-    openLab()
-    onLabInit?.()
-  }, [initLab])   // eslint-disable-line react-hooks/exhaustive-deps
+    if (urlSub === 'member' && !memberView) setMemberView(true)
+    if (urlSub === 'lab' && !labOpen) openLab()
+    if (urlSub === 'feedback' && !feedbackOpen) openFeedback()
+    if (urlSub === 'help' && !helpOpen) openHelp()
+    if (urlSub === 'stars' && !starsOpen) openStars()
+    if (urlSub === 'ledger' && !ledgerView) openLedger(searchParams.get('tab'))
+    else if (urlSub === 'ledger' && ledgerView && searchParams.get('tab')) setLedgerTab(searchParams.get('tab'))   // 已开着时下钻换页签
+    if (urlSub !== 'member' && memberView && !memberClosing) closeWith(memberClosing, setMemberView, setMemberClosing)
+    if (urlSub !== 'ledger' && ledgerView && !ledgerClosing) closeWith(ledgerClosing, setLedgerView, setLedgerClosing)
+    if (urlSub !== 'feedback' && feedbackOpen && !feedbackClosing) closeWith(feedbackClosing, setFeedbackOpen, setFeedbackClosing)
+    if (urlSub !== 'lab' && labOpen && !labClosing) closeWith(labClosing, setLabOpen, setLabClosing)
+    if (urlSub !== 'help' && helpOpen && !helpClosing) closeWith(helpClosing, setHelpOpen, setHelpClosing)
+    if (urlSub !== 'stars' && starsOpen && !starsClosing) closeWith(starsClosing, setStarsOpen, setStarsClosing)
+  }, [urlSub, searchParams])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 头像菜单「设置」= 回到设置根（App 现直接 navigate('/settings')，sub 消失由上方 sync 走动画关闭 + 回顶在 App 侧）
+  // 结果页「去申请」→ /settings/lab 深链直达（原 initLab 机制废止，sync effect 接管）
 
   // V1.3.0：二级界面打开期间锁死底层 body 滚动——否则 shell 内容不满屏时
   // 滚轮会穿透滚动底层设置页（碳碳实测）
@@ -360,7 +407,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <SectionCard>
         <RowItem icon={<CrownOutlined />} tint="#f59e0b" label="会员权益"
           value={memberShort}
-          onClick={() => { setFeedbackOpen(false); setLedgerView(false); setMemberView(true) }} />
+          onClick={openMember} />
         <Divider />
         <RowItem icon={<DotChartOutlined />} tint="#6366f1" label="货币兑换"
           value={billing
@@ -372,7 +419,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <Divider />
         <RowItem icon={<HistoryOutlined />} tint="#0ea5e9" label="消耗记录"
           value="分钟 / 量子波 / 引力波流水"
-          onClick={() => { setFeedbackOpen(false); setMemberView(false); setLedgerView(true) }} />
+          onClick={() => openLedger()} />
         <Divider />
         <RowItem icon={<FileTextOutlined />} tint="#10b981" label="提取历史"
           value="回到任意一次结果页"
@@ -396,6 +443,21 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         <Divider />
         <RowItem icon={<HistoryOutlined />} tint="#f97316" label="版本日志"
           onClick={() => setChangelogOpen(true)} />
+        <Divider />
+        <RowItem icon={<StarOutlined />} tint="#f59e0b" label={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+            版本星图
+            {/* 限定徽章：第 60 版纪念产物，后续保留视运营情况 */}
+            <span style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.06em',
+              color: '#b45309', background: '#fef3c7',
+              border: '1px solid #fde68a', borderRadius: 9999,
+              padding: '1px 7px', lineHeight: 1.5,
+            }}>限定</span>
+          </span>
+        }
+          value="60 个版本 · 一条星轨"
+          onClick={openStars} />
         <Divider />
         <RowItem icon={<QuestionCircleOutlined />} tint="#f43f5e" label="帮助中心"
           value="使用教程 · 功能文档 · 常见问题"
@@ -485,7 +547,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         open={memberView}
         closing={memberClosing}
         wide
-        onAnimDone={() => { setMemberView(false); setMemberClosing(false) }}
+        onAnimDone={() => { setMemberView(false); setMemberClosing(false); goSettingsRoot() }}
       >
         <div style={{ width: '100%', marginTop: 0 }}>
             {/* 返回 + 标题：贴界面左上角 */}
@@ -550,16 +612,19 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <SubviewShell
         open={ledgerView}
         closing={ledgerClosing}
-        onAnimDone={() => { setLedgerView(false); setLedgerClosing(false) }}
+        onAnimDone={() => { setLedgerView(false); setLedgerClosing(false); goSettingsRoot() }}
       >
-        <LedgerView onBack={closeLedger} initialTab={ledgerTab} />
+        {/* onTabChange：切 tab 用 replace 同步 URL（语义 b）——URL 始终反映当前页签，
+            且不 push 新历史（后退键不会在三个页签间爬行） */}
+        <LedgerView onBack={closeLedger} initialTab={ledgerTab}
+          onTabChange={(k) => { if (urlSub === 'ledger') navigate(`/settings/ledger?tab=${k}`, { replace: true }) }} />
       </SubviewShell>
 
       {/* ── 反馈与建议二级界面（同款 shell）── */}
       <SubviewShell
         open={feedbackOpen}
         closing={feedbackClosing}
-        onAnimDone={() => { setFeedbackOpen(false); setFeedbackClosing(false) }}
+        onAnimDone={() => { setFeedbackOpen(false); setFeedbackClosing(false); goSettingsRoot() }}
       >
         <FeedbackView onBack={closeFeedback} />
       </SubviewShell>
@@ -568,7 +633,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
       <SubviewShell
         open={labOpen}
         closing={labClosing}
-        onAnimDone={() => { setLabOpen(false); setLabClosing(false) }}
+        onAnimDone={() => { setLabOpen(false); setLabClosing(false); goSettingsRoot() }}
       >
         <LabView onBack={closeLab} />
       </SubviewShell>
@@ -578,7 +643,7 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
         open={helpOpen}
         closing={helpClosing}
         wide
-        onAnimDone={() => { setHelpOpen(false); setHelpClosing(false) }}
+        onAnimDone={() => { setHelpOpen(false); setHelpClosing(false); goSettingsRoot() }}
       >
         <div style={{ width: '100%', marginTop: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -588,6 +653,22 @@ export default function SettingsView({ onBack, memberView, setMemberView, initLe
           <div style={{ marginTop: 16 }}>
             <HelpCenterView height="calc(100vh - 190px)" />
           </div>
+        </div>
+      </SubviewShell>
+
+      {/* ── 版本星图二级界面（V1.4.0 · 第 60 版纪念；同款宽版 shell，暗夜星空面板）── */}
+      <SubviewShell
+        open={starsOpen}
+        closing={starsClosing}
+        wide
+        onAnimDone={() => { setStarsOpen(false); setStarsClosing(false); goSettingsRoot() }}
+      >
+        <div style={{ width: '100%', marginTop: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <Button type="text" icon={<ArrowLeftOutlined />} onClick={closeStars} />
+            <h1 className="font-display font-display-sm" style={{ margin: 0 }}>版本星图</h1>
+          </div>
+          <StarMapView />
         </div>
       </SubviewShell>
     </div>
@@ -1044,10 +1125,16 @@ function OpenSourceModal({ open, onClose }) {
         }}>
           {[
             ['React', '前端框架'],
+            ['Vite', '构建工具'],
             ['Ant Design', 'UI 组件库'],
+            ['React Router', '前端路由'],
             ['FastAPI', '后端框架'],
-            ['yt-dlp', '视频解析'],
             ['SQLAlchemy', '数据库 ORM'],
+            ['PyJWT / bcrypt', '身份认证'],
+            ['yt-dlp', '视频解析'],
+            ['FFmpeg', '音视频处理'],
+            ['react-markdown / KaTeX', 'Markdown 与公式渲染'],
+            ['Pillow', '图形验证码'],
             ['DiceBear', '头像生成（MIT）'],
           ].map(([name, desc], i, arr) => (
             <div key={name} style={{
@@ -1060,7 +1147,7 @@ function OpenSourceModal({ open, onClose }) {
                 width: 6, height: 6, borderRadius: '50%',
                 background: 'var(--accent)', flexShrink: 0, opacity: 0.6,
               }} />
-              <span style={{ fontWeight: 500, color: 'var(--ink)', width: 96 }}>{name}</span>
+              <span style={{ fontWeight: 500, color: 'var(--ink)', width: 150, flexShrink: 0 }}>{name}</span>
               <span style={{ color: 'var(--mute)' }}>{desc}</span>
             </div>
           ))}

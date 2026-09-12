@@ -88,6 +88,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR.as_posi
 # JWT（对标 Datelife：HS256，30 天有效期）
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 if JWT_SECRET == "dev-secret-change-me":
+    # 生产环境默认值=公开密钥=任何人可签发任意用户 token，必须阻断启动（stdout 警告可能被吞）
+    if os.getenv("IS_PROD", "false").lower() == "true":
+        raise SystemExit("[SECURITY] FATAL: 生产环境必须设置 JWT_SECRET 环境变量（>=32 字符随机值）")
     print("[SECURITY] 警告：JWT_SECRET 未设置，使用默认值！生产环境务必通过环境变量覆盖！")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30

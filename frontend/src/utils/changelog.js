@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.3.1 Fomalhaut'
+export const APP_VERSION = 'V1.4.0 Mimosa'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-08-27'
+export const AGREEMENT_VERSION = '2026-09-13'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,19 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V1.4.0', codename: 'Mimosa', date: '2026-09-13',
+    items: [
+      '全站导航升级：每个页面都有了专属网址——刷新不再丢失页面，浏览器前进 / 后退键全程可用，设置页的每个板块都能分享链接直达',
+      '历史记录支持搜索：关键词搜索免费、即输即出；找不到时可用 AI 语义搜索按"大概印象"模糊匹配，每次固定 1 引力波，搜不到不扣费',
+      '分享卡片上线：结果页的 AI 概要可一键生成排版精美的分享图片，纯本地生成，零消耗零上传',
+      '版本星图（第 60 版纪念 · 限定）：设置 → 关于 进入，60 个版本连成一条星轨，支持缩放漫游与逐版本巡游',
+      '字幕预览的时间戳可以点击了：直接跳转原视频的对应位置接着看（暂支持哔哩哔哩）',
+      '消耗记录新增「赠礼高亮」：纪念活动等特殊赠予会以金色卡片样式呈现，一眼认出',
+      '幕后：安全审计修复与一系列稳定性加固，协议与帮助中心同步更新',
+    ],
+    patches: [],
+  },
   {
     version: 'V1.3.0', codename: 'Fomalhaut', date: '2026-08-27',
     items: [

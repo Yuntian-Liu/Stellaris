@@ -26,8 +26,11 @@ import {
   DeleteOutlined,
   InfoCircleOutlined,
   CopyOutlined,
+  ShareAltOutlined,
 } from '@ant-design/icons'
-import api from '../hooks/api'
+import api, { getToken } from '../hooks/api'
+import { mapParagraphTimes } from '../utils/srt'
+import { parseSummary, buildShareCardDataUrl } from '../utils/shareCard'
 import { RETENTION_TEXT } from '../utils/tier'
 import { COPY_FOOTER, FILE_FOOTER_MD } from '../utils/copyright'
 import ReactMarkdown from 'react-markdown'
@@ -90,6 +93,22 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
       return () => clearTimeout(t)
     }
   }, [])
+
+  // 时间戳回跳（仅 B站：?t= 官方支持参数）：拉取 SRT → 段落↔时间码映射
+  // 条件不满足/拉取失败时 paraSegs 为 null，预览维持单块渲染零感知
+  const [srtText, setSrtText] = useState(null)
+  const platform = taskData.source_platform || '未知来源'
+  const jumpEnabled = platform === '哔哩哔哩' && !!taskData.source_url
+  useEffect(() => {
+    if (!jumpEnabled) return
+    let cancelled = false
+    const token = getToken()
+    fetch(`/api/download/${taskData.task_id}/srt`, token ? { headers: { Authorization: `Bearer ${token}` } } : {})
+      .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
+      .then((t) => { if (!cancelled) setSrtText(t) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // 组件卸载时清理轮询
   useEffect(() => {
@@ -190,11 +209,17 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
     }
   }
 
-  // 来源平台（哔哩哔哩 / 小红书 / 本地上传 / 其他域名），后端 submit 时计算
-  const platform = taskData.source_platform || '未知来源'
-
-  // 预览文本（后端返回的真实内容）
+  // 来源平台（哔哩哔哩 / 小红书 / 本地上传 / 其他域名）与时间码映射
   const previewText = taskData.subtitle_txt || '（无文本内容）'
+  const paraSegs = (jumpEnabled && srtText) ? mapParagraphTimes(previewText, srtText) : null
+  const fmtSec = (sec) => {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
+  const jumpLink = (sec) =>
+    taskData.source_url + (taskData.source_url.includes('?') ? '&' : '?') + 't=' + sec
 
   // 转存到文件柜配置（kind ↔ 预填文件名后缀；未登录/未开通的权限闸在 VaultStoreControl 内）
   const videoTitle = taskData.video_title || '未知视频'
@@ -382,6 +407,8 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
           onNeedAuth={() => requireAuth('内容总结', () => {})}
           chars={previewText.length}
           vault={vaultFor('summary', '概要.md')}
+          videoTitle={taskData.video_title || '未知视频'}
+          platform={platform}
         />
 
         {/* 预览区：展示真实文本内容 */}
@@ -425,8 +452,46 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
             whiteSpace: 'pre-wrap',
             border: '1px solid var(--hairline)',
           }}>
-            {previewText}
+            {paraSegs ? (
+              /* 时间戳回跳版：段落 + 时间码胶囊（点击跳原视频对应位置） */
+              <div>
+                {paraSegs.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+                    <span style={{ width: 52, flexShrink: 0, textAlign: 'center' }}>
+                      {p.sec != null && (
+                        <Tooltip title={`跳到原视频 ${fmtSec(p.sec)}`} placement="top">
+                          <a
+                            href={jumpLink(p.sec)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ts-jump-chip"
+                          >
+                            {fmtSec(p.sec)}
+                          </a>
+                        </Tooltip>
+                      )}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{p.text}</span>
+                  </div>
+                ))}
+              </div>
+            ) : previewText}
           </div>
+          <style>{`
+            .ts-jump-chip {
+              display: inline-block;
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 10.5px;
+              color: var(--mute);
+              background: var(--surface-1);
+              border: 1px solid var(--hairline);
+              border-radius: 6px;
+              padding: 1px 6px;
+              text-decoration: none;
+              transition: color 0.15s, border-color 0.15s;
+            }
+            .ts-jump-chip:hover { color: var(--accent); border-color: var(--accent); }
+          `}</style>
         </div>
 
         {/* AI 解读入口（分栏关闭时显示） */}
@@ -852,7 +917,7 @@ export const MD_COMPONENTS = {
   ),
 }
 
-function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars, vault }) {
+function SummarySection({ taskId, initialStatus, initialContent, initialError, initialCost, initialTokens, cleaned, onNeedAuth, chars, vault, videoTitle, platform }) {
   const { user } = useAuth()
   const [status, setStatus] = useState(initialStatus || 'idle')
   const [content, setContent] = useState(initialContent || '')
@@ -861,8 +926,26 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
   const [tokens, setTokens] = useState(initialTokens ?? null)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
+  const [shareUrl, setShareUrl] = useState(null)   // 分享卡片预览 dataURL（V1.4.0）
+  const [sharing, setSharing] = useState(false)
   const pollRef = useRef(null)
   const contentRef = useRef(null)
+
+  // 分享卡片：纯 Canvas 本地生成（零后端零计费）；只放 AI 概要，不放字幕原文（版权边界）
+  const handleShare = async () => {
+    const parsed = parseSummary(content)
+    if (!parsed) { message.error('概要内容为空，无法生成分享卡片'); return }
+    setSharing(true)
+    try {
+      setShareUrl(await buildShareCardDataUrl({
+        title: videoTitle, platform, overview: parsed.overview, points: parsed.points, chars,
+      }))
+    } catch (e) {
+      message.error('生成分享卡片失败：' + e.message)
+    } finally {
+      setSharing(false)
+    }
+  }
 
   // 组件卸载清理轮询
   useEffect(() => {
@@ -1088,6 +1171,17 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
             }}
             buttonProps={{ type: 'text', size: 'small', icon: <DownloadOutlined /> }}
           />
+          {/* 分享卡片（V1.4.0）：Canvas 手绘 PNG，预览后再保存 */}
+          <Button
+            type="text"
+            size="small"
+            loading={sharing}
+            icon={<ShareAltOutlined />}
+            onClick={handleShare}
+            style={{ fontSize: 12, color: 'var(--mute)', padding: '0 4px' }}
+          >
+            分享
+          </Button>
           <Button
             type="text"
             size="small"
@@ -1132,6 +1226,39 @@ function SummarySection({ taskId, initialStatus, initialContent, initialError, i
           </Text>
         </div>
       )}
+
+      {/* 分享卡片预览（先见成品再保存；保存 = dataURL 本地下载，不出站） */}
+      <Modal
+        open={!!shareUrl}
+        onCancel={() => setShareUrl(null)}
+        footer={null}
+        centered
+        width={380}
+        title={<span className="font-display">分享卡片</span>}
+      >
+        {shareUrl && (
+          <img
+            src={shareUrl}
+            alt="分享卡片预览"
+            style={{ width: '100%', borderRadius: 8, border: '1px solid var(--hairline)' }}
+          />
+        )}
+        <Button
+          type="primary"
+          block
+          icon={<DownloadOutlined />}
+          style={{ marginTop: 16, borderRadius: 'var(--r-btn)' }}
+          onClick={() => {
+            const a = document.createElement('a')
+            a.href = shareUrl
+            a.download = `stellaris-${taskId}-概要卡片.png`
+            a.click()
+            message.success('已保存分享卡片')
+          }}
+        >
+          保存 PNG
+        </Button>
+      </Modal>
     </div>
   )
 }

@@ -300,9 +300,11 @@ async def search_users(q: str, limit: int = 20) -> list[dict]:
         return result
 
 
-async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0, note: str = "") -> dict:
+async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 0,
+                         note: str = "", highlight: bool = False) -> dict:
     """余额 ± 调整（下限 0，不倒欠；量子波调活动钱包——赠送钱包每周清零留不住）。
-    流水记 feature="admin_adjust"，amount 为实际生效量（下限截断后与请求量可能不同），note 备注。"""
+    流水记 feature="admin_adjust"，amount 为实际生效量（下限截断后与请求量可能不同），note 备注；
+    V1.4.0：highlight=True 时流水在用户端消耗记录里金色高亮（纪念赠礼等场景）。"""
     async with async_session() as session:
         user = (await session.execute(select(User).where(User.uid == uid))).scalar_one_or_none()
         if not user:
@@ -317,7 +319,8 @@ async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 
             if actual:
                 await _record(session, uid, "admin_adjust", "quantum", actual,
                               row.quantum_gift + row.quantum_perm,
-                              from_gift=0, from_perm=actual, note=note_trunc)
+                              from_gift=0, from_perm=actual, note=note_trunc,
+                              highlight=highlight)
             applied["quantum"] = actual
         if gravity_delta:
             new_gravity = max(0, row.gravity + gravity_delta)
@@ -325,7 +328,7 @@ async def adjust_balance(uid: int, quantum_delta: int = 0, gravity_delta: int = 
             row.gravity = new_gravity
             if actual:
                 await _record(session, uid, "admin_adjust", "gravity", actual, row.gravity,
-                              note=note_trunc)
+                              note=note_trunc, highlight=highlight)
             applied["gravity"] = actual
         await session.commit()
         logger.info("[Admin] 余额调整: uid=%s quantum=%+d gravity=%+d note=%s",

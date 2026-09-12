@@ -74,6 +74,9 @@ def _is_safe_url(url: str) -> bool:
             ip = ipaddress.ip_address(host)
         except ValueError:
             return True
+        # IPv4-mapped IPv6（::ffff:X 形式）还原成 IPv4 再走黑名单——否则黑名单形同虚设
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
         if any(ip in net for net in _PRIVATE_NETWORKS):
             _ssrf_blocked_count += 1; _ssrf_events.append({"time": _dt.strftime("%m-%d %H:%M:%S"), "type": "ssrf_blocked", "detail": f"SSRF 拦截：私网地址 host {host}"})
             return False
@@ -86,6 +89,9 @@ def _is_safe_url(url: str) -> bool:
 def _fetch_page_title(url: str) -> str | None:
     """抓页面 <title> 作标题兜底（读前 1MB；小红书 head 很大，title 位置靠后；失败返回 None）"""
     import urllib.request
+
+    if not _is_safe_url(url):   # 二次请求同样过 SSRF 黑名单（主流程之外的独立请求路径）
+        return None
 
     req = urllib.request.Request(url, headers={
         "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "

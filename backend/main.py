@@ -53,7 +53,7 @@ from database import init_db, get_db, async_session
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, get_current_user_optional, get_admin_user
 from auth.models import User
-from auth.utils import decode_access_token, get_client_ip, check_estimate_rate   # get_client_ip: P1-12 X-Forwarded-For 拿真实 IP
+from auth.utils import decode_access_token, get_client_ip, check_estimate_rate, check_uid_rate   # get_client_ip: P1-12 X-Forwarded-For 拿真实 IP
 from stats_store import incr_stats, get_stats
 from billing_store import (
     BILLING_TIERS, TIER_DISPLAY, QUANTUM_PER_TOKEN_UNIT, round_tokens,
@@ -176,7 +176,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.3.1-fomalhaut",
+    version="1.4.0-mimosa",
     lifespan=lifespan,
 )
 
@@ -955,6 +955,110 @@ async def get_history(current_user: User = Depends(get_current_user)):
     return {"records": await list_task_records(current_user.uid)}
 
 
+# ===== 双引擎搜索（历史记录 SQL + AI 语义）=====
+
+@app.get("/api/search")
+async def search_history(q: str = "", current_user: User = Depends(get_current_user)):
+    """SQL 引擎（免费）：标题/字幕/概要/MD 四列子串 AND 匹配，返回命中片段"""
+    from search_store import sql_search
+    # 免费接口每次全量拉 owner 行内存扫，30/min 防脚本连打（正常防抖打字远低于此）
+    if not check_uid_rate("search_sql", current_user.uid, 30, 60):
+        raise HTTPException(status_code=429, detail="搜索太频繁，请稍后再试")
+    return {"items": await sql_search(current_user.uid, q)}
+
+
+@app.post("/api/search/ai")
+async def search_history_ai(req: Request, current_user: User = Depends(get_current_user)):
+    """AI 语义搜索（固定 1 引力波/次，失败零扣费）：
+    SQL 粗筛 top5 → 瘦卡片（命中上下文窗）→ LLM 精排；SQL 零命中兜底全量 30 条。"""
+    import json as _json
+    from search_store import ai_candidates, load_owner_rows
+
+    # 限流 6/min：本接口同步等 LLM（占共享 to_thread 线程池 worker 数秒，与提取管线同池），
+    # 扣费已是节流器，这层防的是余额内 tight-loop 刷
+    if not check_uid_rate("search_ai", current_user.uid, 6, 60):
+        raise HTTPException(status_code=429, detail="AI 搜索太频繁，请稍后再试")
+
+    body = await req.json()
+    query = (body.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="请输入搜索内容")
+
+    # ① 余量预检（固定 1 引力波 = 500 tokens；不足 403 统一文案）
+    try:
+        await check_gravity(current_user.uid, 500)
+    except InsufficientError as e:
+        raise HTTPException(status_code=403, detail=e.detail)
+
+    # ② 漏斗：owner 行只加载一遍，粗筛/卡片/结果组装全程复用
+    rows = await load_owner_rows(current_user.uid)
+    candidates = await ai_candidates(current_user.uid, query, rows=rows)
+    if not candidates:
+        return {"items": [], "charged": 0, "msg": "暂无历史记录可搜索"}
+    cards = [c for _, c in candidates]
+
+    # ③ LLM 精排（同步调用放线程池——同步阻塞红线）
+    def _rank() -> tuple[list, dict]:
+        from pipeline.llm import _get_client, _active_model, _record, _usage_dict, _finish_reason_of
+        client = _get_client()
+        model = _active_model()
+        numbered = "\n".join(f"{i+1}. {c}" for i, c in enumerate(cards))
+        prompt = (
+            f"用户在找自己提取过的一个视频，描述是：「{query}」。\n"
+            f"以下是该用户历史记录的摘要卡片（编号 + 标题 + 摘要）：\n{numbered}\n\n"
+            "请判断哪些记录与描述相关，按相关度从高到低排序。"
+            "只输出 JSON 数组，每个元素 {\"i\": 编号, \"reason\": \"一句简短的相关理由\"}，"
+            "最多 5 条；都不相关则输出 []。不要输出任何其他文字。"
+        )
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你是历史记录检索助手，只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+            max_tokens=4096,   # 推理模型会烧思考 tokens（V1.2.2 空回答同款教训；600 实测两条 query 被烧空）
+        )
+        _record("search", model, _usage_dict(completion), _finish_reason_of(completion), False, None)
+        text = (completion.choices[0].message.content or "").strip()
+        # 宽容解析：取第一个 JSON 数组
+        parsed = _json.loads(text[text.find("["): text.rfind("]") + 1]) if "[" in text else []
+        return parsed, _usage_dict(completion)
+
+    try:
+        ranked, usage = await asyncio.to_thread(_rank)
+    except Exception as e:
+        logger.warning("[Search] AI 精排失败（零扣费）: %s", str(e)[:200])
+        raise HTTPException(status_code=502, detail="AI 搜索暂时失败，未扣费，请稍后重试")
+
+    # ④ LLM 返回编号 → 记录详情（编号即 candidates 序号，越界/畸形宽容跳过）
+    row_map = {r["task_id"]: r for r in rows}
+    items = []
+    for entry in (ranked if isinstance(ranked, list) else []):
+        try:
+            idx = int(entry.get("i")) - 1
+            reason = str(entry.get("reason") or "")[:60]
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not (0 <= idx < len(candidates)):
+            continue
+        task_id, _ = candidates[idx]
+        r = row_map.get(task_id)
+        if r:
+            items.append({
+                "task_id": r["task_id"],
+                "title": r["title"],
+                "source_platform": r["source_platform"],
+                "created_at": r["created_at"],
+                "reason": reason,
+            })
+    items = items[:5]
+
+    # ⑤ 成功才扣费：固定 500 tokens = 1 引力波（真实 usage 记流水）
+    charged = await consume_gravity(current_user.uid, 500, "search", usage=usage)
+    return {"items": items, "charged": charged}
+
+
 @app.get("/api/diagnostics/export")
 async def export_diagnostics(current_user: User = Depends(get_current_user)):
     """导出诊断包（脱敏 JSON：环境/系统/本人数据/任务快照/日志），用于问题排查"""
@@ -1386,12 +1490,13 @@ async def admin_adjust_balance(
     quantum_delta = int(body.get("quantum_delta", 0) or 0)
     gravity_delta = int(body.get("gravity_delta", 0) or 0)
     note = str(body.get("note", "") or "")[:64]
+    highlight = bool(body.get("highlight"))   # V1.4.0：高亮流水（用户端金色突出）
     if not uid:
         raise HTTPException(status_code=400, detail="缺少 uid")
     if not quantum_delta and not gravity_delta:
         raise HTTPException(status_code=400, detail="调整量不能全为 0")
     try:
-        return await adjust_balance(uid, quantum_delta, gravity_delta, note=note)
+        return await adjust_balance(uid, quantum_delta, gravity_delta, note=note, highlight=highlight)
     except AdminError as e:
         raise HTTPException(status_code=404, detail=e.detail)
 

@@ -50,3 +50,7 @@ ifadian.txt
 *.bat
 *.sh
 ROADMAP.md
+
+# ===== Tech report (private, for dev-program applications) =====
+tech-report/
+.zcode/

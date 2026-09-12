@@ -15,6 +15,7 @@ const FEATURE_LABELS = {
   summary: '总结概要',
   md: 'MD 笔记',
   chat: 'AI 解读',
+  search: 'AI 语义搜索',
   exchange: '货币兑换',
   signup_gift: '注册赠送',
   membership_gift: '会员赠送',
@@ -42,7 +43,7 @@ function walletNote(item) {
   return `赠送 ${fmt(item.from_gift)} · 永久 ${fmt(item.from_perm ?? 0)}`
 }
 
-export default function LedgerView({ onBack, initialTab = 'minute' }) {
+export default function LedgerView({ onBack, initialTab = 'minute', onTabChange }) {
   const [tab, setTab] = useState(initialTab)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
@@ -72,7 +73,7 @@ export default function LedgerView({ onBack, initialTab = 'minute' }) {
 
       <Tabs
         activeKey={tab}
-        onChange={setTab}
+        onChange={(k) => { setTab(k); onTabChange?.(k) }}
         items={CURRENCY_TABS.map(({ key, Icon, label }) => ({
           key,
           label: (
@@ -92,14 +93,21 @@ export default function LedgerView({ onBack, initialTab = 'minute' }) {
         {items.map((it, i) => {
           const meta = CURRENCY_TABS.find(c => c.key === it.currency) || CURRENCY_TABS[0]
           const note = walletNote(it)
+          const hl = !!it.highlight   // 高亮流水（V1.4.0 管理员赠礼等）：暖金底 + ✦ 标
           return (
             <div key={it.id} style={{
-              display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0',
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: hl ? '11px 12px' : '11px 0',
+              margin: hl ? '0 -12px' : 0,
+              borderRadius: hl ? 8 : 0,
+              background: hl ? '#fffbeb' : 'transparent',
               borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
             }}>
-              <meta.Icon style={{ color: 'var(--accent)', fontSize: 14, flexShrink: 0 }} />
+              {hl
+                ? <span style={{ color: '#d97706', fontSize: 13, flexShrink: 0 }}>✦</span>
+                : <meta.Icon style={{ color: 'var(--accent)', fontSize: 14, flexShrink: 0 }} />}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+                <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: hl ? 500 : 400 }}>
                   {FEATURE_LABELS[it.feature] || it.feature}
                 </div>
                 {note && (

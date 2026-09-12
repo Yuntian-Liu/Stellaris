@@ -185,6 +185,11 @@ export const authApi = {
 export const getStats = () => request('/api/user/stats')
 export const getHistory = () => request('/api/history')
 
+/* ═══ 双引擎搜索（SQL 免费 / AI 固定 1 引力波）═══ */
+export const searchHistory = (q) => request(`/api/search?q=${encodeURIComponent(q)}`)
+export const searchHistoryAI = (query) =>
+  request('/api/search/ai', { method: 'POST', body: { query } })
+
 export const getBilling = () => request('/api/billing/summary')
 export const exchange = (direction, count) =>
   request('/api/billing/exchange', { method: 'POST', body: { direction, count } })
@@ -278,4 +283,4 @@ export const adminApi = {
   llmHealth: () => request('/api/admin/llm-health'),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, searchHistory, searchHistoryAI, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }

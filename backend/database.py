@@ -58,6 +58,7 @@ _EXPECTED_COLUMNS = [
     ("redeem_codes", "quantum_grant", "INTEGER"),
     ("redeem_codes", "gravity_grant", "INTEGER"),
     ("billing_ledger", "note", "VARCHAR"),
+    ("billing_ledger", "highlight", "BOOLEAN"),
     ("task_records", "raw_text", "TEXT"),
     ("task_records", "subtitle_srt", "TEXT"),
     ("task_records", "md_content", "TEXT"),

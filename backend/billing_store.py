@@ -11,7 +11,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import DateTime, Integer, String, case, func, select, update
+from sqlalchemy import Boolean, DateTime, Integer, String, case, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -157,6 +157,8 @@ class BillingLedger(Base):
     from_perm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     note: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 管理员备注（admin_adjust 等）
+    # 高亮流水（V1.4.0）：管理员调整时可选，用户端消耗记录里以金色样式突出（纪念赠礼等场景）
+    highlight: Mapped[bool] = mapped_column(Boolean, default=False)
     # V1.1.0 分模型成本：结算时记"当时模型+真实用量+真实成本"（发票原则，改价不改历史）
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -360,16 +362,17 @@ async def grant_membership(uid: int, tier_key: str, days: int | None,
 async def _record(session, uid: int, feature: str, currency: str,
                   amount: int, balance_after: int, task_id: str | None = None,
                   from_gift: int | None = None, from_perm: int | None = None,
-                  note: str | None = None,
+                  note: str | None = None, highlight: bool = False,
                   model: str | None = None, usage: dict | None = None,
                   cost_yuan: float | None = None, prices: dict | None = None,
                   price_tier: str | None = None):
     """写流水。V1.1.0：可附带 model + usage + cost_yuan + prices（价签快照，账单公式用）；
-    V1.3.0：price_tier 记峰谷标记（prices 快照存的是当时实际生效价）"""
+    V1.3.0：price_tier 记峰谷标记（prices 快照存的是当时实际生效价）；
+    V1.4.0：highlight 高亮流水（管理员赠礼等，用户端金色突出）"""
     session.add(BillingLedger(
         user_uid=uid, feature=feature, currency=currency,
         amount=amount, balance_after=balance_after, task_id=task_id,
-        from_gift=from_gift, from_perm=from_perm, note=note,
+        from_gift=from_gift, from_perm=from_perm, note=note, highlight=highlight,
         model=model,
         prompt_tokens=(usage or {}).get("prompt_tokens"),
         completion_tokens=(usage or {}).get("completion_tokens"),
@@ -807,6 +810,7 @@ async def get_ledger(uid: int, page: int, size: int, currency: str | None = None
                 "from_perm": r.from_perm,
                 "task_id": r.task_id,
                 "note": r.note,
+                "highlight": bool(r.highlight),
                 "created_at": _iso_utc(r.created_at),
             }
             for r in result.scalars()

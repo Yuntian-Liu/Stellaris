@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { HashRouter } from 'react-router-dom'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import 'katex/dist/katex.min.css'
@@ -85,7 +86,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       }}
     >
       <AuthProvider>
-        <App />
+        {/* Hash 路由（V1.4.0）：#/ 前缀零后端改动（FastAPI 无需 SPA fallback），发版风险最低 */}
+        <HashRouter>
+          <App />
+        </HashRouter>
       </AuthProvider>
     </ConfigProvider>
   </React.StrictMode>,
