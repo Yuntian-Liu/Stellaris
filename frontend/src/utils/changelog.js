@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.4.0 Mimosa'
+export const APP_VERSION = 'V1.4.1 Mimosa'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
 export const AGREEMENT_VERSION = '2026-09-13'
@@ -32,7 +32,14 @@ export const CHANGELOG = [
       '消耗记录新增「赠礼高亮」：纪念活动等特殊赠予会以金色卡片样式呈现，一眼认出',
       '幕后：安全审计修复与一系列稳定性加固，协议与帮助中心同步更新',
     ],
-    patches: [],
+    patches: [
+      {
+        version: 'V1.4.1', date: '2026-09-17',
+        items: [
+          '紧急修复：哔哩哔哩与小红书 9 月 16 日升级风控导致全网链接无法提取，现已切换至新的直连通道（B站改走移动站接口，小红书改用官方 App 通道），全部恢复正常',
+        ],
+      },
+    ],
   },
   {
     version: 'V1.3.0', codename: 'Fomalhaut', date: '2026-08-27',

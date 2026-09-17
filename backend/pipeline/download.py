@@ -16,6 +16,7 @@ from pipeline.bilibili_api import (
     is_bilibili_url, resolve_bvid, fetch_video_info, fetch_audio_url,
     download_to_file,
 )
+from pipeline.xhs_api import is_xhs_url, fetch_xhs_info, download_xhs_video
 from utils import get_task_dir
 
 # yt-dlp 对部分站点（如小红书）只给 "XiaoHongShu video #id" 这类通用标题
@@ -116,7 +117,7 @@ def _fetch_page_title(url: str) -> str | None:
 
 def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> dict:
     """
-    下载视频音频。B站走 API 直连，其他站点走 yt-dlp。
+    下载视频音频。B站走 API 直连，小红书走 App UA 直连（V1.4.1），其他站点走 yt-dlp。
     返回: {"audio_path": Path, "video_title": str}
     """
     url = _extract_url(url)
@@ -124,7 +125,20 @@ def download_bilibili(url: str, task_id: str, sessdata: str | None = None) -> di
         raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):
         return _download_bilibili_via_api(url, task_id, sessdata)
+    if is_xhs_url(url):
+        return _download_xhs(url, task_id)
     return _download_via_ytdlp(url, task_id, sessdata)
+
+
+def _download_xhs(url: str, task_id: str) -> dict:
+    """小红书（V1.4.1 起替代 yt-dlp）：App UA 直连抓页 → CDN 下载 mp4 → ffmpeg 抽音轨。
+    背景：2026-09-16 起网页 UA 吃登录墙，yt-dlp 的 XHS extractor 全线失效"""
+    task_dir = get_task_dir(task_id)
+    video_path = task_dir / "video.mp4"
+    info = download_xhs_video(url, video_path, timeout=DOWNLOAD_TIMEOUT_SEC)
+    result = extract_audio_from_file(video_path, task_id)   # 复用本地上传的 ffmpeg 抽音轨
+    video_path.unlink(missing_ok=True)                      # mp4 用完即删，只留 mp3
+    return {"audio_path": result["audio_path"], "video_title": info["title"]}
 
 
 def _download_bilibili_via_api(
@@ -221,7 +235,7 @@ def _download_via_ytdlp(
 
 def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
     """预估用：探测视频标题与时长（不下载音频）。
-    B站走 API 直连，其他站点走 yt-dlp。
+    B站走 API 直连，小红书走 App UA 直连（V1.4.1），其他站点走 yt-dlp。
     返回: {"title": str, "duration_sec": float}
     """
     url = _extract_url(url)
@@ -229,6 +243,11 @@ def probe_bilibili_info(url: str, sessdata: str | None = None) -> dict:
         raise ValueError("不支持的链接地址（SSRF 防护）")
     if is_bilibili_url(url):
         info = fetch_video_info(resolve_bvid(url, sessdata), sessdata)
+        return {"title": info["title"], "duration_sec": info["duration_sec"]}
+    if is_xhs_url(url):
+        info = fetch_xhs_info(url)
+        if info["duration_sec"] is None:
+            raise RuntimeError("未能获取视频时长")
         return {"title": info["title"], "duration_sec": info["duration_sec"]}
     return _probe_via_ytdlp(url, sessdata)
 

@@ -417,7 +417,14 @@
     "name": "Mimosa",
     "level": "minor",
     "date": "2026-09-13",
-    "gist": "React Router 全站路由化 · 双引擎搜索 · 分享卡片",
+    "gist": "第 60 版：React Router 全站路…"
+  },
+  {
+    "v": "V1.4.1",
+    "name": "Mimosa",
+    "level": "patch",
+    "date": "2026-09-17",
+    "gist": "9·16 平台风控升级事故热修：B站 view…",
     "current": true
   }
 ]
