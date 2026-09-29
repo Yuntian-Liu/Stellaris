@@ -22,6 +22,7 @@ from config import (
     RESEND_API_KEY, TMP_DIR, DATA_DIR,
     AFDIAN_USER_ID, AFDIAN_API_TOKEN, AFDIAN_SHOP_URL, AFDIAN_PLAN_MAP,
     JWT_SECRET, COS_SECRET_ID, VAULT_TOKEN,
+    DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL,
 )
 from database import async_session
 from billing_store import UserBilling, BillingLedger, BILLING_TIERS
@@ -120,6 +121,10 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "llm_provider": llm_provider,
         "asr_model": get_asr_model(),
         "mimo_key_set": bool(MIMO_API_KEY),
+        # V1.5.0 多模型 ASR：beta 引擎（Babel）配置状态与端点地域（401 地域不配类问题定位用；
+        # base_url 是域名非密钥，可导出）
+        "dashscope_key_set": bool(DASHSCOPE_API_KEY),
+        "dashscope_base_url": DASHSCOPE_BASE_URL,
         "llm_key_set": bool(LLM_API_KEY),
         # V1.2.2 起人机验证自托管（auth/captcha.py），无外部密钥，turnstile_set 退役
         "captcha": "self-hosted",
@@ -280,6 +285,9 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
             "source_platform": t.get("source_platform"),
             "owner_uid": t.get("owner_uid"),
             "rehydrated": bool(t.get("rehydrated")),   # 冷启动重建标记（V0.8.0）
+            # V1.5.0：所选识别模型与说话人分离开关（beta 模型问题的第一定位线索）
+            "asr_model": t.get("asr_model"),
+            "diarize": bool(t.get("diarize")),
             "error": _mask_urls((t.get("error") or "")[:300]) or None,
         }
         for t in list(tasks.values())[-20:]

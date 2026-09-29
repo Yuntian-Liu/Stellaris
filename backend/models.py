@@ -34,6 +34,8 @@ class SubmitRequest(BaseModel):
     sessdata: Optional[str] = Field(None, description="B站 SESSDATA（可选，用于抓 CC 字幕）")
     est_minutes: Optional[int] = Field(None, description="预估时长（分钟，来自 estimate，计费检查用）")
     skip_segment: bool = Field(False, description="跳过语义分段（量子波不足时的降级选项）")
+    asr_model: Optional[str] = Field(None, description="识别模型 key（V1.5.0；None=默认 mimo；beta 模型仅登录用户）")
+    diarize: bool = Field(False, description="区分说话人（V1.5.0 Step2；仅支持的模型可用，开启后跳过 LLM 语义分段）")
 
 
 class TaskResponse(BaseModel):
@@ -57,6 +59,8 @@ class TaskResponse(BaseModel):
     cleaned: Optional[bool] = None          # 用户已主动清理数据，下载按钮应禁用
     source_platform: Optional[str] = None   # 来源平台（哔哩哔哩/小红书/本地上传/域名）
     source_url: Optional[str] = None        # 源视频链接（V1.3.0；本地上传为 None 不显示）
+    asr_model: Optional[str] = None         # 实际使用的识别模型 key（V1.5.0；cc 字幕命中为 None）
+    diarize: Optional[bool] = None          # 是否开启了说话人分离（V1.5.0 Step2）
     # 计费实际消耗（V0.7.0，完成后回显）
     charged_minutes: Optional[int] = None   # 提取实际扣分钟
     charged_quantum: Optional[int] = None   # 分段实际扣量子波

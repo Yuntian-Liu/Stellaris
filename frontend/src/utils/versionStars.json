@@ -22,14 +22,14 @@
   },
   {
     "v": "V0.2.0",
-    "name": "Vega",
+    "name": "Mirzam",
     "level": "minor",
     "date": "2026-07-17",
     "gist": "LLM 智能层集成"
   },
   {
     "v": "V0.2.1",
-    "name": "Vega",
+    "name": "Mirzam",
     "level": "patch",
     "date": "2026-07-18",
     "gist": "补丁：总结概要"
@@ -424,7 +424,14 @@
     "name": "Mimosa",
     "level": "patch",
     "date": "2026-09-17",
-    "gist": "9·16 平台风控升级事故热修：B站 view…",
+    "gist": "9·16 平台风控升级事故热修：B站 view…"
+  },
+  {
+    "v": "V1.5.0",
+    "name": "Mirzam",
+    "level": "minor",
+    "date": "2026-09-29",
+    "gist": "识别模型自选：多语言内测模型「Babel · 巴别」（31 语种/2x 分钟）+ 说话人分离（跳过智能整理）",
     "current": true
   }
 ]

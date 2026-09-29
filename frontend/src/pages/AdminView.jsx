@@ -1103,7 +1103,7 @@ function TasksPanel() {
                 <div><span style={{ color: 'var(--mute)' }}>扣量子波</span> {detail.runtime.charged_quantum != null ? detail.runtime.charged_quantum : '—'}</div>
                 <div><span style={{ color: 'var(--mute)' }}>MD 笔记</span> {detail.runtime.md_status === 'ready' ? '已生成' : detail.runtime.md_status || '—'}</div>
                 <div><span style={{ color: 'var(--mute)' }}>内容概要</span> {detail.runtime.summary_status === 'ready' ? '已生成' : detail.runtime.summary_status || '—'}</div>
-                <div><span style={{ color: 'var(--mute)' }}>字幕来源</span> {detail.runtime.subtitle_source || '—'}</div>
+                <div><span style={{ color: 'var(--mute)' }}>字幕来源</span> {detail.runtime.subtitle_source === 'cc_subtitle' ? '官方 CC 字幕' : (detail.runtime.asr_display || detail.runtime.subtitle_source || '—')}</div>
                 <div><span style={{ color: 'var(--mute)' }}>源标题</span> {detail.runtime.video_title || '—'}</div>
                 {detail.runtime.error && <div style={{ gridColumn: '1 / -1', color: 'var(--error)', fontSize: 12 }}>错误：{detail.runtime.error}</div>}
               </>
@@ -1131,8 +1131,12 @@ function TasksPanel() {
                 <div className="font-mono" style={{ fontSize: 11.5, color: 'var(--mute)', lineHeight: 1.9, padding: '0 2px' }}>
                   {detail.ledger.filter(l => l.cost_yuan != null).map((l, i) => (
                     <div key={i}>
+                      {/* 发票行：按时价计费（mimo）显示 分钟×时价；按 token 计费（qwen，V1.5.0）
+                          分钟保留 + 补 token 计价明细，价签缺项不渲染 */}
                       {l.currency === 'minute'
-                        ? `${l.feature}   ${Math.abs(l.amount).toFixed(1)} 分钟 × ¥${l.price_per_hour}/h = ¥${l.cost_yuan}`
+                        ? (l.price_per_hour != null
+                          ? `${l.feature}   ${Math.abs(l.amount).toFixed(1)} 分钟 × ¥${l.price_per_hour}/h = ¥${l.cost_yuan}`
+                          : `${l.feature}   ${Math.abs(l.amount).toFixed(1)} 分钟（token 计价：输入 ${l.prompt_tokens ?? 0}×${l.price_input} + 输出 ${l.completion_tokens ?? 0}×${l.price_output} ¥/M）= ¥${l.cost_yuan}`)
                         : `${l.feature}   ${l.cache_miss_tokens ?? l.prompt_tokens}×${l.price_input} + ${l.cache_hit_tokens ?? 0}×${l.price_cache_hit} + ${l.completion_tokens}×${l.price_output}（¥/M）= ¥${l.cost_yuan}`}
                       {/* V1.3.0 峰谷徽章：这笔按峰价还是谷价结算的（老发票无标记） */}
                       {l.price_tier && l.currency !== 'minute' && (
@@ -3151,12 +3155,15 @@ function CostPanel() {
               {m.model}
             </span>
             <span style={{ flex: 1 }} />
+            {/* 计量行（V1.5.0）：分钟、输入、输出 tokens 有啥显示啥——
+                mimo 只有分钟；LLM 只有 tokens；qwen 分钟 + tokens 双计量 */}
             <span style={{ color: 'var(--mute)' }}>
-              {m.minutes > 0
-                ? `输入 ${m.minutes.toFixed(1)} 分钟`
-                : `输入 ${fmtTokens(m.prompt)}`}
+              {[
+                m.minutes > 0 && `${m.minutes.toFixed(1)} 分钟`,
+                m.prompt > 0 && `输入 ${fmtTokens(m.prompt)}`,
+                m.completion > 0 && `输出 ${fmtTokens(m.completion)}`,
+              ].filter(Boolean).join(' · ')}
             </span>
-            {m.minutes === 0 && <span style={{ color: 'var(--mute)' }}>输出 {fmtTokens(m.completion)}</span>}
             {m.hit_rate != null && (
               <span style={{ color: 'var(--accent)' }}>命中 {m.hit_rate}%</span>
             )}

@@ -426,14 +426,22 @@ async def grant_signup_gravity(uid: int) -> None:
         await session.commit()
 
 
-async def consume_minutes(uid: int, minutes: int, task_id: str) -> None:
+async def consume_minutes(uid: int, minutes: int, task_id: str,
+                          model_label: str | None = None,
+                          cost_yuan: float | None = None,
+                          prices: dict | None = None,
+                          usage: dict | None = None) -> None:
     """成功后扣分钟（三周期同时记）。失败任务不调用本函数。
-    V1.1.0：按当时生效 ASR 模型记 model + 真实成本（minutes/60 × 时价）。"""
+    V1.1.0：按当时生效 ASR 模型记 model + 真实成本（minutes/60 × 时价）。
+    V1.5.0：model_label/cost_yuan/prices/usage 覆盖参数——用户自选 beta 模型（qwen）时由管线
+    按实际 token usage 算好成本传入；缺省走原逻辑（全局活跃 ASR 模型价签）。"""
     if minutes <= 0:
         return
-    from model_store import get_model_prices
-    prices = await get_model_prices("asr")
-    cost_yuan = round(minutes / 60 * (prices["price_per_hour"] or 0), 6)
+    if model_label is None:
+        from model_store import get_model_prices
+        prices = await get_model_prices("asr")
+        model_label = prices["model"]
+        cost_yuan = round(minutes / 60 * (prices["price_per_hour"] or 0), 6)
     async with async_session() as session:
         row = await _get_or_create(session, uid)
         _apply_resets(row, await _effective_tier_key(session, row))
@@ -441,7 +449,7 @@ async def consume_minutes(uid: int, minutes: int, task_id: str) -> None:
         row.minutes_week += minutes
         row.minutes_month += minutes
         await _record(session, uid, "extract", "minute", -minutes, row.minutes_day, task_id,
-                      model=prices["model"], cost_yuan=cost_yuan, prices=prices)
+                      model=model_label, usage=usage, cost_yuan=cost_yuan, prices=prices)
         await session.commit()
 
 

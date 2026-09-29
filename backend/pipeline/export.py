@@ -7,15 +7,20 @@ from pathlib import Path
 def segments_to_srt(segments: list[dict]) -> str:
     """
     将 ASR/CC 字幕的 segments 列表转换为 SRT 格式
-    segment 结构: {"start": float(秒), "end": float(秒), "text": str}
+    segment 结构: {"start": float(秒), "end": float(秒), "text": str, "speaker"?: int}
+    V1.5.0：说话人分离的 segment 带 speaker（1 起），每条字幕正文前加 [说话人N] 标签
+    （SRT 条目独立显示，标签必须每条都带）
     """
     lines = []
     for i, seg in enumerate(segments, 1):
         start_srt = _seconds_to_srt_time(seg["start"])
         end_srt = _seconds_to_srt_time(seg["end"])
+        text = seg["text"]
+        if seg.get("speaker"):
+            text = f"[说话人{seg['speaker']}] {text}"
         lines.append(str(i))
         lines.append(f"{start_srt} --> {end_srt}")
-        lines.append(seg["text"])
+        lines.append(text)
         lines.append("")  # 空行分隔
     return "\n".join(lines)
 
@@ -23,8 +28,19 @@ def segments_to_srt(segments: list[dict]) -> str:
 def segments_to_txt(segments: list[dict]) -> str:
     """
     将 segments 导出为纯文本（只有文字内容）
+    V1.5.0：说话人分离的 segment 带 speaker（1 起），按回合排版——
+    说话人切换时该行加「说话人 N：」前缀，同一人连续发言不重复标注（可读性）
     """
-    return "\n".join(seg["text"] for seg in segments)
+    lines = []
+    prev_spk = None
+    for seg in segments:
+        spk = seg.get("speaker")
+        if spk and spk != prev_spk:
+            lines.append(f"说话人 {spk}：{seg['text']}")
+        else:
+            lines.append(seg["text"])
+        prev_spk = spk
+    return "\n".join(lines)
 
 
 def bilibili_subtitle_to_segments(body: dict) -> list[dict]:

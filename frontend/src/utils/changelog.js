@@ -5,10 +5,10 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.4.1 Mimosa'
+export const APP_VERSION = 'V1.5.0 Mirzam'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
-export const AGREEMENT_VERSION = '2026-09-13'
+export const AGREEMENT_VERSION = '2026-09-29'
 
 /** 取全站最新更新条目（有 patch 取最新 patch，否则取最新 minor） */
 export function getLatestUpdate() {
@@ -21,6 +21,17 @@ export function getLatestUpdate() {
 }
 
 export const CHANGELOG = [
+  {
+    version: 'V1.5.0', codename: 'Mirzam', date: '2026-09-29',
+    intro: '听见更多语言。识别模型现在可以选择了，多语言与说话人区分同步上线。',
+    items: [
+      '识别模型可选择了：提取前的确认卡新增模型选择，默认「Echo · 回声」不变；剪贴板快捷提取仍走默认模型，并已标注说明',
+      '多语言识别上线（内测）：新模型「Babel · 巴别」支持中 / 英 / 日 / 韩等 31 种语言自动识别，登录用户可选，按 2 倍分钟额度计费；内测阶段首次使用需确认须知，随时可以点 ⓘ 重看',
+      '区分说话人（Babel 专属）：开启后字幕按发言人分节排版，SRT 每条带 [说话人N] 标签，结果页说话人标签以主题色高亮；开启后不进行 AI 智能整理，也不消耗量子波',
+      'AI 全面提速：智能整理、内容概要、AI 解读的响应速度显著提升，整理质量同步优化',
+      '幕后：诊断日志能力增强（新功能全链路可查），用户协议与隐私政策补充多语言识别、说话人区分与内测功能说明',
+    ],
+  },
   {
     version: 'V1.4.0', codename: 'Mimosa', date: '2026-09-13',
     items: [
@@ -496,7 +507,7 @@ export const CHANGELOG = [
     ],
   },
   {
-    version: 'V0.2.0', codename: 'Vega', date: '2026-07-17',
+    version: 'V0.2.0', codename: 'Mirzam', date: '2026-07-17',
     items: [
       'AI 智能整理：字幕自动语义分段，阅读更顺畅',
       'Markdown 结构化笔记导出，适配 Obsidian / Notion',

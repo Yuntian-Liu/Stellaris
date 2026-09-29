@@ -19,6 +19,7 @@ import {
   LoadingOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import api from '../hooks/api'
+import { clientLog } from '../utils/clientLog'
 import useClipboardLink from '../hooks/useClipboardLink'
 import { useAuth } from '../contexts/AuthContext'
 import { GroupQrCard, GroupQrModal } from '../components/GroupQrModal'
@@ -71,6 +72,49 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   // 彩蛋诗按天轮换（同一天所有人看到同一句，与设置页星语同款机制；原为随机抽取，不会"每日更新"）
   const [poem] = useState(() => STAR_POEMS[Math.floor(Date.now() / 86400000) % STAR_POEMS.length])
   const [groupOpen, setGroupOpen] = useState(false)   // 页脚用户交流群二维码弹层
+
+  // ── V1.5.0：识别模型选择（目录数据驱动渲染；beta 需登录 + 首次风险确认）──
+  const [asrCatalog, setAsrCatalog] = useState(null)    // { default, models[] }，拉取失败=无选择卡
+  const [asrModelKey, setAsrModelKey] = useState(null)
+  const [betaConfirmFor, setBetaConfirmFor] = useState(null)  // 'link' | 'upload'（待确认的提交）
+  const [betaChecked, setBetaChecked] = useState(false)
+
+  useEffect(() => {
+    api.getAsrModels()
+      .then(d => { setAsrCatalog(d); setAsrModelKey(d.default) })
+      .catch(() => { /* 清单拉取失败不阻断主流程：不出选择卡，后端按默认模型处理 */ })
+  }, [])
+
+  const selectedAsr = asrCatalog?.models?.find(m => m.key === asrModelKey) || null
+  const asrMult = selectedAsr?.multiplier || 1
+  // beta 首次确认：本机已接受过风险说明则直接提交
+  const needBetaConfirm = !!selectedAsr?.beta && !localStorage.getItem('asr_beta_accepted_v1')
+  // ⓘ 说明弹窗展示对象：info 模式未选中 beta 时回落到目录里的 beta 模型（保证文案不错位）
+  const betaModalModel = betaConfirmFor === 'info'
+    ? (asrCatalog?.models?.find(m => m.beta) || selectedAsr)
+    : selectedAsr
+
+  // ── V1.5.0 Step2：说话人分离开关（仅支持该能力的模型显示；首开弹确认，localStorage 记住）──
+  const [diarizeOn, setDiarizeOn] = useState(false)
+  const [diarizeModal, setDiarizeModal] = useState(null)   // 'enable' | 'info'
+  const [diarizeChecked, setDiarizeChecked] = useState(false)
+
+  const handleAsrChange = (key) => {
+    setAsrModelKey(key)
+    clientLog.add('ui', `选择识别模型: ${key}`)
+    const m = asrCatalog?.models?.find(x => x.key === key)
+    if (!m?.supports_diarization) setDiarizeOn(false)   // 切到不支持的模型时自动收起
+  }
+  const handleDiarizeToggle = () => {
+    if (diarizeOn) { setDiarizeOn(false); clientLog.add('ui', '关闭说话人分离'); return }
+    if (!localStorage.getItem('asr_diarize_accepted_v1')) {
+      setDiarizeChecked(false); setDiarizeModal('enable')
+      clientLog.add('ui', '开启说话人分离 → 弹首次确认')
+      return
+    }
+    setDiarizeOn(true)
+    clientLog.add('ui', '开启说话人分离')
+  }
 
   // ── 剪贴板链接自动检测（V1.2.0；定稿 tmp/collab/clipboard-autofill/05_kimi.md）──
   // 切回页面时若剪贴板里有新的视频链接 → 弹窗（询问 + 预估）。候选人出现即探测，
@@ -133,8 +177,16 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     }
   }
 
-  // 第二步：确认后真正提交任务
-  const handleConfirmSubmit = async () => {
+  // 第二步：确认后真正提交任务（beta 模型首次使用先过风险确认弹窗）
+  const handleConfirmSubmit = () => {
+    if (needBetaConfirm) {
+      setBetaChecked(false); setBetaConfirmFor('link')
+      clientLog.add('ui', `beta 模型(${selectedAsr?.key})首次提交 → 弹风险确认`)
+      return
+    }
+    doSubmitLink()
+  }
+  const doSubmitLink = async () => {
     setSubmitting(true)
     setError(null)
     try {
@@ -143,7 +195,9 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
         url: url.trim(),
         sessdata: sessdata.trim() || null,
         est_minutes: estimateData?.est_minutes ?? null,
-        skip_segment: skipSegment,
+        skip_segment: skipSegment || diarizeOn,   // 说话人分离开启 = 跳过智能整理（后端亦强制）
+        asr_model: asrModelKey || undefined,
+        diarize: diarizeOn || undefined,
       })
       onSubmit(res)
     } catch (e) {
@@ -157,6 +211,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     setEstimateData(null)
     setUrl('')
     if (skipSegment) setSkipSegment(false)
+    if (asrCatalog) setAsrModelKey(asrCatalog.default)   // 模型选择一并重置回默认
+    setDiarizeOn(false)
     setError(null)
   }
 
@@ -166,6 +222,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     if (estimateData) setEstimateData(null)
     if (uploadEstimate) setUploadEstimate(null)
     if (skipSegment) setSkipSegment(false)
+    if (asrCatalog) setAsrModelKey(asrCatalog.default)
+    setDiarizeOn(false)
   }
 
   // 前端用 <video>/<audio>.duration 估时长，复刻后端 estimate 公式，给 upload 也做预估卡。
@@ -213,8 +271,13 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     return false   // 阻止 antd 自动上传
   }
 
-  // 第二步：确认后才真正上传
-  const handleConfirmUpload = async () => {
+  // 第二步：确认后才真正上传（beta 模型首次使用先过风险确认弹窗）
+  const handleConfirmUpload = () => {
+    if (!uploadEstimate?.file) return
+    if (needBetaConfirm) { setBetaChecked(false); setBetaConfirmFor('upload'); return }
+    doConfirmUpload()
+  }
+  const doConfirmUpload = async () => {
     const file = uploadEstimate?.file
     if (!file) return
     setSubmitting(true)
@@ -223,6 +286,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
       const formData = new FormData()
       formData.append('file', file)
       if (sessdata.trim()) formData.append('sessdata', sessdata.trim())
+      if (asrModelKey) formData.append('asr_model', asrModelKey)
+      if (diarizeOn) formData.append('diarize', 'true')
       const res = await api.upload(formData)
       setUploadEstimate(null)
       onSubmit(res)
@@ -355,12 +420,14 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                   value={`约 ${formatNumber(estimateData.est_llm_tokens)} tokens`}
                   tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量"
                 />
-                {/* 计费消耗行（V0.7.0） */}
+                {/* 计费消耗行（V0.7.0；V1.5.0 起随所选模型倍率换算；说话人分离开启时不做智能整理、量子波 0） */}
                 <EstimateRow
                   icon={<ClockCircleOutlined />}
                   label="本次消耗"
-                  value={`${estimateData.est_minutes} 分钟 + ${estimateData.est_quantum} 量子波`}
-                  tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单"
+                  value={asrMult > 1
+                    ? `${estimateData.est_minutes} × ${asrMult} = ${estimateData.est_minutes * asrMult} 分钟 + ${diarizeOn ? 0 : estimateData.est_quantum} 量子波`
+                    : `${estimateData.est_minutes} 分钟 + ${diarizeOn ? 0 : estimateData.est_quantum} 量子波`}
+                  tooltip={`分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单${asrMult > 1 ? `；当前所选模型按 ${asrMult} 倍分钟计` : ''}${diarizeOn ? '；已开启区分说话人，不进行智能整理，量子波不消耗' : ''}`}
                 />
                 {estimateData.minutes_left && (() => {
                   // 周期值为 null = 该周期不限（如 Stella 日/周），只在有上限的周期里取最小
@@ -376,6 +443,19 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                 })()}
                 {/* 积分系统上线后，在此处追加「预计消耗积分」行 */}
               </div>
+
+              {/* V1.5.0：识别模型选择（目录数据驱动；匿名置灰 beta 卡引导登录） */}
+              <AsrModelPicker
+                catalog={asrCatalog}
+                value={asrModelKey}
+                onChange={handleAsrChange}
+                isLoggedIn={!!user}
+                onNeedAuth={onNeedAuth}
+                onBetaInfo={() => setBetaConfirmFor('info')}
+                diarizeOn={diarizeOn}
+                onDiarizeToggle={handleDiarizeToggle}
+                onDiarizeInfo={() => setDiarizeModal('info')}
+              />
 
               <div className="font-caption" style={{
                 marginTop: 12,
@@ -437,8 +517,20 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                 <EstimateRow icon={<ClockCircleOutlined />} label="时长" value={formatDuration(uploadEstimate.durationSec)} />
                 <EstimateRow icon={<FileTextOutlined />} label="预计转写字数" value={`约 ${formatNumber(uploadEstimate.estChars)} 字`} />
                 <EstimateRow icon={<ThunderboltOutlined />} label="智能整理预计消耗" value={`约 ${formatNumber(uploadEstimate.estTokens)} tokens`} tooltip="语义分段由 LLM 完成，按输入 + 输出 tokens 计量" />
-                <EstimateRow icon={<ClockCircleOutlined />} label="本次消耗" value={`${uploadEstimate.estMinutes} 分钟 + ${uploadEstimate.estQuantum} 量子波`} tooltip="分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单" />
+                <EstimateRow icon={<ClockCircleOutlined />} label="本次消耗" value={asrMult > 1 ? `${uploadEstimate.estMinutes} × ${asrMult} = ${uploadEstimate.estMinutes * asrMult} 分钟 + ${diarizeOn ? 0 : uploadEstimate.estQuantum} 量子波` : `${uploadEstimate.estMinutes} 分钟 + ${diarizeOn ? 0 : uploadEstimate.estQuantum} 量子波`} tooltip={`分钟用于语音转写，量子波用于智能分段；结算按实际用量，零头不到四成免单${asrMult > 1 ? `；当前所选模型按 ${asrMult} 倍分钟计` : ''}${diarizeOn ? '；已开启区分说话人，不进行智能整理，量子波不消耗' : ''}`} />
               </div>
+              {/* V1.5.0：识别模型选择（与链接预估卡同款） */}
+              <AsrModelPicker
+                catalog={asrCatalog}
+                value={asrModelKey}
+                onChange={handleAsrChange}
+                isLoggedIn={!!user}
+                onNeedAuth={onNeedAuth}
+                onBetaInfo={() => setBetaConfirmFor('info')}
+                diarizeOn={diarizeOn}
+                onDiarizeToggle={handleDiarizeToggle}
+                onDiarizeInfo={() => setDiarizeModal('info')}
+              />
               <div className="font-caption" style={{
                 marginTop: 10, paddingTop: 10,
                 borderTop: '1px dashed var(--hairline-strong)', fontSize: 12,
@@ -497,14 +589,14 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             (() => {
               const minutesOk = !estimateData.minutes_left ||
                 Object.values(estimateData.minutes_left).every(
-                  v => v === null || estimateData.est_minutes <= v)
+                  v => v === null || estimateData.est_minutes * asrMult <= v)
               const quantumOk = estimateData.quantum_left == null ||
                 estimateData.est_quantum <= estimateData.quantum_left
-              const canSubmit = minutesOk && (quantumOk || skipSegment)
+              const canSubmit = minutesOk && (diarizeOn || quantumOk || skipSegment)
               return (
                 <div>
-                  {/* 降级选项：分钟够但量子波不够时才出现 */}
-                  {minutesOk && !quantumOk && (
+                  {/* 降级选项：分钟够但量子波不够时才出现（说话人分离开启时本就不整理，无需降级） */}
+                  {minutesOk && !quantumOk && !diarizeOn && (
                     <div style={{
                       marginBottom: 12, padding: '10px 14px',
                       background: 'var(--accent-light)', borderRadius: 'var(--r-input)',
@@ -528,7 +620,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                       background: 'var(--error-bg)', borderRadius: 'var(--r-input)',
                       fontSize: 13, color: 'var(--error)', lineHeight: 1.6,
                     }}>
-                      分钟额度不足，本视频约需 {estimateData.est_minutes} 分钟。额度每日 04:00 重置。
+                      分钟额度不足，本视频约需 {estimateData.est_minutes * asrMult} 分钟{asrMult > 1 ? `（${estimateData.est_minutes} 分钟 × ${asrMult} 倍率）` : ''}。额度每日 04:00 重置。
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 12 }}>
@@ -661,6 +753,114 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
       </div>
       <GroupQrModal open={groupOpen} onClose={() => setGroupOpen(false)} />
 
+      {/* ── beta 模型风险弹窗（V1.5.0）：confirm 模式=首次使用必弹（勾选才放行，localStorage 记住）；
+          info 模式=选择卡 ⓘ 图标随时重看（只读，不拦截）── */}
+      <Modal
+        open={!!betaConfirmFor}
+        onCancel={() => setBetaConfirmFor(null)}
+        width={420}
+        centered
+        title={<span className="font-display">{betaConfirmFor === 'info' ? '内测模型说明' : '使用内测模型前，请确认'}</span>}
+        footer={null}
+      >
+        <div className="font-body" style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.8, marginBottom: 14 }}>
+          <b>{betaModalModel?.label}</b> 处于 beta 内测阶段：
+          <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
+            <li>转写准确度可能不如默认模型稳定</li>
+            <li>可能出现转写异常或失败（失败不扣费）</li>
+            <li>按 {betaModalModel?.multiplier || 1} 倍分钟额度计费</li>
+          </ul>
+          {betaConfirmFor !== 'info' && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={betaChecked}
+                onChange={e => setBetaChecked(e.target.checked)}
+                style={{ marginTop: 4 }}
+              />
+              {/* 风险确认句整句标红：弹窗内唯一的强调色（碳碳定稿） */}
+              <span style={{ color: 'var(--error)', fontWeight: 500 }}>我已理解内测模型的上述风险，仍要使用</span>
+            </label>
+          )}
+        </div>
+        {betaConfirmFor === 'info' ? (
+          <Button block onClick={() => setBetaConfirmFor(null)} style={{ borderRadius: 'var(--r-btn)' }}>知道了</Button>
+        ) : (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Button block onClick={() => setBetaConfirmFor(null)}>再想想</Button>
+            <Button
+              block
+              type="primary"
+              disabled={!betaChecked}
+              onClick={() => {
+                localStorage.setItem('asr_beta_accepted_v1', '1')
+                clientLog.add('ui', `beta 模型(${selectedAsr?.key})风险确认已通过`)
+                const act = betaConfirmFor
+                setBetaConfirmFor(null)
+                if (act === 'link') doSubmitLink()
+                else if (act === 'upload') doConfirmUpload()
+              }}
+              style={{ borderRadius: 'var(--r-btn)' }}
+            >
+              确认并开始提取
+            </Button>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── 说话人分离说明弹窗（V1.5.0 Step2）：enable 模式=首次开启必确认（勾选放行，
+          localStorage 记住）；info 模式=开关旁 ⓘ 随时重看（只读）── */}
+      <Modal
+        open={!!diarizeModal}
+        onCancel={() => setDiarizeModal(null)}
+        width={420}
+        centered
+        title={<span className="font-display">{diarizeModal === 'info' ? '「区分说话人」说明' : '开启「区分说话人」前，请确认'}</span>}
+        footer={null}
+      >
+        <div className="font-body" style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.8, marginBottom: 14 }}>
+          开启后，每段内容会标注说话人（说话人 1、说话人 2……）：
+          <ul style={{ paddingLeft: 18, margin: '8px 0' }}>
+            <li>字幕按说话人轮换排版：文本按回合分节，SRT 每条带 [说话人N] 标签</li>
+            <li>不再进行 AI 智能整理（语义分段），也<strong>不消耗量子波</strong></li>
+            <li>说话人较多、抢话重叠或背景嘈杂时，分离可能不准确</li>
+            <li>建议用于 2 小时以内的音视频</li>
+          </ul>
+          {diarizeModal === 'enable' && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={diarizeChecked}
+                onChange={e => setDiarizeChecked(e.target.checked)}
+                style={{ marginTop: 4 }}
+              />
+              <span style={{ color: 'var(--error)', fontWeight: 500 }}>我已理解开启后的上述变化，仍要开启</span>
+            </label>
+          )}
+        </div>
+        {diarizeModal === 'info' ? (
+          <Button block onClick={() => setDiarizeModal(null)} style={{ borderRadius: 'var(--r-btn)' }}>知道了</Button>
+        ) : (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Button block onClick={() => setDiarizeModal(null)}>再想想</Button>
+            <Button
+              block
+              type="primary"
+              disabled={!diarizeChecked}
+              onClick={() => {
+                localStorage.setItem('asr_diarize_accepted_v1', '1')
+                clientLog.add('ui', '说话人分离首次确认已通过')
+                setDiarizeModal(null)
+                setDiarizeOn(true)
+              }}
+              style={{ borderRadius: 'var(--r-btn)' }}
+            >
+              确认并开启
+            </Button>
+          </div>
+        )}
+      </Modal>
+
       {/* ── 剪贴板链接检测弹窗（信息层级：弹窗负责"问"，预估区负责"帮你决定"）── */}
       <Modal
         open={!!candidate}
@@ -749,6 +949,15 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
               </div>
             )}
 
+            {/* 快捷路径固定默认模型（V1.5.0 标注，防"不知道能选模型"的误导） */}
+            <div className="font-caption" style={{
+              fontSize: 11, color: 'var(--mute)', lineHeight: 1.6, marginTop: 12,
+            }}>
+              快捷提取使用默认识别模型{asrCatalog?.models?.find(m => m.key === asrCatalog?.default)?.label
+                ? `（${asrCatalog.models.find(m => m.key === asrCatalog.default).label}）` : ''}；
+              多语言内容可前往主页选择其他模型后提交
+            </div>
+
             {/* 按钮行：failed 态只留关闭 */}
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <Button block onClick={resolveCandidate}>
@@ -769,6 +978,79 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
           </>
         )}
       </Modal>
+    </div>
+  )
+}
+
+/* ── 子组件：识别模型选择卡（V1.5.0，目录数据驱动渲染；匿名置灰 beta 卡引导登录）── */
+function AsrModelPicker({ catalog, value, onChange, isLoggedIn, onNeedAuth, onBetaInfo,
+                          diarizeOn, onDiarizeToggle, onDiarizeInfo }) {
+  if (!catalog?.models?.length) return null
+  const selected = catalog.models.find(m => m.key === value)
+  return (
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed var(--hairline-strong)' }}>
+      <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)', marginBottom: 8 }}>
+        语音识别模型
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {catalog.models.map(m => {
+          const locked = m.beta && !isLoggedIn
+          const active = value === m.key
+          return (
+            <div
+              key={m.key}
+              onClick={() => locked ? onNeedAuth?.() : onChange(m.key)}
+              style={{
+                padding: '10px 12px',
+                borderRadius: 'var(--r-input)',
+                border: `1px solid ${active ? 'var(--accent)' : 'var(--hairline)'}`,
+                background: active ? 'var(--accent-light)' : 'transparent',
+                cursor: 'pointer',
+                opacity: locked ? 0.55 : 1,
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{m.label}</span>
+                {m.beta && <Tag color="gold" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}>Beta</Tag>}
+                {/* ⓘ 风险说明随时重看（不触发选卡） */}
+                {m.beta && (
+                  <Tooltip title="查看内测说明">
+                    <InfoCircleOutlined
+                      onClick={(e) => { e.stopPropagation(); onBetaInfo?.() }}
+                      style={{ fontSize: 12, color: 'var(--mute)', cursor: 'pointer' }}
+                    />
+                  </Tooltip>
+                )}
+                <span className="font-mono" style={{
+                  marginLeft: 'auto', fontSize: 11,
+                  color: m.multiplier > 1 ? 'var(--accent)' : 'var(--mute)',
+                }}>
+                  {m.multiplier > 1 ? `${m.multiplier}x 消耗` : '标准消耗'}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.5 }}>
+                {m.languages} · {m.desc}{locked ? ' · 登录后可用' : ''}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {/* V1.5.0 Step2：说话人分离开关（仅支持该能力的模型被选中时显示） */}
+      {selected?.supports_diarization && (
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--body)' }}>
+            <input type="checkbox" checked={diarizeOn} onChange={onDiarizeToggle} />
+            区分说话人（标出每段内容是谁说的）
+          </label>
+          <Tooltip title="查看功能说明">
+            <InfoCircleOutlined
+              onClick={onDiarizeInfo}
+              style={{ fontSize: 12, color: 'var(--mute)', cursor: 'pointer' }}
+            />
+          </Tooltip>
+        </div>
+      )}
     </div>
   )
 }

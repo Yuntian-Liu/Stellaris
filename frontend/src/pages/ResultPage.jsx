@@ -56,6 +56,18 @@ function isSafeHttpUrl(u) {
   }
 }
 
+/* 说话人标签高亮（V1.5.0 Step2）：「说话人 N：」前缀染主题色，与正文视觉区分 */
+const SPEAKER_RE = /(说话人\s*\d+：)/g
+const SPEAKER_TEST = /^说话人\s*\d+：$/
+function highlightSpeakers(text) {
+  if (!text || !text.includes('说话人')) return text
+  const parts = text.split(SPEAKER_RE)
+  if (parts.length === 1) return text
+  return parts.map((p, i) => SPEAKER_TEST.test(p)
+    ? <span key={i} style={{ color: 'var(--accent)', fontWeight: 600 }}>{p}</span>
+    : p)
+}
+
 export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNeedAuth }) {
   const { user } = useAuth()
   // MD 导出状态：从 taskData 初始值来，后续本地维护
@@ -69,6 +81,17 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
   const [chatOpen, setChatOpen] = useState(false)
   // 保留时长文案（按档位；未登录按 free 1 小时）
   const [retention, setRetention] = useState('1 小时')
+  // V1.5.0：实际识别模型名标注（本次消耗行；cc 字幕命中时 asr_model 为 None 不拉清单）
+  const [asrLabel, setAsrLabel] = useState(null)
+  useEffect(() => {
+    if (!taskData.asr_model) return
+    api.getAsrModels()
+      .then(d => {
+        const m = d.models?.find(x => x.key === taskData.asr_model)
+        if (m) setAsrLabel(`${m.label}${m.beta ? ' (Beta)' : ''}${taskData.diarize ? ' · 区分说话人' : ''}`)
+      })
+      .catch(() => { /* 清单拉取失败就不标注，不影响主流程 */ })
+  }, [taskData.asr_model])
   // 首次提星礼：本设备第一次完成提取时撒花
   const [firstStar, setFirstStar] = useState(false)
   const pollRef = useRef(null)
@@ -388,6 +411,7 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
                   <span className="consume-charges">
                     扣 {taskData.charged_minutes} 分钟
                     {taskData.charged_quantum > 0 && ` + ${taskData.charged_quantum} 量子波`}
+                    {asrLabel && ` · ${asrLabel}`}
                   </span>
                 )}
               </span>
@@ -471,11 +495,11 @@ export default function ResultPage({ taskData, onBack, onNew, onChatToggle, onNe
                         </Tooltip>
                       )}
                     </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>{p.text}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{highlightSpeakers(p.text)}</span>
                   </div>
                 ))}
               </div>
-            ) : previewText}
+            ) : highlightSpeakers(previewText)}
           </div>
           <style>{`
             .ts-jump-chip {

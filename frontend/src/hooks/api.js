@@ -79,6 +79,8 @@ export const exportMarkdown = (taskId) => request(`/api/export_md/${taskId}`, { 
 export const summarize = (taskId) => request(`/api/summarize/${taskId}`, { method: 'POST' })
 export const estimate = (url, sessdata) =>
   request('/api/estimate', { method: 'POST', body: { url, sessdata: sessdata || null } })
+// V1.5.0：可选识别模型清单（公开；数据驱动渲染选择卡）
+export const getAsrModels = () => request('/api/asr/models')
 export const chat = (taskId, message, history) =>
   request(`/api/chat/${taskId}`, { method: 'POST', body: { message, history } })
 export const getChat = (taskId) => request(`/api/chat/${taskId}`)
@@ -283,4 +285,4 @@ export const adminApi = {
   llmHealth: () => request('/api/admin/llm-health'),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, chat, chatStream, getChat, getStats, getBilling, getHistory, searchHistory, searchHistoryAI, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }
+export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, getAsrModels, chat, chatStream, getChat, getStats, getBilling, getHistory, searchHistory, searchHistoryAI, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }

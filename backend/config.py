@@ -60,6 +60,13 @@ MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
 MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"
 MIMO_MODEL = "mimo-v2.5-asr"
 
+# ===== ASR beta 模型（阿里百炼 Qwen-Audio，多语言）=====
+# 同步非流式/流式 HTTP 接口（multimodal-generation），httpx 直调，无 SDK 依赖
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+# 默认新加坡地域老域名（与 Zeabur 服务器同城）；新域名需拼 WorkspaceId，用 env 覆盖：
+# https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com
+DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope-intl.aliyuncs.com")
+
 # ===== LLM 配置（DeepSeek，OpenAI 兼容接口）=====
 # 切换模型只需改这三个值：base_url / api_key / model
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")

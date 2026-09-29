@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import (FastAPI, UploadFile, File, HTTPException, BackgroundTasks,
-                     Depends, Request, Query, Header)
+                     Depends, Request, Query, Header, Form)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
@@ -34,7 +34,7 @@ from models import (
 )
 from pipeline.download import download_bilibili, extract_audio_from_file, probe_bilibili_info
 from pipeline.subtitle import fetch_cc_subtitle
-from pipeline.asr import transcribe_with_mimo, probe_media_duration
+from pipeline.asr import transcribe, probe_media_duration
 from pipeline.llm import segment_text, text_to_markdown, summarize_text, chat_with_subtitle_stream
 from chat_store import save_chat_message, get_chat_history, delete_chat_messages
 from history_store import (
@@ -176,7 +176,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.4.1-mimosa",
+    version="1.5.0-mirzam",
     lifespan=lifespan,
 )
 
@@ -249,6 +249,22 @@ async def get_public_config():
         "is_prod": IS_PROD,
         "afdian_shop_url": AFDIAN_SHOP_URL,
         "afdian_plan_urls": plan_urls,
+    }
+
+
+@app.get("/api/asr/models")
+async def list_asr_models():
+    """用户可选识别模型清单（V1.5.0；前端选择卡纯数据驱动渲染，匿名也返回——前端据此置灰 beta）。
+    数据源为 asr_models 常量模块；以后清单挪 DB（管理后台 CRUD）时本端点只换数据源，前端零改动。"""
+    from pipeline.asr_models import ASR_MODELS, DEFAULT_ASR_KEY
+    return {
+        "default": DEFAULT_ASR_KEY,
+        "models": [
+            {"key": m["key"], "label": m["label"], "desc": m["desc"],
+             "languages": m["languages"], "multiplier": m["multiplier"], "beta": m["beta"],
+             "supports_diarization": bool(m.get("supports_diarization"))}
+            for m in ASR_MODELS.values()
+        ],
     }
 
 
@@ -361,12 +377,23 @@ async def submit_task(
     if not check_disk_space():
         raise HTTPException(status_code=503, detail="磁盘空间不足，请稍后重试")
 
-    # 计费：分钟余量检查（不扣费，成功后结算）
+    # 识别模型选择（V1.5.0）：非法 key / 匿名选 beta → 400
+    from pipeline.asr_models import get_asr_choice
+    try:
+        asr_choice = get_asr_choice(request.asr_model, is_logged_in=bool(current_user))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # 说话人分离（V1.5.0 Step2）：仅支持的引擎可用
+    if request.diarize and not asr_choice.get("supports_diarization"):
+        raise HTTPException(status_code=400, detail="当前模型不支持区分说话人")
+
+    # 计费：分钟余量检查（不扣费，成功后结算；按所选模型倍率放大预估）
     import math
     est_minutes = request.est_minutes or 0
     if current_user:
         try:
-            await check_minutes(current_user.uid, math.ceil(est_minutes * 1.2))
+            await check_minutes(current_user.uid,
+                                math.ceil(est_minutes * asr_choice["multiplier"] * 1.2))
         except InsufficientError as e:
             raise HTTPException(status_code=403, detail=e.detail)
     else:
@@ -393,6 +420,8 @@ async def submit_task(
         "owner_ip": get_client_ip(req),  # P1-12 R3：匿名失败退还预占额度用
         "est_minutes": est_minutes,
         "skip_segment": request.skip_segment,
+        "asr_model": asr_choice["key"],
+        "diarize": bool(request.diarize),
     }
 
     # 后台执行管线
@@ -402,6 +431,8 @@ async def submit_task(
         request.source,
         request.url,
         request.sessdata,
+        asr_choice["key"],
+        bool(request.diarize),
     )
 
     return TaskResponse(
@@ -417,10 +448,13 @@ async def upload_file(
     req: Request,
     file: UploadFile = File(...),
     sessdata: str | None = None,
+    asr_model: str | None = Form(None),
+    diarize: bool = Form(False),
     current_user: User | None = Depends(get_current_user_optional),
 ):
     """上传视频文件提取字幕；登录用户记录任务归属（统计/计费用）。
-    计费与 /api/submit 三段对齐：路由层 ffprobe 探时长 + 预检/预占 → 成功结算 → 失败退还。"""
+    计费与 /api/submit 三段对齐：路由层 ffprobe 探时长 + 预检/预占 → 成功结算 → 失败退还。
+    V1.5.0：form 字段 asr_model 选识别模型（beta 仅登录用户）。"""
     if not check_disk_space():
         raise HTTPException(status_code=503, detail="磁盘空间不足")
 
@@ -458,10 +492,23 @@ async def upload_file(
     est_minutes = max(1, math.ceil(duration / 60))
     ip = get_client_ip(req)  # P1-12
 
-    # 预检/预占（与 submit 对齐：登录预检不扣、1.2 倍冗余；匿名预估即预占防刷）
+    # 识别模型选择（V1.5.0，与 submit 对齐；非法 key / 匿名选 beta → 400，清理已落盘文件）
+    from pipeline.asr_models import get_asr_choice
+    try:
+        asr_choice = get_asr_choice(asr_model, is_logged_in=bool(current_user))
+    except ValueError as e:
+        cleanup_temp_files(task_id)
+        raise HTTPException(status_code=400, detail=str(e))
+    # 说话人分离（V1.5.0 Step2）：仅支持的引擎可用
+    if diarize and not asr_choice.get("supports_diarization"):
+        cleanup_temp_files(task_id)
+        raise HTTPException(status_code=400, detail="当前模型不支持区分说话人")
+
+    # 预检/预占（与 submit 对齐：登录预检不扣、按所选模型倍率 ×1.2 冗余；匿名预估即预占防刷）
     try:
         if current_user:
-            await check_minutes(current_user.uid, math.ceil(est_minutes * 1.2))
+            await check_minutes(current_user.uid,
+                                math.ceil(est_minutes * asr_choice["multiplier"] * 1.2))
         else:
             await check_and_consume_anon(ip, est_minutes)
     except InsufficientError as e:
@@ -479,6 +526,8 @@ async def upload_file(
         "owner_uid": current_user.uid if current_user else None,
         "owner_ip": ip,                # 匿名失败退还预占额度用（与 submit 一致）
         "est_minutes": est_minutes,    # 管线结算扣费用（此前缺失 → 登录用户分钟白送）
+        "asr_model": asr_choice["key"],
+        "diarize": bool(diarize),
     }
 
     background_tasks.add_task(
@@ -486,6 +535,8 @@ async def upload_file(
         task_id,
         file_path,
         sessdata,
+        asr_choice["key"],
+        bool(diarize),
     )
 
     return TaskResponse(
@@ -589,7 +640,7 @@ async def _rehydrate_task(task_id: str) -> dict | None:
         "subtitle_srt": "available" if srt_available else None,
         "subtitle_txt": text,
         "raw_text": text,
-        "subtitle_source": None,
+        "subtitle_source": (record or {}).get("subtitle_source"),   # V1.5.0：冷重建也带字幕来源（admin 详情不再空白）
         "md_status": "ready" if md_ready else "idle",
         "summary_status": "ready" if summary_ready else "idle",
         "summary_content": summary_content,
@@ -2096,6 +2147,9 @@ async def admin_task_detail(task_id: str, current_user: User = Depends(get_admin
             "summary_status": _pf("summary_status"),
             "charged_minutes": charged_min,
             "charged_quantum": charged_q,
+            "asr_model": t.get("asr_model"),   # V1.5.0：实际识别模型
+            # V1.5.0：admin 专属——艺名 + 真实模型名（取该任务流水里的精确记录；用户端保持匿名化）
+            "asr_display": _build_asr_display(t.get("asr_model"), detail.get("ledger") or []),
             "actual_seg_tokens": _pf("actual_seg_tokens"),
             "actual_chars": _pf("actual_chars"),
             # V1.3.0（Codex 03 棒）：错误串可能携源链接，管理端同样脱敏
@@ -2247,11 +2301,13 @@ async def run_pipeline(
     source: TaskSource,
     url: str | None,
     sessdata: str | None,
+    asr_key: str | None = None,
+    diarize: bool = False,
 ):
     """B站链接的完整管线（async 包装，实际在线程池跑同步管线）。
     R2：信号量串行化，超出的请求排队（不再并发）。"""
     async with _pipeline_sem:
-        await asyncio.to_thread(_run_pipeline_sync, task_id, source, url, sessdata)
+        await asyncio.to_thread(_run_pipeline_sync, task_id, source, url, sessdata, asr_key, diarize)
 
 
 def _run_pipeline_sync(
@@ -2259,6 +2315,8 @@ def _run_pipeline_sync(
     source: TaskSource,
     url: str | None,
     sessdata: str | None,
+    asr_key: str | None = None,
+    diarize: bool = False,
 ):
     """B站链接管线同步实现（放线程池跑，不阻塞事件循环）"""
     try:
@@ -2282,11 +2340,13 @@ def _run_pipeline_sync(
                     cc_segments = bilibili_subtitle_to_segments(cc_subs[0]["body"])
 
         # ③ ASR（如果没有 CC 字幕，或作为补充）
+        asr_usage = None
         if not cc_segments:
             _update_status(task_id, TaskStatus.TRANSCRIBING, 50)
-            asr_result = transcribe_with_mimo(audio_path, task_id)
+            asr_result = transcribe(audio_path, task_id, asr_key, diarize=diarize)
             segments = asr_result["segments"]
             subtitle_source = asr_result["source"]
+            asr_usage = asr_result.get("asr_usage")   # token 计费引擎的成本记账用（V1.5.0）
         else:
             segments = cc_segments
             subtitle_source = "cc_subtitle"
@@ -2300,7 +2360,9 @@ def _run_pipeline_sync(
 
         # ⑤ LLM 语义分段（默认自动执行；量子波不足时用户可选降级跳过）
         task = tasks.get(task_id) or {}
-        skip_segment = task.get("skip_segment", False)
+        # V1.5.0 Step2：说话人分离开启时强制跳过 LLM 语义分段（回合排版已结构化，
+        # 且避免 LLM 整理弄乱说话人标签；连带不扣量子波）
+        skip_segment = task.get("skip_segment", False) or diarize
         _update_status(task_id, TaskStatus.TEXT_PROCESSING, 70)
         if skip_segment:
             segmented_text = raw_text
@@ -2324,13 +2386,18 @@ def _run_pipeline_sync(
             tokens_used=seg_usage["prompt_tokens"] + seg_usage["completion_tokens"],
         )
 
-        # ⑧ 计费结算（成功后；分钟按预估时长，分段按实际 usage）
+        # ⑧ 计费结算（成功后；分钟按预估时长 × 所选模型倍率，分段按实际 usage）
+        # V1.5.0：命中 CC 字幕（未走 ASR）退回 1x 倍率——用户为没发生的识别付溢价不公道
+        from pipeline.asr_models import ASR_MODELS, DEFAULT_ASR_KEY
+        asr_choice = ASR_MODELS.get(asr_key or "") or ASR_MODELS[DEFAULT_ASR_KEY]
+        mult = 1 if subtitle_source == "cc_subtitle" else asr_choice["multiplier"]
         seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
         task["actual_seg_tokens"] = seg_tokens   # 实际分段 tokens（前端"有理有据"展示）
         task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
-            _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
-                                 seg_tokens, task_id, seg_usage=seg_usage)
+            _settle_billing_sync(task["owner_uid"], (task.get("est_minutes") or 0) * mult,
+                                 seg_tokens, task_id, seg_usage=seg_usage,
+                                 asr_choice=asr_choice, asr_usage=asr_usage)
             # 历史记录（未登录不记）
             try:
                 asyncio.run(save_task_record(
@@ -2341,7 +2408,7 @@ def _run_pipeline_sync(
                 # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
                 asyncio.run(save_task_runtime(
                     task_id, actual_chars=len(raw_text), actual_seg_tokens=seg_tokens,
-                    subtitle_source=task.get("subtitle_source"),
+                    subtitle_source=subtitle_source,   # 用局部变量：task dict 此刻还没写入（COMPLETED 才写），读了十年都是 None
                 ))
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
@@ -2361,6 +2428,9 @@ def _run_pipeline_sync(
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
             "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
             "subtitle_source": subtitle_source,
+            # V1.5.0：实际识别模型（CC 字幕命中 = 未走 ASR，为 None）
+            "asr_model": None if subtitle_source == "cc_subtitle" else asr_choice["key"],
+            "diarize": diarize,
             "md_status": "idle",                    # MD 尚未生成
             "summary_status": "idle",               # 总结尚未生成
             "completed_at": time.time(),            # 完成时间戳（自动清理用）
@@ -2387,17 +2457,22 @@ async def run_pipeline_from_file(
     task_id: str,
     file_path: Path,
     sessdata: str | None,
+    asr_key: str | None = None,
+    diarize: bool = False,
 ):
     """文件上传管线（async 包装，实际在线程池跑同步管线）。
     R2：信号量串行化，超出的请求排队（不再并发）。"""
     async with _pipeline_sem:
-        await asyncio.to_thread(_run_pipeline_from_file_sync, task_id, file_path, sessdata)
+        await asyncio.to_thread(_run_pipeline_from_file_sync, task_id, file_path, sessdata,
+                                asr_key, diarize)
 
 
 def _run_pipeline_from_file_sync(
     task_id: str,
     file_path: Path,
     sessdata: str | None,
+    asr_key: str | None = None,
+    diarize: bool = False,
 ):
     """文件上传管线同步实现（放线程池跑，不阻塞事件循环）。
     纯音频文件跳过抽音轨直接送 ASR；视频文件先 FFmpeg 抽音轨。"""
@@ -2429,8 +2504,10 @@ def _run_pipeline_from_file_sync(
 
         # ② ASR
         _update_status(task_id, TaskStatus.TRANSCRIBING, 50)
-        asr_result = transcribe_with_mimo(audio_path, task_id)
+        asr_result = transcribe(audio_path, task_id, asr_key, diarize=diarize)
         segments = asr_result["segments"]
+        subtitle_source = asr_result["source"]     # V1.5.0：按实际引擎记（修历史写死 asr_mimo）
+        asr_usage = asr_result.get("asr_usage")
         Path(audio_path).unlink(missing_ok=True)  # 音频用完即删（延长保留只存文本）
 
         # ③ 拼接原始全文
@@ -2438,7 +2515,9 @@ def _run_pipeline_from_file_sync(
 
         # ④ LLM 语义分段（支持降级跳过）
         task = tasks.get(task_id) or {}
-        skip_segment = task.get("skip_segment", False)
+        # V1.5.0 Step2：说话人分离开启时强制跳过 LLM 语义分段（回合排版已结构化，
+        # 且避免 LLM 整理弄乱说话人标签；连带不扣量子波）
+        skip_segment = task.get("skip_segment", False) or diarize
         _update_status(task_id, TaskStatus.TEXT_PROCESSING, 70)
         if skip_segment:
             segmented_text = raw_text
@@ -2460,13 +2539,17 @@ def _run_pipeline_from_file_sync(
             tokens_used=seg_usage["prompt_tokens"] + seg_usage["completion_tokens"],
         )
 
-        # ⑦ 计费结算（成功后）
+        # ⑦ 计费结算（成功后；分钟按预估时长 × 所选模型倍率——上传路径必经 ASR，无 CC 回退）
+        from pipeline.asr_models import ASR_MODELS, DEFAULT_ASR_KEY
+        asr_choice = ASR_MODELS.get(asr_key or "") or ASR_MODELS[DEFAULT_ASR_KEY]
         seg_tokens = seg_usage["prompt_tokens"] + seg_usage["completion_tokens"]
         task["actual_seg_tokens"] = seg_tokens   # 实际分段 tokens（前端"有理有据"展示）
         task["actual_chars"] = len(raw_text)      # 实际转写字数
         if task.get("owner_uid"):
-            _settle_billing_sync(task["owner_uid"], task.get("est_minutes") or 0,
-                                 seg_tokens, task_id, seg_usage=seg_usage)
+            _settle_billing_sync(task["owner_uid"],
+                                 (task.get("est_minutes") or 0) * asr_choice["multiplier"],
+                                 seg_tokens, task_id, seg_usage=seg_usage,
+                                 asr_choice=asr_choice, asr_usage=asr_usage)
             # 历史记录（未登录不记）
             try:
                 asyncio.run(save_task_record(
@@ -2477,7 +2560,7 @@ def _run_pipeline_from_file_sync(
                 # V1.1.0: 统计字段持久化（原仅存内存，重启即失）
                 asyncio.run(save_task_runtime(
                     task_id, actual_chars=len(raw_text), actual_seg_tokens=seg_tokens,
-                    subtitle_source=task.get("subtitle_source"),
+                    subtitle_source=subtitle_source,   # 用局部变量：task dict 此刻还没写入（COMPLETED 才写），读了十年都是 None
                 ))
             except Exception as he:
                 logger.warning("[History] 记录失败(不影响主流程): %s", he)
@@ -2495,7 +2578,9 @@ def _run_pipeline_from_file_sync(
             "subtitle_srt": "available",
             "subtitle_txt": segmented_text,        # 真实文本内容（前端预览用）
             "raw_text": raw_text,                   # 原始文本（MD/总结 API 用）
-            "subtitle_source": "asr_mimo",
+            "subtitle_source": subtitle_source,    # V1.5.0：实际引擎（修历史写死 asr_mimo）
+            "asr_model": asr_choice["key"],         # V1.5.0：上传路径必经 ASR，直接记所选模型
+            "diarize": diarize,
             "md_status": "idle",
             "summary_status": "idle",
             "completed_at": time.time(),            # 完成时间戳（自动清理用）
@@ -2531,16 +2616,33 @@ def _incr_stats_sync(owner_uid: int | None, **fields: int) -> None:
 
 
 def _settle_billing_sync(owner_uid: int | None, minutes: int,
-                         seg_tokens: int, task_id: str, seg_usage: dict | None = None) -> None:
+                         seg_tokens: int, task_id: str, seg_usage: dict | None = None,
+                         asr_choice: dict | None = None, asr_usage: dict | None = None) -> None:
     """同步上下文（线程池）里做计费结算；未登录跳过，失败不影响主流程。
-    结算结果（实际扣费）写回 task，供前端回显。"""
+    结算结果（实际扣费）写回 task，供前端回显。
+    V1.5.0：asr_choice/asr_usage——token 计费引擎（qwen）按实际 usage 折算成本记账；
+    分钟数（含倍率）由调用方算好传入，本函数不感知倍率。"""
     if not owner_uid:
         return
     async def _run():
         charged_min = 0
         charged_q = 0
         if minutes > 0:
-            await consume_minutes(owner_uid, minutes, task_id)
+            # per_token 引擎：按实际 token usage 记模型名 + 真实成本 + token 用量（发票原则）
+            m_label = m_cost = m_prices = m_usage = None
+            if (asr_choice and asr_usage
+                    and asr_choice.get("pricing", {}).get("mode") == "per_token"):
+                p = asr_choice["pricing"]
+                m_label = asr_choice["model_name"]
+                m_cost = round((asr_usage.get("input_tokens", 0) * p["input"]
+                                + asr_usage.get("output_tokens", 0) * p["output"]) / 1e6, 6)
+                m_prices = {"price_input": p["input"], "price_output": p["output"],
+                            "price_cache_hit": None, "price_per_hour": None}
+                m_usage = {"prompt_tokens": asr_usage.get("input_tokens"),
+                           "completion_tokens": asr_usage.get("output_tokens")}
+            await consume_minutes(owner_uid, minutes, task_id,
+                                  model_label=m_label, cost_yuan=m_cost,
+                                  prices=m_prices, usage=m_usage)
             charged_min = minutes
         if seg_tokens > 0:
             charged_q = await consume_quantum(owner_uid, seg_tokens, "segment", task_id,
@@ -2553,6 +2655,26 @@ def _settle_billing_sync(owner_uid: int | None, minutes: int,
         asyncio.run(_run())
     except Exception as e:
         logger.warning("[Billing] 结算失败(不影响主流程): %s", e)
+
+
+def _build_asr_display(asr_key: str | None, ledger: list) -> str | None:
+    """admin 任务详情的识别模型展示串：艺名 + 真实模型名。
+    真实名优先取该任务分钟流水的精确记录（发票原则），其次目录里的 model_name，
+    mimo 兜底当前全局生效模型（可能与任务时不同，仅供参考）。"""
+    if not asr_key:
+        return None
+    from pipeline.asr_models import ASR_MODELS
+    choice = ASR_MODELS.get(asr_key)
+    label = choice["label"] if choice else asr_key
+    real = next((r["model"] for r in ledger
+                 if r.get("currency") == "minute" and (r.get("amount") or 0) < 0 and r.get("model")),
+                None)
+    if not real and choice:
+        real = choice.get("model_name")
+    if not real and choice and choice.get("engine") == "mimo_chat":
+        from model_store import get_asr_model
+        real = get_asr_model()
+    return f"{label}（{real}）" if real else label
 
 
 async def _generate_summary_background(task_id: str):

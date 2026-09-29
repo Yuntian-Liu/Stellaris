@@ -118,6 +118,7 @@ async def get_task_record(task_id: str) -> dict | None:
             return None
         return {"title": r.title, "source_platform": r.source_platform,
                 "owner_uid": r.owner_uid, "source_url": r.source_url,
+                "subtitle_source": r.subtitle_source,
                 "raw_text": r.raw_text, "subtitle_srt": r.subtitle_srt,
                 "md_content": r.md_content, "summary_content": r.summary_content}
 
