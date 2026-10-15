@@ -762,10 +762,11 @@ async def cost_stats(days: int | None) -> dict:
         tot["hit"] += hit or 0
         tot["miss"] += miss or 0
         tot["cost"] += cost_yuan or 0
-        # 趋势：按天 × 模型
-        day = created_at.strftime("%m-%d") if created_at else "?"
-        trend.setdefault(day, {})[name] = round(
-            trend.setdefault(day, {}).get(name, 0) + (cost_yuan or 0), 6)
+        # 趋势：按天 × 模型（键用 date 对象，后面缺天补零要逐日迭代）
+        day = created_at.date() if created_at else None
+        if day:
+            trend.setdefault(day, {})[name] = round(
+                trend.setdefault(day, {}).get(name, 0) + (cost_yuan or 0), 6)
 
     for m in per_model.values():
         denom = m["cache_hit"] + m["cache_miss"]
@@ -773,6 +774,20 @@ async def cost_stats(days: int | None) -> dict:
         m["cost"] = round(m["cost"], 4)
     overall_rate = round(tot["hit"] / (tot["hit"] + tot["miss"]) * 100, 1) \
         if (tot["hit"] + tot["miss"]) else None
+
+    # 趋势缺天补零（V1.5.1：断天导致折线图断线/孤点——折线只连相邻点；
+    # 与 get_trends 的"缺天补零"口径对齐。范围：有数据的最早一天 → 今天）
+    trend_list = []
+    if trend:
+        all_models = list(per_model.keys())
+        start = min(trend.keys())
+        end = max(max(trend.keys()), datetime.now(timezone.utc).date())
+        d = start
+        while d <= end:
+            day_data = trend.get(d, {})
+            trend_list.append({"date": d.strftime("%m-%d"),
+                               **{name: day_data.get(name, 0) for name in all_models}})
+            d += timedelta(days=1)
 
     # 历史估算（V1.1.0 前老行，cost_yuan IS NULL；与 Overview 老行同费率口径，两界面对账一致）
     async with async_session() as session:
@@ -796,6 +811,6 @@ async def cost_stats(days: int | None) -> dict:
             "overall_hit_rate": overall_rate,
         },
         "per_model": sorted(per_model.values(), key=lambda x: -x["cost"]),
-        "trend": [{"date": d, **v} for d, v in sorted(trend.items())],
+        "trend": trend_list,
         "legacy": legacy,
     }

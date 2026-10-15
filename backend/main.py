@@ -2367,7 +2367,9 @@ def _run_pipeline_sync(
         if skip_segment:
             segmented_text = raw_text
             seg_usage = {"prompt_tokens": 0, "completion_tokens": 0}
-            logger.info("[Pipeline] 用户选择跳过语义分段（量子波降级）: %s", task_id)
+            logger.info("[Pipeline] %s: %s",
+                        "说话人分离开启，跳过语义分段" if diarize else "用户选择跳过语义分段（量子波降级）",
+                        task_id)
         else:
             segmented_text, seg_usage = segment_text(raw_text, task_id)
 

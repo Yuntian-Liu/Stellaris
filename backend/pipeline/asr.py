@@ -111,7 +111,12 @@ def _transcribe_qwen(audio_path: Path, task_id: str, choice: dict, diarize: bool
             raise
 
         empty = not sentences
-        _record("asr", model_name, usage, None, empty, f"{task_id}_chunk{idx}")
+        # 调用健康埋点：DashScope 原生接口无 finish_reason 概念，SSE 流正常收尾即记 "stop"
+        # （None 会被健康面板判为"调用异常"）；usage 键映射为 prompt/completion 口径
+        _record("asr", model_name,
+                {"prompt_tokens": (usage or {}).get("input_tokens"),
+                 "completion_tokens": (usage or {}).get("output_tokens")},
+                "stop", empty, f"{task_id}_chunk{idx}")
         total_usage["input_tokens"] += (usage or {}).get("input_tokens") or 0
         total_usage["output_tokens"] += (usage or {}).get("output_tokens") or 0
 
