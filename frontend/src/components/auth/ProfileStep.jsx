@@ -3,8 +3,9 @@
  * 密码规则与后端 validate_password_strength 对齐:≥8 位 + 字母 + 数字 + 符号
  */
 import { useState } from 'react'
-import { Input, Button } from 'antd'
+import { Button } from 'antd'
 import { avatarUrl } from '../../utils/avatar'
+import LabelInput from '../bencho/LabelInput'
 
 // 符号集与后端 utils.py _PASSWORD_SYMBOLS 完全一致
 const SYMBOLS = '!@#$%^&*()-_=+[]{}|;:,.<>?/'
@@ -66,17 +67,16 @@ export default function ProfileStep({ avatarSeed, onSubmit, onBack }) {
         <span className="font-body-strong">{nickname || '你的昵称'}</span>
       </div>
 
-      <Input
-        size="large" placeholder="昵称" value={nickname}
-        onChange={e => setNickname(e.target.value)} style={{ marginBottom: 12 }}
-      />
+      <div style={{ marginBottom: 12 }}>
+        <LabelInput label="昵称" value={nickname} onChange={setNickname} autoComplete="nickname" />
+      </div>
 
-      <Input.Password
-        size="large" placeholder="设置密码" value={password}
-        onChange={e => setPassword(e.target.value)} style={{ marginBottom: 8 }}
+      <LabelInput
+        label="设置密码" secret value={password}
+        onChange={setPassword} autoComplete="new-password"
       />
-      {/* 实时强度提示 */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+      {/* 实时强度提示（密码规则由 chips 承担，不进标签） */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, marginBottom: 12 }}>
         {checks.map(c => (
           <span key={c.key} style={{
             fontSize: 11, padding: '2px 8px', borderRadius: 10,
@@ -89,15 +89,19 @@ export default function ProfileStep({ avatarSeed, onSubmit, onBack }) {
         ))}
       </div>
 
-      <Input.Password
-        size="large" placeholder="确认密码" value={confirm}
-        onChange={e => setConfirm(e.target.value)} style={{ marginBottom: 12 }}
-      />
+      <div style={{ marginBottom: 12 }}>
+        <LabelInput
+          label="确认密码" secret value={confirm}
+          onChange={setConfirm} autoComplete="new-password"
+        />
+      </div>
 
-      <Input
-        size="large" placeholder="邀请码(选填)" value={inviteCode}
-        onChange={e => setInviteCode(e.target.value)} style={{ marginBottom: 12 }}
-      />
+      <div style={{ marginBottom: 12 }}>
+        <LabelInput
+          label="邀请码（选填）" value={inviteCode}
+          onChange={setInviteCode} autoComplete="off"
+        />
+      </div>
 
       {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
 

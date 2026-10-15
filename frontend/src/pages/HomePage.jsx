@@ -9,20 +9,22 @@
  */
 import { useEffect, useState } from 'react'
 import {
-  Input, Button, Upload, Typography,
+  Button, Upload, Typography,
   Collapse, Tag, Tooltip, Modal, Popover,
 } from 'antd'
 import {
-  LinkOutlined, UploadOutlined, RocketOutlined,
+  UploadOutlined, RocketOutlined,
   InfoCircleOutlined, ClockCircleOutlined,
-  FileTextOutlined, ThunderboltOutlined, CloseOutlined,
+  FileTextOutlined, ThunderboltOutlined,
   LoadingOutlined, TeamOutlined,
 } from '@ant-design/icons'
+import { ArrowRight } from 'lucide-react'
 import api from '../hooks/api'
 import { clientLog } from '../utils/clientLog'
 import useClipboardLink from '../hooks/useClipboardLink'
 import { useAuth } from '../contexts/AuthContext'
 import { GroupQrCard, GroupQrModal } from '../components/GroupQrModal'
+import LabelInput from '../components/bencho/LabelInput'
 
 const { Text } = Typography
 
@@ -63,6 +65,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   const { user, loading: authLoading } = useAuth()
   const [url, setUrl] = useState('')
   const [sessdata, setSessdata] = useState('')
+  const [linkFocus, setLinkFocus] = useState(false)   // 链接框聚焦态（驱动分化按钮划出）
   const [estimating, setEstimating] = useState(false)   // 正在拉取预估
   const [submitting, setSubmitting] = useState(false)   // 正在提交任务
   const [estimateData, setEstimateData] = useState(null) // 预估结果（非 null 即确认态）
@@ -217,8 +220,9 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   }
 
   // 链接变化时清除已展示的预估（避免拿旧预估提交新链接）
-  const handleUrlChange = (e) => {
-    setUrl(e.target.value)
+  // LabelInput 直传值，包一层适配原事件形参
+  const handleUrlValue = (v) => {
+    setUrl(v)
     if (estimateData) setEstimateData(null)
     if (uploadEstimate) setUploadEstimate(null)
     if (skipSegment) setSkipSegment(false)
@@ -354,30 +358,44 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* 视频链接输入 */}
+          {/* 视频链接输入（Bencho LabelInput + 分化按钮：静息一只胶囊框，
+              聚焦/有值时圆形按钮从右缘划出；空值灰底待填、有值品牌紫）。
+              入口互斥：上传预估卡展开时链接入口隐去 */}
+          {!uploadEstimate && (
           <div>
-            <label className="font-caption" style={{ display: 'block', marginBottom: 8 }}>
-              视频链接
-            </label>
-            <Input
-              placeholder="粘贴视频链接（B站 / 小红书 / YouTube；抖音暂不支持）"
-              size="large"
-              value={url}
-              onChange={handleUrlChange}
-              onPressEnter={estimateData ? handleConfirmSubmit : handleEstimate}
-              disabled={busy}
-              prefix={<LinkOutlined style={{ color: 'var(--mute)' }} />}
-              suffix={url && !busy && (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined style={{ fontSize: 11 }} />}
-                  onClick={() => { setUrl(''); setEstimateData(null) }}
-                  style={{ color: 'var(--mute)' }}
-                />
-              )}
-            />
+            <div
+              className="query-split"
+              data-has={linkFocus || !!url.trim() || undefined}
+              data-armed={!!url.trim() || undefined}
+            >
+              <LabelInput
+                label="粘贴视频链接"
+                corner={26}
+                clearable
+                value={url}
+                onChange={handleUrlValue}
+                onEnter={estimateData ? handleConfirmSubmit : handleEstimate}
+                disabled={busy}
+                autoComplete="off"
+                onFocusChange={setLinkFocus}
+              />
+              <button
+                type="button"
+                className="query-go"
+                onClick={estimateData ? handleConfirmSubmit : handleEstimate}
+                disabled={busy || !url.trim()}
+                tabIndex={linkFocus || url.trim() ? 0 : -1}
+                aria-label="查看视频信息"
+              >
+                {estimating ? <LoadingOutlined style={{ fontSize: 17 }} /> : <ArrowRight size={18} strokeWidth={2.2} />}
+              </button>
+            </div>
+            {/* 平台说明太长不进标签，挪框下小字（碳碳定稿） */}
+            <div className="font-caption" style={{ fontSize: 12, marginTop: 6 }}>
+              支持 B站 / 小红书 / YouTube；抖音暂不支持
+            </div>
           </div>
+          )}
 
           {/* ── 成本预估确认卡（estimate 成功后滑入）── */}
           {estimateData && (
@@ -468,7 +486,10 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             </div>
           )}
 
-          {/* 分割线 */}
+          {/* 分割线 + 文件上传（入口互斥：任一预估卡展开时隐去——
+              链接预估卡展开时上传入口消失，反之亦然，碳碳定稿） */}
+          {!estimateData && !uploadEstimate && (
+          <>
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -481,7 +502,6 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             <div style={{ flex: 1, height: 1, background: 'var(--hairline)' }} />
           </div>
 
-          {/* 文件上传 */}
           <Upload.Dragger
             beforeUpload={handleUpload}
             showUploadList={false}
@@ -496,6 +516,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
               <p className="font-caption" style={{ marginBottom: 0 }}>MP4 / MKV / AVI / MOV / FLV / MP3 / M4A / WAV · 按实际时长计量</p>
             </div>
           </Upload.Dragger>
+          </>
+          )}
 
           {/* ── 上传成本预估确认卡（选文件后滑入，与链接预估卡同款样式）── */}
           {uploadEstimate && (
@@ -540,7 +562,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             </div>
           )}
 
-          {/* 可选 SESSDATA */}
+          {/* 可选 SESSDATA（仅链接流；上传预估卡展开时隐去——标注就是"仅 B 站链接"） */}
+          {!uploadEstimate && (
           <Collapse
             ghost
             expandIconPlacement="end"
@@ -558,16 +581,18 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                     填写后 Stellaris 会尝试直接获取视频的 CC 字幕（更快、更准）。
                     不填也能正常使用，会走语音识别。
                   </Text>
-                  <Input.Password
-                    placeholder="SESSDATA（可选，留空跳过）"
+                  <LabelInput
+                    label="SESSDATA"
+                    secret
                     value={sessdata}
-                    onChange={(e) => setSessdata(e.target.value)}
-                    size="middle"
+                    onChange={setSessdata}
+                    autoComplete="off"
                   />
                 </div>
               ),
             }]}
           />
+          )}
 
           {/* 错误提示 */}
           {error && (
@@ -668,19 +693,8 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
                 确认并开始提取
               </Button>
             </div>
-          ) : (
-            <Button
-              type="primary"
-              size="large"
-              icon={<RocketOutlined />}
-              loading={estimating}
-              onClick={handleEstimate}
-              disabled={!url.trim() || submitting}
-              block
-            >
-              {estimating ? '正在解析视频信息...' : '查看视频信息'}
-            </Button>
-          )}
+          ) : null}
+          {/* 输入态无独立 CTA：胶囊框右缘的分化按钮（query-go）接管「查看视频信息」 */}
 
         </div>
       </div>

@@ -3,9 +3,11 @@
  * 与设置页修改密码的验证码通道共用 reset-password 路由
  */
 import { useState, useEffect } from 'react'
-import { Button, Input, Modal, message } from 'antd'
+import { Button, Modal, message } from 'antd'
 import { authApi } from '../../hooks/api'
 import CaptchaField from './CaptchaField'
+import OtpInput from '../bencho/OtpInput'
+import LabelInput from '../bencho/LabelInput'
 
 export default function ForgotPasswordModal({ open, email: initialEmail, onClose }) {
   const [email, setEmail] = useState(initialEmail || '')
@@ -66,24 +68,31 @@ export default function ForgotPasswordModal({ open, email: initialEmail, onClose
         输入注册时使用的邮箱或 UID，我们会把验证码发到账号绑定的邮箱
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Input
-          placeholder="邮箱地址或 UID" value={email}
-          onChange={e => setEmail(e.target.value)}
+        <LabelInput
+          label="邮箱地址或 UID" value={email}
+          onChange={setEmail} autoComplete="username"
         />
         <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Input
-            placeholder="6 位验证码" value={code} maxLength={6}
-            onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
-          />
-          <Button onClick={sendCode} disabled={countdown > 0} style={{ flexShrink: 0 }}>
-            {countdown > 0 ? `${countdown}s` : codeSent ? '重新发送' : '发送验证码'}
-          </Button>
+        <div>
+          {/* 标签行：左标签右发码按钮（BirthTime 同款布局），OtpInput 居中收集 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span className="font-caption">邮箱验证码</span>
+            <Button size="small" type="link" onClick={sendCode} disabled={countdown > 0} style={{ padding: 0 }}>
+              {countdown > 0 ? `重新发送（${countdown}s）` : codeSent ? '重发验证码' : '发送验证码'}
+            </Button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <OtpInput length={6} onChange={setCode} />
+          </div>
         </div>
-        <Input.Password
-          placeholder="新密码（至少 8 位，含字母+数字+符号）"
-          value={newPwd} onChange={e => setNewPwd(e.target.value)}
-        />
+        <div>
+          <LabelInput
+            label="新密码" secret value={newPwd}
+            onChange={setNewPwd} autoComplete="new-password"
+          />
+          {/* 密码规则不进标签，挪框下小字（碳碳定稿） */}
+          <div className="font-caption" style={{ fontSize: 11, marginTop: 4 }}>至少 8 位，含字母 + 数字 + 符号</div>
+        </div>
         <Button
           type="primary" block loading={saving}
           disabled={!code || !newPwd} onClick={submit}

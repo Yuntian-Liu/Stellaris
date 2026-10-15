@@ -4,11 +4,12 @@
  * 密码 tab:直接登录(邮箱或 UID)
  */
 import { useState } from 'react'
-import { Input, Button, Segmented, Checkbox, Tooltip } from 'antd'
+import { Button, Segmented, Checkbox, Tooltip } from 'antd'
 import { authApi } from '../../hooks/api'
 import AgreementModal from '../AgreementModal'
 import ForgotPasswordModal from './ForgotPasswordModal'
 import CaptchaField from './CaptchaField'
+import LabelInput from '../bencho/LabelInput'
 
 
 export default function EmailStep({ onSuccess }) {
@@ -83,24 +84,27 @@ export default function EmailStep({ onSuccess }) {
         style={{ marginBottom: 20 }}
       />
 
-      <Input
-        size="large"
-        placeholder="邮箱地址或 UID"
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-        style={{ marginBottom: 12 }}
-      />
+      <div style={{ marginBottom: 12 }}>
+        <LabelInput
+          label="邮箱地址或 UID"
+          value={email}
+          onChange={setEmail}
+          autoComplete="username"
+        />
+      </div>
 
       {mode === 'password' && (
         <>
-          <Input.Password
-            size="large"
-            placeholder="密码"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={{ marginBottom: 4 }}
-          />
-          <div style={{ textAlign: 'right', marginBottom: 12 }}>
+          <div style={{ marginTop: 12 }}>
+            <LabelInput
+              label="密码"
+              secret
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+            />
+          </div>
+          <div style={{ textAlign: 'right', marginTop: 8, marginBottom: 12 }}>
             <a style={{ fontSize: 12 }} onClick={() => setForgotOpen(true)}>
               忘记密码？
             </a>

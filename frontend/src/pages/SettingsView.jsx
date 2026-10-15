@@ -20,6 +20,8 @@ import api, { authApi, getToken, ticketApi, vaultApi } from '../hooks/api'
 import { useAuth } from '../contexts/AuthContext'
 import AgreementModal from '../components/AgreementModal'
 import CaptchaField from '../components/auth/CaptchaField'
+import OtpInput from '../components/bencho/OtpInput'
+import LabelInput from '../components/bencho/LabelInput'
 import ExchangeModal from '../components/ExchangeModal'
 import MembershipCards from '../components/MembershipCards'
 import RedeemModal from '../components/RedeemModal'
@@ -1320,29 +1322,36 @@ function PasswordModal({ open, email, onClose }) {
       />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {tab === 'old' && (
-          <Input.Password
-            placeholder="当前密码" value={oldPwd}
-            onChange={e => setOldPwd(e.target.value)}
+          <LabelInput
+            label="当前密码" secret value={oldPwd}
+            onChange={setOldPwd} autoComplete="current-password"
           />
         )}
         {tab === 'code' && (
           <>
             <CaptchaField onChange={setCaptcha} refreshKey={captchaKey} />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Input
-                placeholder="6 位验证码" value={code} maxLength={6}
-                onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
-              />
-              <Button onClick={sendCode} disabled={countdown > 0} style={{ flexShrink: 0 }}>
-                {countdown > 0 ? `${countdown}s` : codeSent ? '重新发送' : '发送验证码'}
-              </Button>
+            <div>
+              {/* 标签行：左标签右发码按钮，OtpInput 居中收集（与忘记密码弹窗同款） */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span className="font-caption">邮箱验证码</span>
+                <Button size="small" type="link" onClick={sendCode} disabled={countdown > 0} style={{ padding: 0 }}>
+                  {countdown > 0 ? `重新发送（${countdown}s）` : codeSent ? '重发验证码' : '发送验证码'}
+                </Button>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <OtpInput length={6} onChange={setCode} />
+              </div>
             </div>
           </>
         )}
-        <Input.Password
-          placeholder="新密码（至少 8 位，含字母+数字+符号）" value={newPwd}
-          onChange={e => setNewPwd(e.target.value)}
-        />
+        <div>
+          <LabelInput
+            label="新密码" secret value={newPwd}
+            onChange={setNewPwd} autoComplete="new-password"
+          />
+          {/* 密码规则不进标签，挪框下小字（与忘记密码弹窗同款） */}
+          <div className="font-caption" style={{ fontSize: 11, marginTop: 4 }}>至少 8 位，含字母 + 数字 + 符号</div>
+        </div>
         <Button
           type="primary" block loading={saving} onClick={submit}
           disabled={tab === 'old' ? !oldPwd || !newPwd : !code || !newPwd}

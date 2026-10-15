@@ -1,0 +1,466 @@
+/* ══════════════════════════════════════════════════════════════
+   Bencho blocks — 接入 Bencho 组件的样式（MIT — bencho.dev/licence）
+   英文注释为原作设计理由，按 Bencho 集成要求保留。
+
+   Token 映射（Bencho → Starlight）只定义在组件根节点上，不进全局：
+     --pane      → --surface-1    药丸底材
+     --fill-slab → --surface-2    药丸静止填充
+     --fill-on   → --ink          药丸上的文字（danger 模式 → --error）
+     --ink-3     → --mute         完成态弱化文字
+     --pick      → --accent       撤销与保险丝的品牌紫
+     --pick-rgb  → 79 70 229      --accent 的三通道展开
+     --font-ui   → Inter 栈       与 body 同款 UI 字体
+   Bencho 的 --ink 与 Starlight 同名同义（#171717），直接继承全局。
+   玻璃材质相关 token（--g-*、--shadow-rgb 等）属于玻璃导航块，
+   本组件不引用，待 Dynamic island 接入时一并映射。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 4 · confirm in place ────────────────────────────────── */
+.say-well {
+  position: relative;
+  z-index: 2;   /* 弹宽向左溢出时盖在邻居按钮之上 */
+  /* 药井尺寸由组件内联 style 给出（width = 静止态宽度，弹宽向左溢出） */
+  /* Bencho → Starlight token 映射（组件局部，不泄漏） */
+  --pane: var(--surface-1);
+  --fill-slab: var(--surface-2);
+  --fill-on: var(--ink);
+  --ink-3: var(--mute);
+  --pick: var(--accent);
+  --pick-rgb: 79 70 229;
+  --font-ui: 'Inter', -apple-system, 'SF Pro Text', sans-serif;
+}
+
+/* danger 模式：删除是危险操作，idle 文字保留信号红 */
+.say-well--danger { --fill-on: var(--error); }
+
+/* ── the surface: one pill, sprung between two widths ────── */
+.say-body {
+  position: absolute;
+  top: 0;
+  right: 0;   /* 右锚定：与文字层一致，弹宽向左溢出，不越容器右缘 */
+  height: 100%;
+  border-radius: var(--say-r, 999px);
+  background: var(--fill-slab, var(--pane));
+  transition: scale 180ms cubic-bezier(0.3, 0.9, 0.4, 1);}
+
+/* the resting pill answers a hover by giving a little, never by
+   changing colour; the words and the surfaces give together */
+.say-well[data-phase="idle"]:has(.say-face:hover) .say-body,
+.say-well[data-phase="idle"]:has(.say-face:hover) .say-face { scale: 0.97; }
+
+.say-well[data-phase="idle"]:has(.say-face:active) .say-body,
+.say-well[data-phase="idle"]:has(.say-face:active) .say-face { scale: 0.94; }
+
+/* ── the words, on top of the pill ────────────────────────── */
+.say-face {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--say-r, 999px);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--fill-on, var(--ink));
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 160ms ease, scale 180ms cubic-bezier(0.3, 0.9, 0.4, 1);}
+
+.say-face:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* deleted, and the undo that is on offer: one wide pill again */
+.say-merged {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex; align-items: center;
+  padding-right: 4px;
+  border-radius: var(--say-r, 999px);
+  overflow: hidden;}
+
+.say-done {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--ink-3);
+  white-space: nowrap;}
+
+.say-undo {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: calc(var(--say-h, 44px) - 8px);
+  padding: 0 13px;
+  border-radius: 999px;
+  margin-left: auto;
+  border: 0;
+  /* the canvas's own undo: the selection blue, no pad of its own,
+     a blue wash under the pointer — one "undo" on the site, not
+     two that happen to say the same word */
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--pick);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 140ms ease;}
+
+.say-undo:hover { background: rgba(var(--pick-rgb), 0.12); }
+
+/* how long undo is still on offer */
+.say-fuse {
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 2px;
+  background: var(--pick);
+  animation: say-burn linear forwards;}
+
+@media (prefers-reduced-motion: reduce) {
+  .say-body { transition-duration: 1ms; }
+}
+
+@keyframes say-burn { from { width: 100%; } to { width: 0; } }
+
+/* ── 列表行配合（Stellaris 适配，非原作内容）─────────────────
+   药丸展开时同一行里的邻居操作按钮淡出，避免弹宽中途文字
+   从药丸底下透出来；文件名限宽省略号在 UserVaultPanel 内联。 */
+.vault-row .vault-actions { transition: opacity 150ms ease; }
+.vault-row:has(.say-well[data-phase="done"]) .vault-actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   One-time code（验证码六格）— Bencho "One-time code" 块（MIT），
+   经 BirthTime 项目适配后移植到 Stellaris。英文/中文注释为设计理由。
+
+   Token 映射（BirthTime → Starlight）：
+     --bg-soft      → --surface-2        格子底
+     --line-strong  → --hairline-strong  格子边
+     --accent       → --accent           融合胶囊 / 光标（同名同色）
+     --font-mono    → JetBrains Mono 栈  数字字形
+     字号/字重按 Starlight 刻度直写（--t-title≈20px/600，--t-caption≈13px/500）
+   ══════════════════════════════════════════════════════════════ */
+
+/* 六格一体：格子画在隐形 input 底下，尺寸常量与组件内保持一致 */
+.liq-defs { position: absolute; width: 0; height: 0; }
+.otp { position: relative; touch-action: manipulation; }
+.otp-row { position: relative; display: block; }
+.otp-goo { position: absolute; inset: 0; }
+.otp-cell {
+  position: absolute;
+  top: 0;
+  height: 52px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  transition: border-color 0.15s ease;
+}
+.otp-capsule {
+  position: absolute;
+  top: 0;
+  height: 52px;
+  background: var(--accent);
+}
+.otp-slot {
+  position: absolute;
+  top: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.otp-digit {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+  animation: otpIn 0.18s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes otpIn {
+  from { transform: translateY(45%) scale(0.86); opacity: 0; filter: blur(3px); }
+  to   { transform: translateY(0) scale(1); opacity: 1; filter: blur(0); }
+}
+.otp-caret {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 24px;
+  margin-top: -12px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+}
+.otp-caret[data-on] { opacity: 1; animation: otpCaret 1.1s steps(1) infinite; }
+@keyframes otpCaret { 50% { opacity: 0; } }
+.otp-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  background: none;
+  cursor: text;
+  font-size: 16px; /* iOS 聚焦不放大 */
+}
+.otp-ok {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Label input — Bencho "Label input" 块（MIT），经 BirthTime 适配版
+   移植到 Stellaris。英文注释为原作设计理由，按集成要求保留。
+
+   Token 映射（组件局部，不进全局）：
+     --ink-rgb → 23, 23, 23     Starlight --ink(#171717) 的三通道
+     bencho --ink-3（lifted label 中档）→ var(--body)
+     bencho --ink-4（placeholder 最弱档）→ var(--mute)
+     --font-ui → Inter 栈（与 body 同款）
+   聚焦描边色偏离原作 ink 黑 → var(--accent)：Stellaris 全站表单的
+   聚焦信号色是品牌紫（antd activeBorderColor=#4f46e5），保持体系一致。
+   ══════════════════════════════════════════════════════════════ */
+
+.lbi {
+  position: relative;
+  display: grid;
+  width: 100%;
+  /* room above the field for the lifted label */
+  padding-top: 10px;
+  --fill-on: var(--ink);
+  /* --ink 直接继承全局，不局部重定义（自引用会使 stroke 解析失效） */
+  --ink-3: var(--body);
+  --ink-4: var(--mute);
+  --ink-rgb: 23, 23, 23;
+  --font-ui: 'Inter', -apple-system, 'SF Pro Text', sans-serif;
+  font-family: var(--font-ui);
+}
+
+.lbi[data-disabled] { opacity: 0.55; }
+.lbi[data-disabled] .lbi-box { cursor: not-allowed; }
+
+/* no fill: the field is only its outline */
+.lbi-box {
+  position: relative;
+  width: 100%;
+  background: transparent;
+  cursor: text;
+}
+
+/* ── the outline ────────────────────────────────────────────
+   Always whole. At rest a hairline of grey; focused, the ink
+   at a hair heavier; left filled, a grey a step darker than
+   rest. The gap across the top is the only part that moves. */
+.lbi-ring {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lbi-ring path {
+  fill: none;
+  stroke: rgba(var(--ink-rgb), 0.18);
+  stroke-width: 1;
+  stroke-linecap: butt;
+  transition: stroke 240ms ease, stroke-width 240ms ease;
+}
+
+.lbi[data-focus="true"] .lbi-ring path {
+  stroke: var(--accent);   /* Starlight：聚焦信号色 = 品牌紫（偏离原作 ink） */
+  stroke-width: 1.5;
+}
+
+.lbi[data-filled="true"]:not([data-focus="true"]) .lbi-ring path {
+  stroke: rgba(var(--ink-rgb), 0.3);
+}
+
+/* the gap: whole at rest, parting from its middle when the
+   label lifts. The dash is longer than the path so offset 0
+   is the whole line and -1 is none of it. */
+.lbi-gap {
+  stroke-dasharray: 1 2;
+  stroke-dashoffset: 0;
+  transition: stroke 240ms ease, stroke-width 240ms ease,
+    stroke-dashoffset 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lbi[data-up="true"] .lbi-gap { stroke-dashoffset: -1; }
+
+/* ── the label ──────────────────────────────────────────────
+   Its placeholder self in the middle of the field, and its
+   lifted self centred on the top edge — the second is the
+   first moved up by half the field and scaled from its left. */
+.lbi-label {
+  position: absolute;
+  left: var(--lbi-x);
+  top: 50%;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  white-space: pre;
+  color: var(--ink-4);
+  transform-origin: left center;
+  transform: translateY(-50%);
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1), color 200ms ease;
+  cursor: text;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.lbi[data-up="true"] .lbi-label {
+  transform: translateY(-50%) translateY(-26px) scale(0.78);
+  color: var(--ink-3);
+}
+
+.lbi[data-focus="true"] .lbi-label { color: var(--fill-on, var(--ink)); }
+
+.lbi-label span { display: inline-block; }
+
+/* the hop: each letter lifts a hair and settles, one after the
+   next, so the word ripples as it rises */
+.lbi[data-focus="true"] .lbi-label span {
+  animation: lbi-hop 460ms cubic-bezier(0.3, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--i) * 24ms);
+}
+
+.lbi-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 0 0 var(--lbi-x);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: -0.005em;
+  color: var(--fill-on, var(--ink));
+  outline: none;
+}
+
+/* the reveal: the text passes through a soft blur rather than
+   snapping between dots and letters. Two names so a second
+   press restarts it. */
+.lbi-field[data-flip="1"] { animation: lbi-flip-a 260ms ease-out; }
+
+.lbi-field[data-flip="0"] { animation: lbi-flip-b 260ms ease-out; }
+
+.lbi-eye {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  margin-top: -15px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-4);
+  cursor: pointer;
+  transition: color 160ms ease, scale 130ms cubic-bezier(0.3, 0.9, 0.4, 1);
+}
+
+.lbi-eye:hover { color: var(--fill-on, var(--ink)); }
+
+.lbi-eye:active { scale: 0.9; }
+
+/* the two icons in one place, trading places */
+.lbi-eye svg {
+  grid-area: 1 / 1;
+  transition: opacity 200ms ease, scale 260ms cubic-bezier(0.22, 1, 0.36, 1), filter 200ms ease;
+}
+
+.lbi-eye svg:last-child { opacity: 0; scale: 0.7; filter: blur(2px); }
+
+.lbi-eye[data-show="true"] svg:first-child { opacity: 0; scale: 0.7; filter: blur(2px); }
+
+.lbi-eye[data-show="true"] svg:last-child { opacity: 1; scale: 1; filter: none; }
+
+/* Stellaris：clearable 的 × 钮复用 .lbi-eye 定位，但只有一枚图标——
+   覆盖上面的双图标互换规则，否则唯一的 svg 命中 :last-child 永远隐形 */
+.lbi-clear svg { opacity: 1 !important; scale: 1 !important; filter: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lbi-ring path,
+    .lbi-gap,
+    .lbi-label { transition-duration: 1ms; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lbi[data-focus="true"] .lbi-label span,
+    .lbi-field { animation: none; }
+}
+
+@keyframes lbi-hop {
+  0% { transform: translateY(0); }
+  38% { transform: translateY(-3px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes lbi-flip-a { from { filter: blur(3px); opacity: 0.5; } }
+
+@keyframes lbi-flip-b { from { filter: blur(3px); opacity: 0.5; } }
+
+/* ── 首页链接框：查询框 + 分化按钮（照 BirthTime query-split，同款设计）──
+   静息时只有一只胶囊框，聚焦/有值时按钮从框右缘划出。
+   框让出按钮占据的宽度（flex 自然收缩），总宽不动、内容不跳。
+   Token：BirthTime --bg-soft → var(--surface-2)；--accent 同名直通。 */
+.query-split { display: flex; align-items: center; width: 100%; }
+.query-split .lbi { flex: 1; min-width: 0; }
+/* lbi-box 必须填满容器：否则 svg 固有宽度经 max-content 把框钉死在 280px，
+   flex 收缩时框体溢出容器、和划出的按钮错位（BirthTime 踩过） */
+.query-split .lbi-box { width: 100%; }
+
+.query-go {
+  flex: none;
+  width: 0;
+  /* 直径 = 框高 52px：按钮的圆与胶囊框端头是同一个圆，弧度严丝合缝 */
+  height: 52px;
+  margin-left: 0;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(-14px) scale(0.6);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    width 340ms cubic-bezier(0.24, 1.34, 0.38, 1),
+    margin-left 340ms cubic-bezier(0.24, 1.34, 0.38, 1),
+    transform 340ms cubic-bezier(0.24, 1.34, 0.38, 1),
+    opacity 200ms ease,
+    background 220ms ease,
+    color 220ms ease;
+}
+.query-split[data-has="true"] .query-go {
+  width: 52px;
+  margin-left: 8px;
+  opacity: 1;
+  transform: none;
+}
+/* 有内容 = 即将按下的主行动，实心 accent；空聚焦 = 同材质灰底"待填" */
+.query-split[data-armed="true"] .query-go { background: var(--accent); color: #fff; }
+.query-go:active { scale: 0.92; }
+.query-go:disabled { cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .query-go { transition-duration: 1ms; }
+}

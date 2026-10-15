@@ -6,8 +6,8 @@
  *   - refreshKey 变化时重新生成（提交失败后父组件 ++，因为票据一次性已消耗）
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Input, Button } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
+import LabelInput from '../bencho/LabelInput'
 
 export default function CaptchaField({ onChange, refreshKey = 0 }) {
   const [captcha, setCaptcha] = useState(null)  // {captcha_id, image}
@@ -70,16 +70,19 @@ export default function CaptchaField({ onChange, refreshKey = 0 }) {
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Input
-          size="large"
-          placeholder={captcha ? '输入图中 4 位字符' : '验证码'}
-          value={answer}
-          onChange={e => handleAnswer(e.target.value)}
-          maxLength={6}
-          disabled={!captcha}
-          style={{ flex: 1 }}
-        />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        {/* 图形验证码框也走 LabelInput（全站输入框统一）；lbi 自带 10px 顶部
+            留白给上浮标签，图片/刷新按钮用 marginTop 对齐框体上缘 */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <LabelInput
+            label="图形验证码"
+            value={answer}
+            onChange={handleAnswer}
+            maxLength={6}
+            disabled={!captcha}
+            autoComplete="off"
+          />
+        </div>
         {captcha && (
           <img
             src={captcha.image}
@@ -87,19 +90,24 @@ export default function CaptchaField({ onChange, refreshKey = 0 }) {
             title="看不清？点击刷新"
             onClick={load}
             style={{
-              height: 40, borderRadius: 8, cursor: 'pointer', flexShrink: 0,
+              height: 52, marginTop: 10, borderRadius: 14, cursor: 'pointer', flexShrink: 0,
               border: '1px solid var(--hairline)',
             }}
           />
         )}
-        <Button
-          size="large"
-          icon={<ReloadOutlined />}
+        <button
+          type="button"
           onClick={load}
-          loading={loading}
           title="刷新验证码"
-          style={{ flexShrink: 0 }}
-        />
+          style={{
+            width: 52, height: 52, marginTop: 10, flexShrink: 0,
+            display: 'grid', placeItems: 'center',
+            border: '1px solid var(--hairline)', borderRadius: 14,
+            background: 'transparent', color: 'var(--mute)', cursor: 'pointer',
+          }}
+        >
+          <ReloadOutlined spin={loading} style={{ fontSize: 16 }} />
+        </button>
       </div>
       {failed && (
         <div style={{ fontSize: 12, color: 'var(--error)', marginTop: 6 }}>

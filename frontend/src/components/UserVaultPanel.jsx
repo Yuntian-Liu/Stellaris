@@ -20,6 +20,7 @@ import rehypeKatex from 'rehype-katex'
 import { vaultApi } from '../hooks/api'
 import QuotaBar from './QuotaBar'
 import VaultGuideModal from './VaultGuideModal'
+import InlineConfirm from './bencho/InlineConfirm'
 import { MD_COMPONENTS, normalizeLatex } from '../pages/ResultPage'
 
 const GUIDE_SEEN_KEY = 'stellaris_vault_guide_seen'
@@ -117,25 +118,19 @@ export default function UserVaultPanel() {
     }
   }
 
-  const removeFile = (path) => {
-    Modal.confirm({
-      centered: true,
-      title: '删除文件？',
-      content: `「${path}」删除后不可恢复。`,
-      okText: '删除',
-      okButtonProps: { danger: true },
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await vaultApi.remove({ path })
-          message.success('已删除')
-          if (viewing?.path === path) setViewing(null)
-          load()
-        } catch (e) {
-          message.error(e.message)
-        }
-      },
-    })
+  // 文件删除：InlineConfirm 就地确认（Bencho 组件）——点删除后药丸展开
+  // 「已删除 · 撤销」，4s 保险丝烧尽才真正调删除 API；撤销则什么都不发生。
+  // 文件夹删除保留 Modal.confirm：其文案带递归文件统计，药丸放不下。
+  const commitRemoveFile = async (path) => {
+    try {
+      await vaultApi.remove({ path })
+      message.success('已删除')
+      if (viewing?.path === path) setViewing(null)
+      load()
+    } catch (e) {
+      message.error(e.message)
+      load()   // 保险丝阶段药丸已显示「已删除」，失败时刷新列表对齐真实状态
+    }
   }
 
   /** 递归统计文件夹下文件数（后端 list 不递归，逐层统计给删除确认文案用） */
@@ -286,25 +281,35 @@ export default function UserVaultPanel() {
                   <FolderOutlined style={{ color: 'var(--accent)', fontSize: 15 }} />
                   <span
                     onClick={() => { setViewing(null); load(prefix ? `${prefix}/${name}` : name) }}
-                    style={{ cursor: 'pointer', fontWeight: 500, color: 'var(--ink)', fontSize: 13, flex: 1, wordBreak: 'break-all' }}
+                    style={{
+                      cursor: 'pointer', fontWeight: 500, color: 'var(--ink)', fontSize: 13,
+                      flex: 1, minWidth: 0,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}
                   >{name}</span>
                   <Button size="small" type="text" danger onClick={() => removeFolder(name)}>删除</Button>
                 </div>
               ))}
               {listing.files.map((f) => (
-                <div key={`f-${f.path}`} style={rowStyle}>
-                  <FileOutlined style={{ color: 'var(--mute)', fontSize: 14 }} />
+                <div key={`f-${f.path}`} style={rowStyle} className="vault-row">
+                  <FileOutlined style={{ color: 'var(--mute)', fontSize: 14, flexShrink: 0 }} />
                   <span
                     onClick={() => openFile(f.path)}
-                    style={{ cursor: 'pointer', color: 'var(--ink)', fontSize: 13, wordBreak: 'break-all' }}
+                    style={{
+                      cursor: 'pointer', color: 'var(--ink)', fontSize: 13,
+                      flex: 1, minWidth: 0,   /* 限宽省略号：长文件名不再把按钮挤换行 */
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}
                   >{f.name}</span>
                   <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>{fmtSize(f.size)}</span>
                   <span className="font-mono" style={{ fontSize: 11, color: 'var(--mute)', flexShrink: 0 }}>{fmtTimeShort(f.updated_at)}</span>
-                  <span style={{ flex: 1 }} />
-                  <Button size="small" type="text" onClick={() => openFile(f.path)}>查看</Button>
-                  <Button size="small" type="text" onClick={() => downloadFile(f.path)}>下载</Button>
-                  <Button size="small" type="text" onClick={() => { setRenameFor(f.path); setRenameTo(f.path) }}>重命名</Button>
-                  <Button size="small" type="text" danger onClick={() => removeFile(f.path)}>删除</Button>
+                  {/* 操作按钮成组不换行；InlineConfirm 展开时整组淡出（bencho.css :has） */}
+                  <span className="vault-actions" style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                    <Button size="small" type="text" onClick={() => openFile(f.path)}>查看</Button>
+                    <Button size="small" type="text" onClick={() => downloadFile(f.path)}>下载</Button>
+                    <Button size="small" type="text" onClick={() => { setRenameFor(f.path); setRenameTo(f.path) }}>重命名</Button>
+                  </span>
+                  <InlineConfirm danger onCommit={() => commitRemoveFile(f.path)} />
                 </div>
               ))}
             </>
