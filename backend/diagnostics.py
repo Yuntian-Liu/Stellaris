@@ -83,6 +83,15 @@ def _dir_size_mb(path) -> float:
     return round(total / 1024 / 1024, 2)
 
 
+def _maint_flag() -> bool:
+    """读 main.py 的维护模式双开关（env 底座 + 后台旋钮）；延迟导入防循环依赖。"""
+    try:
+        import main as _m
+        return bool(_m._MAINTENANCE_ENV or _m._maintenance_runtime)
+    except Exception:
+        return False
+
+
 async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
     """组装诊断包（仅请求者本人数据）"""
     # ── 系统状态 ──
@@ -141,6 +150,9 @@ async def build_diagnostics(uid: int, app_version: str, tasks: dict) -> dict:
         "jwt_secret_set": JWT_SECRET != "dev-secret-change-me",
         # 文件柜（V1.1.3：只报布尔——token/密码本身永不导出；vault 内容/路径绝不进诊断包）
         "vault_token_set": bool(VAULT_TOKEN),
+        # 维护模式（V1.6.1：迁移日排障第一眼要看它；env 底座 + 后台开关两路任一即开。
+        # 标志定义在 main.py，函数内延迟导入避免循环依赖——调用时 main 已加载完毕）
+        "maintenance_mode": (_maint_flag()),
     }
 
     # ── 备份状态（V1.0.3：上次备份结果，排查备份问题免上服务器）──

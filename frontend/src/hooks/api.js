@@ -63,6 +63,10 @@ async function request(path, { method = 'GET', body, headers, isForm = false, ke
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
+    // 维护模式（V1.6.1）：后端 503 + maintenance 标记 → 全站维护屏接管（App 监听）
+    if (res.status === 503 && err.maintenance) {
+      window.dispatchEvent(new CustomEvent('stellaris:maintenance'))
+    }
     const e = new Error(readableDetail(err.detail) || `请求失败 (${res.status})`)
     e.status = res.status
     throw e
@@ -285,6 +289,9 @@ export const adminApi = {
   trends: (days = 30) => request(`/api/admin/trends?days=${days}`),
   pinStatus: () => request('/api/admin/pin/status'),
   setPin: (pin) => request('/api/admin/pin/set', { method: 'POST', body: { pin } }),
+  // 维护模式开关（V1.6.1：迁移日停写窗口）
+  getMaintenance: () => request('/api/admin/maintenance'),
+  setMaintenance: (enabled) => request('/api/admin/maintenance', { method: 'POST', body: { enabled } }),
   codesSummary: () => request('/api/admin/codes-summary'),
   featureUsage: (days = 7) => request(`/api/admin/feature-usage?days=${days}`),
   recentTasks: (uid, tid) => {

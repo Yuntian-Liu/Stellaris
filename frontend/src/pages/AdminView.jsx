@@ -1612,9 +1612,22 @@ function DataPanel() {
 function SecurityPanel() {
   const [data, setData] = useState(null)
   const [showBaseline, setShowBaseline] = useState(false)
+  // 维护模式开关（V1.6.1：迁移日停写窗口；即时生效，无需改 env 重启）
+  const [mnt, setMnt] = useState(null)
   useEffect(() => {
     adminApi.securityStatus().then(setData).catch(() => {})
+    adminApi.getMaintenance().then(d => setMnt(d.enabled)).catch(() => {})
   }, [])
+
+  const toggleMaintenance = async (on) => {
+    try {
+      const r = await adminApi.setMaintenance(on)
+      setMnt(r.enabled)
+      message.success(on ? '维护模式已开启：全站对外暂停，/health 与本后台放行' : '维护模式已关闭')
+    } catch (e) {
+      message.error(e.message)
+    }
+  }
 
   if (!data) return <div style={{ textAlign: 'center', padding: 40, color: 'var(--mute)', fontSize: 13 }}>加载中…</div>
 
@@ -1640,6 +1653,23 @@ function SecurityPanel() {
 
   return (
     <div>
+      {/* 维护模式（迁移日停写窗口；env MAINTENANCE_MODE=1 为常开底座） */}
+      <div className="card" style={{
+        padding: '14px 16px', marginBottom: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        border: mnt ? '1px solid var(--error)' : '1px solid var(--hairline)',
+      }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: mnt ? 'var(--error)' : 'var(--ink)' }}>
+            维护模式 {mnt ? '· 开启中（全站对外暂停）' : ''}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--mute)', marginTop: 3 }}>
+            开启后页面显示维护页、API 全部 503；/health 与本后台放行。用于 10-23 迁移停写窗口。
+          </div>
+        </div>
+        <Switch checked={!!mnt} onChange={toggleMaintenance} disabled={mnt === null} />
+      </div>
+
       {/* 实时拦截（动态数据，主位） */}
       <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 10 }}>实时拦截（本次进程运行以来）</div>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>

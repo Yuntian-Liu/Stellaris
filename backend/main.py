@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 import time
 from contextlib import asynccontextmanager
@@ -176,7 +177,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.6.0-betelgeuse",
+    version="1.6.1-betelgeuse",
     lifespan=lifespan,
 )
 
@@ -214,6 +215,29 @@ async def _security_headers_middleware(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
+
+
+# ===== 维护模式（V1.6.1，迁移日停写窗口用）=====
+# 两路开关任一开启即维护态：
+#   ① env MAINTENANCE_MODE=1 —— 常开底座（重启不丢）
+#   ② 管理后台「安全」页开关（_maintenance_runtime）—— 即时生效，重启回落
+# 放行 /health（监控）与 /api/admin（管理员迁移期间仍可进后台验证状态）。
+_MAINTENANCE_ENV = os.getenv("MAINTENANCE_MODE", "").strip() == "1"
+_maintenance_runtime = False
+
+
+@app.middleware("http")
+async def _maintenance_gate(request, call_next):
+    """维护闸（V1.6.1 修订）：页面照发（前端维护屏接管展示），只闸 API。
+    放行：/health（监控）、/api/admin（管理员后台）、/api/auth（管理员登录通道）。"""
+    if _MAINTENANCE_ENV or _maintenance_runtime:
+        path = request.url.path
+        if path == "/health" or path.startswith("/api/admin") or path.startswith("/api/auth"):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "系统维护中，迁移完成后即恢复", "maintenance": True}, status_code=503)
+    return await call_next(request)
+
 
 # P1-9 全局异常处理器：未捕获异常统一脱敏，详情只写日志
 @app.exception_handler(Exception)
@@ -1126,6 +1150,132 @@ async def export_diagnostics(current_user: User = Depends(get_current_user)):
     )
 
 
+# ===== 用户数据自助导出（V1.6.1，迁移保障·临时功能）=====
+# 定位：不可抗力时的恢复凭证——存档含本人全量数据；恢复途径 = 工单提交存档
+# + 管理员人工审核恢复（无自助导入：用户可写库 = 余额/会员可伪造，资损红线）。
+_mydata_export_times: dict[int, list[float]] = {}
+
+
+@app.get("/api/export/mydata")
+async def export_my_data(current_user: User = Depends(get_current_user)):
+    """导出本人全量数据存档（JSON）。仅本人数据；每人 3 次/小时。"""
+    import time as _t
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import select as _select, desc as _desc
+    from billing_store import UserBilling, BillingLedger, BILLING_TIERS, _effective_tier_key
+    from history_store import TaskRecord
+    from vault_store import VaultUserFile
+    from ticket_store import SupportTicket
+
+    # 限流：3 次/小时/人
+    now = _t.time()
+    hits = [t for t in _mydata_export_times.get(current_user.uid, []) if now - t < 3600]
+    if len(hits) >= 3:
+        raise HTTPException(status_code=429, detail="导出太频繁，请一小时后再试")
+    hits.append(now)
+    _mydata_export_times[current_user.uid] = hits
+
+    uid = current_user.uid
+    out: dict = {
+        "meta": {
+            "app": "Stellaris",
+            "kind": "user-data-archive",
+            "version": app.version,
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "note": "本存档用于不可抗力时的数据恢复凭证。恢复方式：通过站内工单提交本文件，"
+                    "管理员审核后人工恢复（无自助导入）。",
+        },
+        "profile": {
+            "uid": uid,
+            "email": current_user.email,
+            "nickname": current_user.nickname,
+            "bio": current_user.bio or "",
+            "avatar_seed": current_user.avatar_seed,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        },
+    }
+
+    async with async_session() as session:
+        # 计费：档位 + 余额 + 流水（全量，上限 500 条）
+        b = await session.get(UserBilling, uid)
+        if b:
+            tier_key = await _effective_tier_key(session, b)
+            tier = BILLING_TIERS.get(tier_key, BILLING_TIERS["free"])
+            out["billing"] = {
+                "tier": tier_key,
+                "tier_name": tier.get("name"),
+                "membership_expire_at": b.membership_expire_at.isoformat() if b.membership_expire_at else None,
+                "minutes_used": {"day": b.minutes_day, "week": b.minutes_week, "month": b.minutes_month},
+                "quantum_gift": b.quantum_gift,
+                "quantum_perm": b.quantum_perm,
+                "gravity": b.gravity,
+            }
+            ledger = await session.execute(
+                _select(BillingLedger).where(BillingLedger.user_uid == uid)
+                .order_by(_desc(BillingLedger.id)).limit(500)
+            )
+            out["ledger"] = [
+                {
+                    "time": r.created_at.isoformat() if r.created_at else None,
+                    "feature": r.feature, "currency": r.currency, "amount": r.amount,
+                    "balance_after": r.balance_after, "task_id": r.task_id,
+                }
+                for r in ledger.scalars()
+            ]
+
+        # 提取历史（含字幕与产物全文——存档的价值所在）
+        recs = await session.execute(
+            _select(TaskRecord).where(TaskRecord.owner_uid == uid).order_by(_desc(TaskRecord.created_at))
+        )
+        out["history"] = [
+            {
+                "task_id": r.task_id, "title": r.title,
+                "source_platform": r.source_platform, "source_url": r.source_url,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "subtitle_srt": r.subtitle_srt, "raw_text": r.raw_text,
+                "md_content": r.md_content, "summary_content": r.summary_content,
+            }
+            for r in recs.scalars()
+        ]
+
+        # 文件柜（全文）
+        vfiles = await session.execute(
+            _select(VaultUserFile).where(VaultUserFile.owner_uid == uid)
+        )
+        out["vault_files"] = [
+            {"path": f.path, "content": f.content,
+             "updated_at": f.updated_at.isoformat() if f.updated_at else None}
+            for f in vfiles.scalars()
+        ]
+
+        # 工单（含管理员回复）
+        tickets = await session.execute(
+            _select(SupportTicket).where(SupportTicket.user_uid == uid).order_by(_desc(SupportTicket.created_at))
+        )
+        out["tickets"] = [
+            {
+                "ticket_no": f"S0700110{t.id:04d}X", "title": t.title, "category": t.category,
+                "description": t.description, "status": t.status,
+                "admin_reply": t.admin_reply,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in tickets.scalars()
+        ]
+
+    logger.info("[Export] 用户数据自助导出: uid=%s history=%d vault=%d",
+                uid, len(out.get("history", [])), len(out.get("vault_files", [])))
+    return JSONResponse(
+        content=out,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="stellaris-mydata-{uid}-'
+                f'{time.strftime("%Y%m%d-%H%M%S")}.json"'
+            ),
+        },
+    )
+
+
 @app.get("/api/billing/summary")
 async def billing_summary(current_user: User = Depends(get_current_user)):
     """三胶囊数据：分钟日/周/月已用+限额、量子波（赠送/活动）、引力波 + 档位信息"""
@@ -1493,6 +1643,23 @@ async def admin_backup_status(current_user: User = Depends(get_admin_user)):
     status = get_backup_status()
     health = await get_health()
     return {**status, "db_size_mb": health["db_size_mb"]}
+
+
+# ── 维护模式管理开关（V1.6.1：管理后台可即时开/关，无需改 env 重启）──
+# env MAINTENANCE_MODE=1 为常开底座（迁移日硬停）；runtime 开关是面板旋钮，
+# 容器重启后 runtime 回落为关、env 仍在——两路任一开启即维护态。
+@app.get("/api/admin/maintenance")
+async def admin_get_maintenance(current_user: User = Depends(get_admin_user)):
+    return {"enabled": bool(_MAINTENANCE_ENV or _maintenance_runtime), "env": _MAINTENANCE_ENV}
+
+
+@app.post("/api/admin/maintenance")
+async def admin_set_maintenance(req: Request, current_user: User = Depends(get_admin_user)):
+    global _maintenance_runtime
+    body = await req.json()
+    _maintenance_runtime = bool(body.get("enabled"))
+    logger.warning("[Admin] 维护模式%s（uid=%s）", "开启" if _maintenance_runtime else "关闭", current_user.uid)
+    return {"enabled": bool(_MAINTENANCE_ENV or _maintenance_runtime), "env": _MAINTENANCE_ENV}
 
 
 @app.get("/api/admin/security-status")

@@ -2,20 +2,25 @@
  * 更新提醒弹窗（对标 Datelife 机制）
  * - 版本更新：APP_VERSION 与 localStorage 记录不符 → 弹"更新啦"小窗（每版本一次）
  * - 协议更新：AGREEMENT_VERSION 不符 → 弹协议更新小窗（每次协议修订一次）
- * 两个弹窗串联：版本弹窗关闭后才检查协议弹窗
+ * - 迁移公告（V1.6.1 临时）：停服迁移通知 → 每人一次，链尾；「去导出数据」高亮引导
+ * 三个弹窗串联：版本 → 协议 → 迁移公告
  */
 import { useState, useEffect } from 'react'
 import { Modal, Button } from 'antd'
 import { getLatestUpdate, AGREEMENT_VERSION } from '../utils/changelog'
+import { clientLog } from '../utils/clientLog'
+import { OPEN_EXPORT_EVENT } from './DataExportModal'
 
 const UPDATE_KEY = 'stellaris_last_seen_version'
 const AGREEMENT_KEY = 'stellaris_last_seen_agreement'
+const MIGRATION_KEY = 'stellaris_migration_notice_v1'   // 停服公告（10-23 迁移）每人一次
 
 export default function UpdateModals({ onOpenAgreement }) {
   const [updateInfo, setUpdateInfo] = useState(null)
   const [showAgreement, setShowAgreement] = useState(false)
+  const [showMigration, setShowMigration] = useState(false)
 
-  // 启动检查：版本更新优先，关闭后串联检查协议更新
+  // 启动检查：版本更新优先，关闭后串联检查协议更新，再串联迁移公告
   useEffect(() => {
     const lastSeen = localStorage.getItem(UPDATE_KEY)
     const latest = getLatestUpdate()
@@ -30,6 +35,15 @@ export default function UpdateModals({ onOpenAgreement }) {
   const checkAgreement = () => {
     if (localStorage.getItem(AGREEMENT_KEY) !== AGREEMENT_VERSION) {
       setShowAgreement(true)
+    } else {
+      checkMigration()
+    }
+  }
+
+  const checkMigration = () => {
+    if (!localStorage.getItem(MIGRATION_KEY)) {
+      setShowMigration(true)
+      clientLog.add('ui', '迁移公告弹窗已展示')
     }
   }
 
@@ -42,6 +56,12 @@ export default function UpdateModals({ onOpenAgreement }) {
   const closeAgreement = () => {
     localStorage.setItem(AGREEMENT_KEY, AGREEMENT_VERSION)
     setShowAgreement(false)
+    checkMigration()
+  }
+
+  const closeMigration = () => {
+    localStorage.setItem(MIGRATION_KEY, '1')
+    setShowMigration(false)
   }
 
   return (
@@ -121,6 +141,40 @@ export default function UpdateModals({ onOpenAgreement }) {
             </Button>
             <Button type="primary" block onClick={closeAgreement}>
               我已知晓
+            </Button>
+          </div>
+        </div>
+      </Modal>
+      {/* ── 迁移公告（V1.6.1 临时：10-23 停服维护通知，每人一次）── */}
+      <Modal
+        open={showMigration}
+        onCancel={closeMigration}
+        footer={null}
+        width={420}
+        centered
+      >
+        <div style={{ textAlign: 'center', padding: '8px 4px 0' }}>
+          <h2 className="font-display" style={{ fontSize: 18, margin: '0 0 10px' }}>
+            服务迁移公告
+          </h2>
+          <div style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9, textAlign: 'left', marginBottom: 16 }}>
+            因服务器服务商停止运营，本站将于 <strong style={{ color: 'var(--ink)' }}>10 月 23 日（周五）12:00 起</strong>停服迁移，预计 <strong style={{ color: 'var(--ink)' }}>6 小时内</strong>恢复。
+            <div style={{ marginTop: 8, color: 'var(--mute)', fontSize: 12.5 }}>
+              迁移前后没有任何变化：网址不变，账号、额度、会员权益、历史记录与文件柜内容完整保留。
+              你无需任何操作；如希望自行留档，可导出个人数据存档。
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Button block onClick={closeMigration}>知道了</Button>
+            <Button
+              type="primary" block
+              onClick={() => {
+                closeMigration()
+                clientLog.add('ui', '迁移公告 → 点击去导出数据')
+                window.dispatchEvent(new CustomEvent(OPEN_EXPORT_EVENT))
+              }}
+            >
+              去导出数据
             </Button>
           </div>
         </div>

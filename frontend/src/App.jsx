@@ -19,6 +19,10 @@ import SettingsView from './pages/SettingsView'
 // 管理看板（含 recharts）代码分割：仅 admin 点进看板时才加载，不进主包
 const AdminView = lazy(() => import('./pages/AdminView'))
 import UpdateModals from './components/UpdateModals'
+import DataExportModal, { OPEN_EXPORT_EVENT } from './components/DataExportModal'
+
+// 停服迁移公告条的"当日不再提示"键（V1.6.1 临时）
+const MIG_BANNER_KEY = 'stellaris_mig_banner_dismissed'
 import AgreementModal from './components/AgreementModal'
 import MeteorShower from './components/MeteorShower'
 import BillingPills from './components/BillingPills'
@@ -157,6 +161,21 @@ export default function App() {
   }, [page])
   const [taskData, setTaskData] = useState(null)
   const [chatOpen, setChatOpen] = useState(false)   // AI 解读分栏态（容器扩宽 760→1180）
+  // 停服迁移公告条（V1.6.1 临时；✕ 关闭后当日不再出现）
+  const [migBanner, setMigBanner] = useState(
+    () => localStorage.getItem(MIG_BANNER_KEY) !== new Date().toDateString()
+  )
+  // 维护模式全屏覆盖（V1.6.1：API 503+maintenance 触发；#/admin 与 #/auth 豁免——管理员通道）
+  const [maintenance, setMaintenance] = useState(false)
+  useEffect(() => {
+    const on = () => {
+      const h = window.location.hash
+      if (h.startsWith('#/admin') || h.startsWith('#/auth')) return
+      setMaintenance(true)
+    }
+    window.addEventListener('stellaris:maintenance', on)
+    return () => window.removeEventListener('stellaris:maintenance', on)
+  }, [])
   const [agreementView, setAgreementView] = useState(null)  // 更新弹窗"查看协议"联动
   const [helpOpen, setHelpOpen] = useState(false)   // 帮助中心弹窗（导航栏问号）
   const [helpSection, setHelpSection] = useState('start') // 帮助中心初始板块
@@ -500,6 +519,33 @@ export default function App() {
       </div>
       </div>
 
+      {/* ── 停服迁移公告条（V1.6.1 临时：10-23 停服维护；关闭后当日不再出现）── */}
+      {migBanner && (
+        <div style={{
+          background: 'var(--accent-light)',
+          borderBottom: '1px solid var(--hairline)',
+          padding: '8px 24px',
+          fontSize: 12.5,
+          color: 'var(--body)',
+          textAlign: 'center',
+          lineHeight: 1.7,
+        }}>
+          本站将于 <strong>10 月 23 日（周五）12:00</strong> 起停服迁移至新服务器，预计 6 小时内恢复，数据不受影响。
+          <a
+            style={{ color: 'var(--accent)', marginLeft: 8, cursor: 'pointer', fontWeight: 500 }}
+            onClick={() => window.dispatchEvent(new CustomEvent(OPEN_EXPORT_EVENT))}
+          >导出我的数据存档</a>
+          <span
+            style={{ marginLeft: 12, color: 'var(--mute)', cursor: 'pointer' }}
+            title="今日不再提示"
+            onClick={() => {
+              localStorage.setItem(MIG_BANNER_KEY, new Date().toDateString())
+              setMigBanner(false)
+            }}
+          >✕</span>
+        </div>
+      )}
+
       <Content className="app-shell-content" style={{
         maxWidth: (chatOpen || wideSubview || adminOpen) ? 1312 : 760,
         margin: '0 auto',
@@ -580,8 +626,33 @@ export default function App() {
         </Routes>
       </Content>
 
-      {/* 更新提醒（版本 + 协议，每版本只弹一次） */}
+      {/* 更新提醒（版本 + 协议 + 迁移公告，串联各弹一次） */}
       <UpdateModals onOpenAgreement={() => setAgreementView('agreement')} />
+      {/* 数据自助导出（V1.6.1 迁移保障·临时；事件总线开启） */}
+      <DataExportModal />
+
+      {/* 维护模式全屏覆盖（V1.6.1：API 503 触发；管理员走 #/auth → #/admin 豁免） */}
+      {maintenance && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'var(--canvas)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ textAlign: 'center', maxWidth: 420, padding: 24 }}>
+            <div style={{ color: 'var(--accent)', fontSize: 26, fontFamily: "'Cormorant Garamond', serif" }}>✦</div>
+            <h1 className="font-display" style={{ fontSize: 20, margin: '12px 0 8px' }}>Stellaris 正在搬家</h1>
+            <p style={{ fontSize: 13, color: 'var(--body)', lineHeight: 1.9 }}>
+              我们正在进行服务迁移维护，预计很快恢复。<br />
+              你的账号、额度与历史数据均不受影响，感谢耐心等待。
+            </p>
+            <div style={{ marginTop: 16, fontSize: 12 }}>
+              <a style={{ color: 'var(--mute)', cursor: 'pointer' }} onClick={() => { setMaintenance(false); go('auth') }}>
+                管理员入口
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
       <AgreementModal
         open={!!agreementView}
         type={agreementView || 'agreement'}

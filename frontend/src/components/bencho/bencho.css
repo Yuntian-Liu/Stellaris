@@ -699,3 +699,78 @@
   .upl-zone, .upl-icon, .upl-roll-strip { transition-duration: 1ms; }
   .upl-zone[data-gulp], .upl-now, .upl-tick { animation-duration: 1ms; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Slide to confirm — Bencho "Slide to confirm" 块（MIT），经
+   BirthTime 适配版移植。英文/中文注释为设计理由，原样保留。
+
+   Token 映射（组件局部）：
+     BirthTime --danger → var(--sld-color)，默认 var(--accent)
+     （BirthTime 用于危险操作所以是红；Stellaris 首个场景是
+     数据导出——非破坏性主行动，用品牌紫。危险场景复用时在
+     容器上设 --sld-color: var(--error) 即可）
+     --bg-soft → --surface-2；--line → --hairline；
+     --ink-2 → --body；字号/字重直写 Starlight 刻度
+   ══════════════════════════════════════════════════════════════ */
+
+.sld {
+  position: relative;
+  user-select: none;
+  --sld-color: var(--accent);
+}
+.sld-track {
+  position: relative;
+  height: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  touch-action: none; /* 手势归组件：不触发页面滚动 */
+  cursor: grab;
+  overflow: hidden;
+}
+.sld-track[data-held] { cursor: grabbing; }
+.sld-wash {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: color-mix(in srgb, var(--sld-color) 14%, transparent);
+}
+.sld-say {
+  position: absolute;
+  inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  color: var(--body);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sld-grip {
+  position: absolute;
+  left: 0;
+  /* top/height/width 由组件内联（JS 常量同源），此处不再写任何几何尺寸 */
+  display: flex; align-items: center; justify-content: center;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sld-color);
+  color: #fff;
+  cursor: grab;
+  touch-action: none;
+  flex-shrink: 0;
+  /* 无 padding：宽度完全由 motion value 控制，内容全部绝对定位居中——
+     否则占位内容把正圆撑成椭圆（BirthTime 踩过：done 文案占 flex 流） */
+}
+.sld-grip:active { cursor: grabbing; }
+.sld-arrow {
+  position: absolute;
+  inset: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sld-done {
+  position: absolute;
+  inset: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}

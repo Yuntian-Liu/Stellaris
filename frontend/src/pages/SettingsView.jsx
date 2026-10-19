@@ -9,7 +9,7 @@ import { useNavigate, useMatch, useSearchParams } from 'react-router-dom'
 import { Button, Input, Modal, Tabs, Tag, message } from 'antd'
 import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
-  IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
+  IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined, CloudDownloadOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
   GiftOutlined, CreditCardOutlined, MessageOutlined,
@@ -497,6 +497,11 @@ export default function SettingsView({ onBack, onOpenHistory }) {
         <RowItem icon={<FileTextOutlined />} tint="#64748b" label="导出诊断日志"
           value="排查问题用"
           onClick={downloadDiagnostics} />
+        <Divider />
+        {/* 数据自助导出（V1.6.1 迁移保障·临时功能，迁移后下线） */}
+        <RowItem icon={<CloudDownloadOutlined />} tint="#4f46e5" label="导出我的数据"
+          value="迁移保障 · 限时"
+          onClick={() => { clientLog.add('ui', '设置页 → 打开数据自助导出'); window.dispatchEvent(new CustomEvent('stellaris:open-export')) }} />
         <Divider />
         <RowItem icon={<GithubOutlined />} tint="#334155" label="开源声明"
           value="MIT" onClick={() => setOssOpen(true)} />
