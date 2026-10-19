@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react'
 import { Typography, Button, Space } from 'antd'
 import { ArrowLeftOutlined, CheckOutlined, LoadingOutlined } from '@ant-design/icons'
 import api from '../hooks/api'
+import { clientLog } from '../utils/clientLog'
 
 const { Text } = Typography
 
@@ -56,6 +57,8 @@ export default function ProgressPage({ taskId, onComplete, onBack, onBackGuarded
   const [status, setStatus] = useState(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState(null)
+  const [sourceUrl, setSourceUrl] = useState(undefined)   // 链接流有值 / 上传流 null（自适应提示用）
+  const [slowHint, setSlowHint] = useState(false)         // 阶段 0 停留 >8s 的冗余提示
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +70,7 @@ export default function ProgressPage({ taskId, onComplete, onBack, onBackGuarded
         if (cancelled) return
         setStatus(data.status)
         setProgress(data.progress)
+        setSourceUrl(data.source_url ?? null)
 
         if (data.status === 'completed') {
           // 稍作停留，让最后一段连接线动画播完再跳转
@@ -84,6 +88,19 @@ export default function ProgressPage({ taskId, onComplete, onBack, onBackGuarded
     poll()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [taskId, onComplete])
+
+  /* 冗余提示：阶段 0（pending/downloading）停超过 8 秒，按来源给一句"现在在干嘛"——
+     链接流=平台拉取慢，上传流=服务器处理大文件慢（上传本身已在首页盒子里有真实进度）。
+     阶段推进/出错即消失。 */
+  useEffect(() => {
+    if (error || mapStatusToCurrent(status) !== 0) { setSlowHint(false); return }
+    const t = setTimeout(() => {
+      setSlowHint(true)
+      // 诊断打点：提示出现 = 早期阶段慢的间接信号（随诊断包导出）
+      clientLog.add('ui', `进度页阶段 0 超 8s 提示已显示（${sourceUrl === null ? '上传流' : '链接流'}）`)
+    }, 8000)
+    return () => clearTimeout(t)
+  }, [status, error])
 
   const current = mapStatusToCurrent(status)
 
@@ -186,6 +203,14 @@ export default function ProgressPage({ taskId, onComplete, onBack, onBackGuarded
                 {progress}%
               </Text>
             </div>
+            {/* 阶段 0 停留 >8s 的冗余提示（自适应来源）：用户不瞎等 */}
+            {slowHint && (
+              <div className="font-caption" style={{ fontSize: 12, color: 'var(--mute)', marginTop: 8 }}>
+                {sourceUrl === null
+                  ? '服务器正在处理你上传的文件，大文件会慢一些，请稍候…'
+                  : '正在从平台拉取视频，长视频需要一些时间，请稍候…'}
+              </div>
+            )}
           </>
         )}
 

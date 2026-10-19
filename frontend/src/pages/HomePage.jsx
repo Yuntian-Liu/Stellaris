@@ -9,11 +9,11 @@
  */
 import { useEffect, useState } from 'react'
 import {
-  Button, Upload, Typography,
+  Button, Typography,
   Collapse, Tag, Tooltip, Modal, Popover,
 } from 'antd'
 import {
-  UploadOutlined, RocketOutlined,
+  RocketOutlined,
   InfoCircleOutlined, ClockCircleOutlined,
   FileTextOutlined, ThunderboltOutlined,
   LoadingOutlined, TeamOutlined,
@@ -25,6 +25,7 @@ import useClipboardLink from '../hooks/useClipboardLink'
 import { useAuth } from '../contexts/AuthContext'
 import { GroupQrCard, GroupQrModal } from '../components/GroupQrModal'
 import LabelInput from '../components/bencho/LabelInput'
+import UploadDropzone from '../components/bencho/UploadDropzone'
 
 const { Text } = Typography
 
@@ -170,10 +171,13 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     if (!url.trim()) return
     setEstimating(true)
     setError(null)
+    clientLog.add('ui', '解析视频信息（分化按钮/回车）')
     try {
       const data = await api.estimate(url.trim(), sessdata.trim())
       setEstimateData(data)
+      clientLog.add('ui', `解析成功: ${data.duration_sec}s · 预估 ${data.est_minutes} 分钟`)
     } catch (e) {
+      clientLog.add('ui', `解析失败: ${e.message}`)
       setError(e.message || '无法解析视频信息，请检查链接是否正确')
     } finally {
       setEstimating(false)
@@ -192,6 +196,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   const doSubmitLink = async () => {
     setSubmitting(true)
     setError(null)
+    clientLog.add('ui', `确认提交链接提取（模型=${asrModelKey || '默认'}${diarizeOn ? ' + 说话人分离' : ''}${skipSegment ? ' + 跳过分段' : ''}）`)
     try {
       const res = await api.submit({
         source: 'bilibili_url',
@@ -224,7 +229,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
   const handleUrlValue = (v) => {
     setUrl(v)
     if (estimateData) setEstimateData(null)
-    if (uploadEstimate) setUploadEstimate(null)
+    if (uploadEstimate) { setUploadEstimate(null); setUplPhase('idle') }
     if (skipSegment) setSkipSegment(false)
     if (asrCatalog) setAsrModelKey(asrCatalog.default)
     setDiarizeOn(false)
@@ -262,17 +267,35 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     return { durationSec, estChars, estTokens, estMinutes, estQuantum }
   }
 
-  // 第一步：选文件后估时长、展示预估卡（不立即上传，等用户确认）
-  const handleUpload = async (file) => {
+  // ── 上传区状态机（Bencho UploadDropzone 受控驱动）──
+  // idle（待选）→ picked（预估卡展示中）→ uploading（真实 XHR 进度）→ done（对勾停一拍跳转）
+  // refuse 为本地校验/探时长失败的抖动瞬态，1.8s 后回 idle
+  const [uplPhase, setUplPhase] = useState('idle')
+  const [uploadPct, setUploadPct] = useState(0)
+  const [uplRefuse, setUplRefuse] = useState(null)
+
+  const refuseDropzone = (msg) => {
+    setUplPhase('refuse')
+    setUplRefuse(msg)
+    clientLog.add('ui', `上传被拒: ${msg}`)   // 诊断打点：拒绝原因（不含文件名，保护隐私）
+    setTimeout(() => { setUplPhase('idle'); setUplRefuse(null) }, 1800)
+  }
+
+  // UploadDropzone onFile：file 为 null 表示本地校验失败（err 为红字文案）
+  const handleDropzoneFile = async (file, err) => {
+    if (err) { refuseDropzone(err); return }
+    if (!file) return
     setError(null)
     const durationSec = await getMediaDuration(file)
     if (!durationSec || durationSec <= 0) {
-      setError('无法识别媒体时长，请检查文件是否损坏或格式不受支持')
-      return false
+      refuseDropzone('无法识别媒体时长，请检查文件是否损坏或格式不受支持')
+      return
     }
     setEstimateData(null)   // 互斥：拖文件后只走上传预估态
     setUploadEstimate({ file, ...estimateUploadCost(durationSec) })
-    return false   // 阻止 antd 自动上传
+    setUplPhase('picked')
+    // 诊断打点：扩展名 + 大小 + 时长（不记文件名，保护隐私）
+    clientLog.add('ui', `上传文件已选: ${(file.name.split('.').pop() || '?').toLowerCase()} · ${(file.size / 1048576).toFixed(1)}MB · ${Math.round(durationSec)}s`)
   }
 
   // 第二步：确认后才真正上传（beta 模型首次使用先过风险确认弹窗）
@@ -286,16 +309,26 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
     if (!file) return
     setSubmitting(true)
     setError(null)
+    setUploadPct(0)
+    setUplPhase('uploading')
+    clientLog.add('ui', '开始上传文件（XHR 进度可视化）')
     try {
       const formData = new FormData()
       formData.append('file', file)
       if (sessdata.trim()) formData.append('sessdata', sessdata.trim())
       if (asrModelKey) formData.append('asr_model', asrModelKey)
       if (diarizeOn) formData.append('diarize', 'true')
-      const res = await api.upload(formData)
-      setUploadEstimate(null)
-      onSubmit(res)
+      const res = await api.uploadWithProgress(formData, setUploadPct)
+      clientLog.add('ui', `上传完成: task=${res.task_id}`)
+      setUplPhase('done')   // 对勾停一拍再跳详情页（动画可见性）
+      setTimeout(() => {
+        setUploadEstimate(null)
+        setUplPhase('idle')
+        onSubmit(res)
+      }, 600)
     } catch (e) {
+      clientLog.add('ui', `上传失败: ${e.message}${e.status ? ` (${e.status})` : ''}`)
+      setUplPhase('picked')   // 上传失败回到待确认（文件还在，可重试）
       setError(e.message || '上传失败，请重试')
       setSubmitting(false)
     }
@@ -486,10 +519,12 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             </div>
           )}
 
-          {/* 分割线 + 文件上传（入口互斥：任一预估卡展开时隐去——
-              链接预估卡展开时上传入口消失，反之亦然，碳碳定稿） */}
-          {!estimateData && !uploadEstimate && (
+          {/* 分割线（仅双入口都在时出现）+ 上传区（Bencho UploadDropzone 视觉，
+              真实文件链路：选中→预估卡；确认→盒内真实上传进度→对勾跳详情页）。
+              入口互斥：链接预估卡展开时上传入口隐去 */}
+          {!estimateData && (
           <>
+          {!uploadEstimate && (
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -501,21 +536,16 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             <span className="font-caption">或</span>
             <div style={{ flex: 1, height: 1, background: 'var(--hairline)' }} />
           </div>
+          )}
 
-          <Upload.Dragger
-            beforeUpload={handleUpload}
-            showUploadList={false}
-            accept="video/*,audio/*,.mp4,.mkv,.avi,.mov,.flv,.mp3,.m4a,.wav,.ogg,.flac,.aac"
-            multiple={false}
-            disabled={busy}
-            style={{ padding: '22px 0' }}
-          >
-            <div style={{ color: 'var(--mute)' }}>
-              <UploadOutlined style={{ fontSize: 24, color: 'var(--hairline-strong)', marginBottom: 8, display: 'block' }} />
-              <p className="font-body" style={{ fontSize: 14, marginBottom: 4 }}>点击或拖拽视频 / 音频文件到此处</p>
-              <p className="font-caption" style={{ marginBottom: 0 }}>MP4 / MKV / AVI / MOV / FLV / MP3 / M4A / WAV · 按实际时长计量</p>
-            </div>
-          </Upload.Dragger>
+          <UploadDropzone
+            phase={uplPhase}
+            fileInfo={uploadEstimate ? { name: uploadEstimate.file.name, size: uploadEstimate.file.size } : null}
+            progress={uploadPct}
+            refuseMsg={uplRefuse}
+            onFile={handleDropzoneFile}
+            disabled={estimating}
+          />
           </>
           )}
 
@@ -676,7 +706,7 @@ export default function HomePage({ onSubmit, onNeedAuth }) {
             <div style={{ display: 'flex', gap: 12 }}>
               <Button
                 size="large"
-                onClick={() => { setUploadEstimate(null); setError(null) }}
+                onClick={() => { setUploadEstimate(null); setUplPhase('idle'); setError(null) }}
                 disabled={submitting}
                 style={{ flex: '0 0 112px', borderRadius: 'var(--r-btn)', height: 44 }}
               >

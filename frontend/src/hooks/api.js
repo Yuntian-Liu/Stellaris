@@ -74,6 +74,50 @@ async function request(path, { method = 'GET', body, headers, isForm = false, ke
 
 export const submit = (payload) => request('/api/submit', { method: 'POST', body: payload })
 export const upload = (formData) => request('/api/upload', { method: 'POST', body: formData, isForm: true })
+
+/**
+ * 带真实上传进度的上传（XHR 版）——fetch 拿不到 upload 进度，这是唯一原因。
+ * 行为与 request() 对齐：Authorization 注入 / 401 清登录态派事件 /
+ * readableDetail 错误可读化 / clientLog 埋点。
+ * onProgress(0~100)：XHR upload.onprogress 驱动；返回解析后的 JSON。
+ */
+export function uploadWithProgress(formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/upload')
+    const token = getToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () => {
+      clientLog.add('api', `POST /api/upload ${xhr.status} (xhr)`)
+      let data = {}
+      try { data = JSON.parse(xhr.responseText || '{}') } catch { /* 非 JSON 响应按空处理 */ }
+      if (xhr.status === 401) {
+        clearToken()
+        window.dispatchEvent(new CustomEvent('stellaris:unauthorized'))
+        const e = new Error(readableDetail(data.detail) || '登录已过期,请重新登录')
+        e.status = 401
+        reject(e)
+        return
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const e = new Error(readableDetail(data.detail) || `请求失败 (${xhr.status})`)
+        e.status = xhr.status
+        reject(e)
+        return
+      }
+      resolve(data)
+    }
+    xhr.onerror = () => {
+      clientLog.add('api', 'POST /api/upload 网络错误 (xhr)')
+      reject(new Error('网络错误，上传失败'))
+    }
+    xhr.send(formData)
+  })
+}
 export const getTask = (taskId) => request(`/api/task/${taskId}`)
 export const exportMarkdown = (taskId) => request(`/api/export_md/${taskId}`, { method: 'POST' })
 export const summarize = (taskId) => request(`/api/summarize/${taskId}`, { method: 'POST' })
@@ -285,4 +329,4 @@ export const adminApi = {
   llmHealth: () => request('/api/admin/llm-health'),
 }
 
-export default { submit, upload, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, getAsrModels, chat, chatStream, getChat, getStats, getBilling, getHistory, searchHistory, searchHistoryAI, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }
+export default { submit, upload, uploadWithProgress, getTask, getDownloadUrl, exportMarkdown, summarize, estimate, getAsrModels, chat, chatStream, getChat, getStats, getBilling, getHistory, searchHistory, searchHistoryAI, exchange, getLedger, redeemPreview, redeem, getMembershipHistory, cleanupTask, authApi, adminApi, ticketApi, vaultApi }

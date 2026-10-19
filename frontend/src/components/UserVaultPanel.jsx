@@ -18,6 +18,7 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import { vaultApi } from '../hooks/api'
+import { clientLog } from '../utils/clientLog'
 import QuotaBar from './QuotaBar'
 import VaultGuideModal from './VaultGuideModal'
 import InlineConfirm from './bencho/InlineConfirm'
@@ -122,12 +123,14 @@ export default function UserVaultPanel() {
   // 「已删除 · 撤销」，4s 保险丝烧尽才真正调删除 API；撤销则什么都不发生。
   // 文件夹删除保留 Modal.confirm：其文案带递归文件统计，药丸放不下。
   const commitRemoveFile = async (path) => {
+    clientLog.add('ui', `文件柜删除已提交（撤销窗口结束）: .${path.split('.').pop() || '?'} 文件`)
     try {
       await vaultApi.remove({ path })
       message.success('已删除')
       if (viewing?.path === path) setViewing(null)
       load()
     } catch (e) {
+      clientLog.add('ui', `文件柜删除失败: ${e.message}`)
       message.error(e.message)
       load()   // 保险丝阶段药丸已显示「已删除」，失败时刷新列表对齐真实状态
     }
@@ -309,7 +312,7 @@ export default function UserVaultPanel() {
                     <Button size="small" type="text" onClick={() => downloadFile(f.path)}>下载</Button>
                     <Button size="small" type="text" onClick={() => { setRenameFor(f.path); setRenameTo(f.path) }}>重命名</Button>
                   </span>
-                  <InlineConfirm danger onCommit={() => commitRemoveFile(f.path)} />
+                  <InlineConfirm danger onCommit={() => commitRemoveFile(f.path)} onUndo={() => clientLog.add('ui', '文件柜删除已撤销（保险丝未烧尽）')} />
                 </div>
               ))}
             </>

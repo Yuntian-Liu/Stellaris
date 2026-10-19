@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { Button } from 'antd'
 import { authApi } from '../../hooks/api'
+import { clientLog } from '../../utils/clientLog'
 import CaptchaField from './CaptchaField'
 import OtpInput from '../bencho/OtpInput'
 
@@ -43,10 +44,12 @@ export default function CodeStep({ email, onBack, onSuccess }) {
     setError('')
     try {
       const res = await authApi.loginCode(email, full)
+      clientLog.add('auth', '验证码校验通过（输满自动提交）')   // 不记验证码本身
       // 先让组件播完「融合成 ✓ 已验证」，停一拍再切步（BirthTime 同款时序）
       setTimeout(() => onSuccess(res, full), 750)  // 注册流需带上验证码值(register 时二次校验)
       return true
     } catch (e) {
+      clientLog.add('auth', `验证码校验失败: ${e.message}`)
       setError(e.message)
       return false
     }
