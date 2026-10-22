@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.6.1 Betelgeuse'
+export const APP_VERSION = 'V1.6.2 Betelgeuse'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
 export const AGREEMENT_VERSION = '2026-09-29'
@@ -34,6 +34,13 @@ export const CHANGELOG = [
       '幕后：诊断日志覆盖新交互全链路；管理后台成本曲线断线与模型健康误报修复',
     ],
     patches: [
+      {
+        version: 'V1.6.2', date: '2026-10-22',
+        items: [
+          '修复：停服维护期间打开登录页时，图形验证码可能无法显示的问题',
+          '维护页面更简洁：移除了不必要的入口',
+        ],
+      },
       {
         version: 'V1.6.1', date: '2026-10-19',
         items: [

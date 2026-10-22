@@ -631,7 +631,7 @@ export default function App() {
       {/* 数据自助导出（V1.6.1 迁移保障·临时；事件总线开启） */}
       <DataExportModal />
 
-      {/* 维护模式全屏覆盖（V1.6.1：API 503 触发；管理员走 #/auth → #/admin 豁免） */}
+      {/* 维护模式全屏覆盖（V1.6.2：API 503 触发；#/auth 与 #/admin 路由本屏不渲染=管理员直达通道，不再放显式入口） */}
       {maintenance && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
@@ -645,11 +645,6 @@ export default function App() {
               我们正在进行服务迁移维护，预计很快恢复。<br />
               你的账号、额度与历史数据均不受影响，感谢耐心等待。
             </p>
-            <div style={{ marginTop: 16, fontSize: 12 }}>
-              <a style={{ color: 'var(--mute)', cursor: 'pointer' }} onClick={() => { setMaintenance(false); go('auth') }}>
-                管理员入口
-              </a>
-            </div>
           </div>
         </div>
       )}
