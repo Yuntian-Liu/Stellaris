@@ -177,7 +177,7 @@ async def _periodic_cleanup():
 app = FastAPI(
     title="Stellaris",
     description="Turning voices into words you can read.",
-    version="1.6.2-betelgeuse",
+    version="1.6.3-betelgeuse",
     lifespan=lifespan,
 )
 
@@ -228,12 +228,13 @@ _maintenance_runtime = False
 
 @app.middleware("http")
 async def _maintenance_gate(request, call_next):
-    """维护闸（V1.6.2 修订）：页面照发（前端维护屏接管展示），只闸 API。
+    """维护闸（V1.6.3 修订）：页面照发（前端维护屏接管展示），只闸 API。
     放行：/health（监控）、/api/admin（管理员后台）、/api/auth（管理员登录通道）、
-    /api/captcha（生产模式登录必过人机验证，拦它=管理员也登不进，V1.6.1 实测缺陷）。"""
+    /api/captcha 与 /api/config（登录页前置依赖：CaptchaField 先拉 config 判 is_prod 再拉验证码，
+    V1.6.2 只放行了 captcha 仍登不进，碳碳实测揪出 config 也被闸）。"""
     if _MAINTENANCE_ENV or _maintenance_runtime:
         path = request.url.path
-        if path == "/health" or path.startswith("/api/admin") or path.startswith("/api/auth") or path == "/api/captcha":
+        if path == "/health" or path.startswith("/api/admin") or path.startswith("/api/auth") or path == "/api/captcha" or path == "/api/config":
             return await call_next(request)
         if path.startswith("/api/"):
             return JSONResponse({"detail": "系统维护中，迁移完成后即恢复", "maintenance": True}, status_code=503)

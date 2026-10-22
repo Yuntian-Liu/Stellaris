@@ -452,7 +452,14 @@
     "name": "Betelgeuse",
     "level": "patch",
     "date": "2026-10-22",
-    "gist": "维护模式双修复：维护期验证码放行 + 维护屏简化",
+    "gist": "维护模式双修复：维护期验证码放行 + 维护屏简化"
+  },
+  {
+    "v": "V1.6.3",
+    "name": "Betelgeuse",
+    "level": "patch",
+    "date": "2026-10-22",
+    "gist": "维护闸豁免补全：/api/config 放行（登录页前置依赖）",
     "current": true
   }
 ]
