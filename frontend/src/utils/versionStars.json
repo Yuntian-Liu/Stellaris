@@ -459,7 +459,14 @@
     "name": "Betelgeuse",
     "level": "patch",
     "date": "2026-10-22",
-    "gist": "维护闸豁免补全：/api/config 放行（登录页前置依赖）",
+    "gist": "维护闸豁免补全：/api/config 放行（登录页前置依赖）"
+  },
+  {
+    "v": "V1.6.4",
+    "name": "Betelgeuse",
+    "level": "patch",
+    "date": "2026-10-23",
+    "gist": "迁移收尾：完成横幅（跑马灯）+ 迁移公告弹窗下线 + 导出入口收起",
     "current": true
   }
 ]

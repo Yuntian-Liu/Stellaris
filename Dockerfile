@@ -9,8 +9,8 @@ RUN npm run build                   # → /app/frontend/dist
 # ===== Stage 2: 后端 runtime + serve 前端 =====
 FROM python:3.12-slim AS runtime
 
-# 装 ffmpeg（yt-dlp 运行时调 ffmpeg/ffprobe 抽音轨）
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# 装 ffmpeg（yt-dlp 运行时调 ffmpeg/ffprobe 抽音轨）+ curl（Coolify HTTP 健康探针依赖）
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend

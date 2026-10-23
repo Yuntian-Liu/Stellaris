@@ -40,12 +40,15 @@ export default function UpdateModals({ onOpenAgreement }) {
     }
   }
 
-  const checkMigration = () => {
-    if (!localStorage.getItem(MIGRATION_KEY)) {
-      setShowMigration(true)
-      clientLog.add('ui', '迁移公告弹窗已展示')
-    }
-  }
+  // 停服迁移公告（V1.6.1 第三节）：迁移已于 10-23 13:03 完成，弹窗下线（V1.6.4）。
+  // 代码全留：若未来再需要公告型第三弹，恢复下方判断即可。
+  // const checkMigration = () => {
+  //   if (!localStorage.getItem(MIGRATION_KEY)) {
+  //     setShowMigration(true)
+  //     clientLog.add('ui', '迁移公告弹窗已展示')
+  //   }
+  // }
+  const checkMigration = () => {}
 
   const closeUpdate = () => {
     localStorage.setItem(UPDATE_KEY, updateInfo.version)

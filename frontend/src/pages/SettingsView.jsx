@@ -9,7 +9,7 @@ import { useNavigate, useMatch, useSearchParams } from 'react-router-dom'
 import { Button, Input, Modal, Tabs, Tag, message } from 'antd'
 import {
   ArrowLeftOutlined, RightOutlined, UserOutlined, MailOutlined,
-  IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined, CloudDownloadOutlined,
+  IdcardOutlined, CrownOutlined, LockOutlined, FileTextOutlined,
   SafetyCertificateOutlined, HistoryOutlined, LogoutOutlined,
   EditOutlined, GithubOutlined, DownOutlined, DotChartOutlined,
   GiftOutlined, CreditCardOutlined, MessageOutlined,
@@ -498,11 +498,11 @@ export default function SettingsView({ onBack, onOpenHistory }) {
           value="排查问题用"
           onClick={downloadDiagnostics} />
         <Divider />
-        {/* 数据自助导出（V1.6.1 迁移保障·临时功能，迁移后下线） */}
+        {/* 数据自助导出（V1.6.1 迁移保障·临时功能；迁移已完成，入口于 V1.6.4 下线。
+            代码保留：组件与后端 /api/export/mydata 均在，恢复此行即重新开门。
         <RowItem icon={<CloudDownloadOutlined />} tint="#4f46e5" label="导出我的数据"
           value="迁移保障 · 限时"
-          onClick={() => { clientLog.add('ui', '设置页 → 打开数据自助导出'); window.dispatchEvent(new CustomEvent('stellaris:open-export')) }} />
-        <Divider />
+          onClick={() => { clientLog.add('ui', '设置页 → 打开数据自助导出'); window.dispatchEvent(new CustomEvent('stellaris:open-export')) }} /> */}
         <RowItem icon={<GithubOutlined />} tint="#334155" label="开源声明"
           value="MIT" onClick={() => setOssOpen(true)} />
       </SectionCard>

@@ -5,7 +5,7 @@
  * ⚠️ 公开文件：不得出现私人信息（姓名/化名/感情相关代称等）
  */
 
-export const APP_VERSION = 'V1.6.3 Betelgeuse'
+export const APP_VERSION = 'V1.6.4 Betelgeuse'
 
 /** 协议版本（用户协议/隐私政策/会员协议最后更新日期，改协议时同步递增；同一天多次修订追加 .2/.3 后缀） */
 export const AGREEMENT_VERSION = '2026-09-29'
@@ -34,6 +34,12 @@ export const CHANGELOG = [
       '幕后：诊断日志覆盖新交互全链路；管理后台成本曲线断线与模型健康误报修复',
     ],
     patches: [
+      {
+        version: 'V1.6.4', date: '2026-10-23',
+        items: [
+          '服务器迁移已全部完成：实际停服仅 23 分钟，各项服务运行正常。感谢每一位用户的耐心等待——建议顺手检查一下历史记录、余额与文件柜，如有任何异常，请通过工单或邮箱联系我们',
+        ],
+      },
       {
         version: 'V1.6.3', date: '2026-10-22',
         items: [

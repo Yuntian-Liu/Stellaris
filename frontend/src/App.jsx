@@ -19,7 +19,7 @@ import SettingsView from './pages/SettingsView'
 // 管理看板（含 recharts）代码分割：仅 admin 点进看板时才加载，不进主包
 const AdminView = lazy(() => import('./pages/AdminView'))
 import UpdateModals from './components/UpdateModals'
-import DataExportModal, { OPEN_EXPORT_EVENT } from './components/DataExportModal'
+import DataExportModal from './components/DataExportModal'
 
 // 停服迁移公告条的"当日不再提示"键（V1.6.1 临时）
 const MIG_BANNER_KEY = 'stellaris_mig_banner_dismissed'
@@ -519,24 +519,29 @@ export default function App() {
       </div>
       </div>
 
-      {/* ── 停服迁移公告条（V1.6.1 临时：10-23 停服维护；关闭后当日不再出现）── */}
+      {/* ── 迁移完成横幅（V1.6.4：跑马灯，hover 暂停；关闭后当日不再出现；留存约一周后随下版退役）── */}
       {migBanner && (
         <div style={{
+          position: 'relative',
           background: 'var(--accent-light)',
           borderBottom: '1px solid var(--hairline)',
-          padding: '8px 24px',
+          padding: '8px 0',
           fontSize: 12.5,
           color: 'var(--body)',
-          textAlign: 'center',
           lineHeight: 1.7,
         }}>
-          本站将于 <strong>10 月 23 日（周五）12:00</strong> 起停服迁移至新服务器，预计 6 小时内恢复，数据不受影响。
-          <a
-            style={{ color: 'var(--accent)', marginLeft: 8, cursor: 'pointer', fontWeight: 500 }}
-            onClick={() => window.dispatchEvent(new CustomEvent(OPEN_EXPORT_EVENT))}
-          >导出我的数据存档</a>
+          <div className="mig-marquee">
+            <div className="mig-track">
+              <span>服务器迁移已于 <strong>10 月 23 日（周五）13:10</strong> 顺利完成，各项服务已恢复正常。建议顺手检查你的历史记录、余额与文件柜是否完整；如有任何缺漏，请通过工单或邮箱 <strong>it@ytunx.com</strong> 联系我们，我们会尽快处理。</span>
+              <span aria-hidden="true" className="mig-dup">服务器迁移已于 <strong>10 月 23 日（周五）13:10</strong> 顺利完成，各项服务已恢复正常。建议顺手检查你的历史记录、余额与文件柜是否完整；如有任何缺漏，请通过工单或邮箱 <strong>it@ytunx.com</strong> 联系我们，我们会尽快处理。</span>
+            </div>
+          </div>
           <span
-            style={{ marginLeft: 12, color: 'var(--mute)', cursor: 'pointer' }}
+            style={{
+              position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+              color: 'var(--mute)', cursor: 'pointer', padding: '2px 6px',
+              background: 'var(--accent-light)',
+            }}
             title="今日不再提示"
             onClick={() => {
               localStorage.setItem(MIG_BANNER_KEY, new Date().toDateString())
@@ -1326,6 +1331,21 @@ export default function App() {
 
         /* 按钮按压回弹 */
         .ant-btn:active { transform: scale(0.97); }
+
+        /* 迁移完成横幅跑马灯（V1.6.4：两份文案无缝循环，hover 暂停） */
+        .mig-marquee { overflow: hidden; white-space: nowrap; padding-right: 44px; }
+        .mig-marquee .mig-track { display: inline-block; animation: mig-scroll 32s linear infinite; }
+        .mig-marquee .mig-track > span { padding-right: 72px; }
+        .mig-marquee:hover .mig-track { animation-play-state: paused; }
+        @keyframes mig-scroll {
+          from { transform: translateX(0); }
+          to { transform: translateX(-50%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .mig-marquee { white-space: normal; }
+          .mig-marquee .mig-track { animation: none !important; display: block; }
+          .mig-marquee .mig-dup { display: none; }
+        }
 
         /* 尊重系统减弱动效设置 */
         @media (prefers-reduced-motion: reduce) {
